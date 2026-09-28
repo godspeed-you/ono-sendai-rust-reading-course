@@ -1,2 +1,830 @@
 # Glossary terms (spec §57). Each term links to lessons with representative Ono-Sendai examples.
-terms: []
+terms:
+  - id: arc
+    term: "`Arc`"
+    body: |
+      `Arc<T>` (atomically reference-counted) is **shared ownership** of one heap value: every clone is
+      another owner of the same `T`, and the value is dropped when the last owner goes. Cloning an `Arc`
+      is a [reference count](glossary:reference-counting) increment, never a copy of `T`, which is why
+      every compound [`Value`](glossary:value) variant sits behind one. `Arc` by itself gives only shared
+      *read* access; it does not synchronize mutation. Where Ono-Sendai mutates shared state it adds an
+      [atomic](glossary:atomic) or a [`Mutex`](glossary:mutex) inside the `Arc`, as in
+      [`CancelToken`](glossary:cancel-token).
+    examples: [smart-pointers-01, smart-pointers-02, ownership-moves-03]
+  - id: associated-type
+    term: "Associated type"
+    body: |
+      A type declared inside a trait (`type Item;`) that each implementation fixes once, such as
+      `Iterator::Item`, `IntoIterator::IntoIter` or `FromStr::Err`. Unlike a generic parameter, a type
+      can implement the trait only once, so the associated type is determined by the implementing type.
+      `MapValue` implements `IntoIterator for &MapValue` with `type Item = (&str, &Value)`, which is what
+      lets a `for` loop walk a map ([lesson](lesson:generics-04)).
+    examples: [generics-04, iterators-closures-04, conversions-02]
+  - id: async-fn
+    term: "`async fn`"
+    body: |
+      An `async fn` is a function whose body is compiled into a [future](glossary:future): calling it
+      runs **none** of the body, it only builds the future and returns it. The body starts when the
+      future is awaited or polled by a runtime, and it may suspend at each `.await`. `collect_content`
+      is the simplest real example in Ono-Sendai ([lesson](lesson:async-01)). Async is not parallelism:
+      awaiting two futures one after the other runs them one after the other.
+    examples: [async-01, async-02]
+  - id: async-trait
+    term: "`async_trait`"
+    body: |
+      `#[async_trait]` is an attribute [macro](glossary:macro) that rewrites every `async fn` in a trait
+      into an ordinary method returning `Pin<Box<dyn Future + Send + '_>>`, so the trait can still be
+      used as a [trait object](glossary:trait-object). The `Provider` trait uses it for `resolve` and
+      `act` ([lesson](lesson:provider-boundary-01)). `CommandImpl` does the same by hand with its
+      `OutcomeFuture` alias, "boxed so the trait stays object-safe" ([lesson](lesson:async-03)).
+    examples: [async-03, provider-boundary-01]
+  - id: atomic
+    term: "Atomic"
+    body: |
+      An atomic type such as `AtomicBool` can be read and changed through a shared reference (`&self`)
+      with operations the hardware performs indivisibly, so no lock is needed and no two threads can
+      see a half-written value. The `Ordering` argument (`SeqCst` in Ono-Sendai) states what other
+      memory effects the operation makes visible. [`CancelToken`](glossary:cancel-token) keeps its
+      `cancelled` flag in an `AtomicBool`, and uses `compare_exchange` so the cancellation report is
+      claimed exactly once ([lesson](lesson:smart-pointers-02)).
+    examples: [smart-pointers-02, tasks-channels-02]
+  - id: attribute
+    term: "Attribute"
+    body: |
+      An attribute is an annotation in `#[...]` (on the next item) or `#![...]` (on the enclosing
+      module or crate) that changes how code is compiled or checked. Ono-Sendai crate roots such as
+      `ono-core`'s start with `#![forbid(unsafe_code)]`, types carry [`#[derive]`](glossary:derive) and
+      `#[must_use]`, `#[cfg(feature = ...)]` selects code at compile time
+      ([lesson](lesson:derives-macros-04)), and serde's `#[serde(rename = ...)]` shapes the file format
+      ([lesson](lesson:derives-macros-03)). See [attributes](concept:attributes).
+    examples: [reading-rust-01, derives-macros-04, derives-macros-03]
+  - id: await-point
+    term: "Await point"
+    body: |
+      Each `.await` is a place where a future may suspend: if the awaited future is not ready, control
+      returns to the runtime, which can run other tasks on the same thread. Between two await points an
+      async body runs without interruption. Await points are where a task can be
+      [cancelled](glossary:cancellation) (by being dropped) and where values held across them must
+      satisfy [`Send`](glossary:send) for the task to be spawned. Ono-Sendai's pipelines stop "at their
+      next await" because every stage's send is an await point that races the cancel token.
+    examples: [async-01, unseen-with-solutions-03, tasks-channels-02]
+  - id: backpressure
+    term: "Backpressure"
+    body: |
+      Backpressure is a fast producer being slowed to the speed of its consumer. In Ono-Sendai it comes
+      from bounded [channels](glossary:channel): `StreamSink::send` awaits until the channel between two
+      stages has room (`DEFAULT_CAPACITY` is 64 values), so "an infinite producer runs exactly as fast
+      as its consumer drains it, and no faster" ([lesson](lesson:tasks-channels-02)). Nothing has to be
+      coded per command; the wait is built into every send.
+    examples: [tasks-channels-02, tasks-channels-01]
+  - id: blanket-implementation
+    term: "Blanket implementation"
+    body: |
+      A blanket implementation implements a trait for every type that satisfies some bounds:
+      `impl<F> Predicate for F where F: Fn(&Value) -> Value + Send + Sync + 'static`. After it,
+      any fitting closure *is* a `Predicate` without further code. Ono-Sendai's pipeline uses this so a
+      `where` stage can accept a plain closure and still store it as a `Box<dyn Predicate>`
+      ([lesson](lesson:generics-02)).
+    examples: [generics-02]
+  - id: block-on
+    term: "`block_on`"
+    body: |
+      `Runtime::block_on(future)` runs a future to completion on the current thread and blocks that
+      thread until it finishes: it is the bridge from synchronous code into async code. Ono-Sendai's
+      evaluator is synchronous, and a native pipeline is entered through `block_on` on the session's
+      lazily built [Tokio runtime](glossary:tokio-runtime) ([lesson](lesson:async-04)). Calling
+      `block_on` from inside an async task of the same runtime panics, so it belongs only at such
+      synchronous edges.
+    examples: [async-04, execution-path-02, tasks-channels-04]
+  - id: borrow
+    term: "Borrow"
+    body: |
+      To borrow a value is to take a reference to it (`&v` or `&mut v`) without taking ownership; the
+      owner keeps the value and gets full use of it back when the borrow ends. The compiler checks that
+      no borrow outlives its owner and that a [mutable reference](glossary:mutable-reference) is never
+      active alongside any other reference. `RecordValue::builder` borrows `schema` for one method call
+      (`schema.field_count()`) and then [moves](glossary:move) it into the record
+      ([lesson](lesson:ownership-moves-01)). See [borrowing](concept:borrowing).
+    examples: [structs-methods-02, borrowing-01, ownership-moves-01]
+  - id: box
+    term: "`Box`"
+    body: |
+      `Box<T>` is single ownership of a value on the heap. Moving a `Box` moves only the pointer, and
+      dropping it drops the contents. Ono-Sendai uses it where a size must be known but the contents
+      vary: `Box<dyn Predicate>` stores a closure of unknown type, `Pin<Box<dyn Future>>` makes async
+      trait methods object-safe, and `self: Box<Self>` receivers let a boxed transform consume itself
+      ([lesson](lesson:smart-pointers-04)). Unlike [`Arc`](glossary:arc), a `Box` has exactly one owner.
+    examples: [smart-pointers-04, generics-02, async-03]
+  - id: cancellation
+    term: "Cancellation"
+    body: |
+      In async Rust, a future is cancelled by **dropping** it: it never runs past its current
+      [await point](glossary:await-point), and its locals are dropped. Ono-Sendai combines this with
+      cooperative cancellation through [`CancelToken`](glossary:cancel-token): on Ctrl-C the foreground
+      driver's `select!` drops the losing future, which drops every stream receiver, closes the bounded
+      channels and stops each producer at its next send ([lesson](lesson:tasks-channels-04)). Dropping
+      does not stop work that is not a future: a timed-out
+      [`spawn_blocking`](glossary:spawn-blocking) closure keeps running ([lesson](lesson:async-04)).
+    examples: [tasks-channels-02, tasks-channels-04, async-04]
+  - id: cancel-token
+    term: "`CancelToken`"
+    body: |
+      `ono_pipeline::CancelToken` is the cancellation scope shared by every stage of one native
+      pipeline. It is an `Arc<Inner>` holding an `AtomicBool` flag and a Tokio `Notify`: cloning shares
+      the scope ("the clones are the same token, not copies of it"), and `cancel(&self)` works through a
+      shared reference because the flag is [atomic](glossary:atomic). Every `StreamSink::send` races the
+      token in a biased [`select!`](glossary:select), which is how Ctrl-C or an early-finishing consumer
+      stops the whole pipeline ([lesson](lesson:tasks-channels-02)). See
+      [cancellation](topic:cancellation).
+    examples: [smart-pointers-02, tasks-channels-02]
+  - id: channel
+    term: "Channel"
+    body: |
+      A channel is a queue with a sending half and a receiving half, used to pass values between tasks
+      or threads. Ono-Sendai joins every pair of pipeline stages with a bounded Tokio `mpsc` channel (one
+      for values, one for errors), so a full channel makes the sender wait
+      ([backpressure](glossary:backpressure)); `oneshot` channels carry a single reply, as in the driver
+      that answers `each` blocks ([lesson](lesson:tasks-channels-04)). When every receiver is dropped,
+      sends fail, which is how a stage learns that nobody is listening. See [channels](concept:channels).
+    examples: [tasks-channels-01, tasks-channels-04, tasks-channels-03]
+  - id: clone
+    term: "Clone"
+    body: |
+      `Clone` is the trait behind the explicit `.clone()` call, which produces a second, independent
+      owner of a value. What it costs depends entirely on the type: cloning a `String` copies its bytes,
+      but cloning a [`Value`](glossary:value) or an [`Arc`](glossary:arc) is a
+      [reference-count](glossary:reference-counting) increment. Cloning is therefore not "always
+      expensive"; `ownership-moves-03` contrasts a `Value` clone with cloning an `ErrorValue` out of an
+      `Arc`, which really copies the struct ([lesson](lesson:ownership-moves-03)). See
+      [copy](glossary:copy).
+    examples: [ownership-moves-03, smart-pointers-01]
+  - id: closure
+    term: "Closure"
+    body: |
+      A closure (`|x| x + 1`) is an anonymous function that can capture variables from its surrounding
+      scope, by reference or by value. Each closure has its own unnamed type, which implements one or
+      more of `Fn`, `FnMut` and `FnOnce` depending on what it does with its captures. Ono-Sendai uses
+      closures as iterator arguments, as stored predicates behind a
+      [blanket implementation](glossary:blanket-implementation), and returns a `move` closure from
+      `key_function` as an opaque `impl KeyFn` ([lesson](lesson:generics-03)). See [move closure](glossary:move-closure).
+    examples: [iterators-closures-03, generics-03, iterators-closures-01]
+  - id: command-contract
+    term: "Command contract"
+    body: |
+      A `CommandContract` describes one shell command as data: its id (such as `ono.process.get`),
+      target, parameters, types and capabilities. Contracts are written in
+      `docs/contracts/commands/*.yaml`, embedded into the binary at build time, read by serde into
+      `Raw*` structs and then validated into strong types ([lesson](lesson:derives-macros-03)).
+      `CommandRegistry::resolve` returns a `Resolved` that borrows the contract from the registry, and
+      the native code behind a contract implements `CommandImpl` ([lesson](lesson:borrowing-04)). See
+      [command contracts and registry](topic:command-registry).
+    examples: [borrowing-04, derives-macros-03, derives-macros-04]
+  - id: conditional-compilation
+    term: "Conditional compilation"
+    body: |
+      `#[cfg(...)]` includes an item only when a condition holds at compile time, such as a Cargo
+      feature, a target OS or `test`. Code excluded by `cfg` is not compiled at all, so two definitions
+      of one function can coexist, one per feature: `through_time`, which wraps every provider in a
+      `TemporalProvider`, has one definition under `#[cfg(feature = "temporal")]` and another without it ([lesson](lesson:derives-macros-04)). `#[cfg(test)] mod tests` holds unit tests that
+      exist only in test builds ([lesson](lesson:reading-rust-04)).
+    examples: [derives-macros-04, reading-rust-04]
+  - id: copy
+    term: "Copy"
+    body: |
+      `Copy` is a marker trait for types whose values can be duplicated by copying their bytes, such as
+      integers, `bool`, shared references and small structs of `Copy` fields. Assigning or passing a
+      `Copy` value copies it instead of [moving](glossary:move) it, so the original stays usable.
+      `Span` and `ErrorCode` derive `Copy`; `Value` cannot, because some of its variants own heap data
+      through `Arc` ([lesson](lesson:ownership-moves-03)). A type can be `Copy` only if it is also
+      [`Clone`](glossary:clone) and has no `Drop` implementation.
+    examples: [ownership-moves-03, structs-methods-02, functions-types-01]
+  - id: cow
+    term: "`Cow`"
+    body: |
+      `Cow<'a, B>` (clone on write) holds either `Borrowed(&'a B)` or `Owned(B::Owned)`, and derefs to
+      `&B` either way. It lets a function return a borrow when it can and allocate only when it must.
+      `ono-process`'s `against` returns `Cow<'a, Path>`: the redirection path itself when it is absolute
+      or no working directory is set, and a newly joined `PathBuf` only for a relative path
+      ([lesson](lesson:smart-pointers-04)).
+    examples: [smart-pointers-04]
+  - id: crate
+    term: "Crate"
+    body: |
+      A crate is Rust's unit of compilation: one library or binary, with a crate root (`lib.rs` or
+      `main.rs`) from which the [module](glossary:module) tree grows. Ono-Sendai is a Cargo workspace of
+      many crates, layered from the dependency-free `ono-core` up to the `ono` binary, and each crate
+      exposes only what its root makes public ([lesson](lesson:reading-rust-01)). Paths name other
+      crates with underscores (`ono_core::ErrorCode`). See [the crate map](topic:crate-map).
+    examples: [reading-rust-01, reading-rust-02]
+  - id: derive
+    term: "Derive"
+    body: |
+      `#[derive(Debug, Clone, PartialEq, ...)]` asks the compiler to generate trait implementations
+      from a type's definition. A derive list is a list of impls you do not see: a derived `Clone`
+      clones each field, a derived `Ord` on an enum orders variants by declaration order. Reading which
+      derives are *missing* matters too, for example `Value` derives `Clone` but not `Copy`
+      ([lesson](lesson:derives-macros-01)). Serde's `Serialize` and `Deserialize` derives describe file
+      formats ([lesson](lesson:derives-macros-03)).
+    examples: [derives-macros-01, ownership-moves-03, derives-macros-03]
+  - id: destructuring
+    term: "Destructuring"
+    body: |
+      Destructuring takes a struct, tuple or enum variant apart in a pattern and binds its pieces to
+      names, for example `Redirect::Write { fd, path }` or `let (parsed, diagnostics) = ...`. `..`
+      skips the remaining fields. Destructuring a value by value [moves](glossary:move) the bound
+      pieces out of it, which is how `into_parts(self)` hands back its fields without cloning
+      ([lesson](lesson:ownership-moves-02)). See [destructuring](concept:destructuring).
+    examples: [enums-matching-04, ownership-moves-02, enums-matching-03]
+  - id: doc-comment
+    term: "Doc comment"
+    body: |
+      `///` documents the item that follows and `//!` documents the enclosing module or crate; both
+      become rustdoc documentation, and code blocks inside them are compiled and run as doctests.
+      Ono-Sendai's doc comments routinely cite the spec section or ADR behind a design and state
+      invariants, such as the `Value` doc explaining that every compound case sits behind an `Arc`
+      ([lesson](lesson:enums-matching-02)). They are the first thing to read in an unfamiliar file,
+      though a doc can lag behind the code ([lesson](lesson:provider-boundary-03)).
+    examples: [reading-rust-03, reading-rust-01, enums-matching-02]
+  - id: drop
+    term: "Drop"
+    body: |
+      A value is dropped when its owner goes out of scope (or `drop(v)` is called): its destructor runs
+      and any resource it holds is released, such as memory, a file descriptor, a
+      [`Mutex`](glossary:mutex) guard or a channel end. Drop order is deterministic: locals are dropped
+      in reverse order of declaration. In Ono-Sendai dropping is also a control mechanism: dropping a
+      stream receiver closes its channel, and dropping a future [cancels](glossary:cancellation) it
+      ([lesson](lesson:tasks-channels-04)).
+    examples: [ownership-moves-04, tasks-channels-04, smart-pointers-03]
+  - id: dynamic-dispatch
+    term: "Dynamic dispatch"
+    body: |
+      Dynamic dispatch chooses which implementation of a trait method to call at run time, through the
+      vtable of a [trait object](glossary:trait-object). `ProviderRegistry` holds `Arc<dyn Provider>`
+      values and calls `provider.snapshot(...)` on whichever provider answers the target, without the
+      registry knowing any concrete provider type ([lesson](lesson:traits-04)). The cost is one indirect
+      call and the loss of inlining; the gain is one collection of many types. Contrast
+      [static dispatch](glossary:static-dispatch).
+    examples: [traits-04, traits-02, provider-boundary-01]
+  - id: enum
+    term: "Enum"
+    body: |
+      An enum is a type with a closed set of variants, each of which may carry data. Ono-Sendai uses
+      them wherever the set of cases is fixed: `ErrorKind` has thirteen unit variants,
+      [`Value`](glossary:value) has twenty-one variants carrying data, and `FieldAccess` keeps absent,
+      unknown, known and failed apart instead of one nullable value ([lesson](lesson:option-02)). A
+      `match` on an enum must handle every variant, so adding one makes the compiler point at every
+      place that needs updating. See [enums](concept:enums).
+    examples: [enums-matching-01, enums-matching-02, option-02]
+  - id: error-value
+    term: "Error value and error code"
+    body: |
+      `ono_core::ErrorCode` is a payload-free, `Copy` enum of stable error identities (spelled like
+      `resolve.command_not_found`), each with an `ErrorKind` category that scripts branch on.
+      `ono_value::ErrorValue` is the structured error built from a code: message, optional target,
+      source, help and retryable flag, plus metadata ([lesson](lesson:result-errors-01)). Errors are
+      data in Ono-Sendai: an `ErrorValue` can travel as `Err` in a `Result`, as a `Value::Error` inside
+      a pipeline, or on a stream's error channel. See [error flow](topic:error-flow).
+    examples: [result-errors-01, enums-matching-01, result-errors-02]
+  - id: field-access
+    term: "`FieldAccess`"
+    body: |
+      `FieldAccess` is the result of reading a record field, with four variants: `Absent` (the schema
+      never declared the field), `Unknown` (declared, value not known, stored as `Value::Null`),
+      `Known(Value)` and `Failed(Arc<ErrorValue>)`. The doc calls collapsing these "exactly the
+      ambiguity Ono exists to remove", so they are variants rather than a single `Option`
+      ([lesson](lesson:option-02)). `RecordValue::access` produces it with a `match` that includes a
+      [match guard](glossary:match-guard) ([lesson](lesson:option-03)).
+    examples: [option-02, option-03]
+  - id: from-into
+    term: "`From` and `Into`"
+    body: |
+      `From<T> for U` defines an infallible conversion from `T` to `U`; the standard library then
+      provides `Into<U> for T` automatically, so one impl gives both spellings `U::from(t)` and
+      `t.into()`. Ono-Sendai implements `From` to build `Value`s from native data and to turn
+      `ExitStatus` into the process exit code ([lesson](lesson:conversions-01)). The
+      [`?` operator](glossary:question-mark-operator) calls `From::from` on the error, which is why
+      `impl From<ErrorValue> for Flow` lets the evaluator use `?` everywhere
+      ([lesson](lesson:conversions-03)).
+    examples: [conversions-01, conversions-03, conversions-04]
+  - id: fromstr
+    term: "`FromStr`"
+    body: |
+      `FromStr` is the trait behind `str::parse`: `fn from_str(s: &str) -> Result<Self, Self::Err>`,
+      with the error type chosen through an [associated type](glossary:associated-type). Ono-Sendai
+      implements it for `SchemaId` ([lesson](lesson:result-errors-03)) and recursively for `DeclaredType`,
+      which parses contract type names such as `list<string>` ([lesson](lesson:conversions-02)).
+      Unlike [`From`](glossary:from-into), parsing may fail, so the result is a `Result`.
+    examples: [conversions-02, result-errors-03]
+  - id: future
+    term: "Future"
+    body: |
+      A future is a value representing a computation that may not be finished; it makes progress only
+      when a runtime polls it, and does nothing on its own. Because futures are values, Ono-Sendai
+      passes them around, bounds them with `tokio::time::timeout`, and runs two concurrently with
+      `tokio::join!` ([lesson](lesson:async-02)). Concurrency is not parallelism: `join!` interleaves
+      two futures within one task, and only separate [tasks](glossary:task) on a multi-threaded
+      runtime may run at the same instant. See [futures](concept:futures).
+    examples: [async-01, async-02, async-03]
+  - id: generic
+    term: "Generic"
+    body: |
+      A generic item has type parameters (`fn from_values<I>(values: I)`) that the caller's types fill
+      in; the compiler generates a separate copy of the code for each concrete type used
+      (monomorphization), which is [static dispatch](glossary:static-dispatch). A
+      [trait bound](glossary:trait-bound) states what the parameter must be able to do. `from_serde::<T>`
+      lets the call site pick `T` by inference or turbofish ([lesson](lesson:generics-03)). See
+      [generics](concept:generics).
+    examples: [generics-03, generics-01, tasks-channels-01]
+  - id: impl-trait
+    term: "`impl Trait`"
+    body: |
+      In argument position, `impl Trait` is an anonymous generic parameter: `ErrorValue::new(code,
+      message: impl Into<Arc<str>>)` accepts a `&str`, a `String` or anything else that converts
+      ([lesson](lesson:generics-01)). In return position it is an opaque type: the function returns one
+      specific type the caller cannot name, only use through the trait, as `key_function` does with a
+      closure ([lesson](lesson:generics-03)). Both are [static dispatch](glossary:static-dispatch), not
+      [trait objects](glossary:trait-object).
+    examples: [generics-01, generics-03]
+  - id: interior-mutability
+    term: "Interior mutability"
+    body: |
+      Interior mutability is mutation through a shared reference `&T`, made safe by a type that
+      enforces its own rules at run time: `Mutex` and `RwLock` by locking, atomics by indivisible
+      operations, `Cell` and `RefCell` within one thread. It is how shared objects behind an
+      [`Arc`](glossary:arc) can change at all, since the `Arc` hands out only shared access. The `env`
+      provider keeps its variables in a `Mutex`, and `CancelToken` its flag in an `AtomicBool`
+      ([lesson](lesson:smart-pointers-02)).
+    examples: [smart-pointers-02, smart-pointers-03]
+  - id: iterator
+    term: "Iterator"
+    body: |
+      An iterator is any type implementing `Iterator`, whose one required method `next(&mut self) ->
+      Option<Self::Item>` yields items until it returns `None`. Iterators are lazy: nothing happens until
+      a consumer such as `collect`, `for`, `all` or `find_map` pulls items. Ono-Sendai writes some by
+      hand, for example the netlink attribute walker that bounds-checks every step over untrusted bytes
+      and always makes progress ([lesson](lesson:iterators-closures-04)). See
+      [iterators](concept:iterators).
+    examples: [iterators-closures-01, iterators-closures-04, unseen-with-solutions-04]
+  - id: iterator-adapter
+    term: "Iterator adapter"
+    body: |
+      An adapter is an iterator method that wraps one iterator in another, such as `map`, `filter`,
+      `zip`, `take` or `enumerate`. Adapters do no work when called; they only describe it, and the
+      chain runs when a consumer at the end pulls items. Read a chain left to right: the source, each
+      adapter, then the consumer that makes it run. `Value::same_data` zips two lists and short-circuits
+      with `all` on the first difference ([lesson](lesson:iterators-closures-02)).
+    examples: [iterators-closures-01, iterators-closures-02]
+  - id: let-chain
+    term: "Let chain"
+    body: |
+      A let chain (Rust 2024 edition) joins several `let` patterns and boolean conditions with `&&` in
+      one `if` or `while`: `if let Some(word) = first_word && let Some(contract) = self.find(head,
+      Some(word)) { ... }`. The block runs only if every pattern matches and every condition holds,
+      checked left to right, and later parts may use names bound earlier. `CommandRegistry::resolve`
+      uses one to try the target-word form of a command first ([lesson](lesson:borrowing-04)).
+    examples: [borrowing-04, smart-pointers-03]
+  - id: let-else
+    term: "Let else"
+    body: |
+      `let PATTERN = expr else { ... };` binds the pattern's names for the rest of the block if it
+      matches, and otherwise runs the `else` block, which must diverge (`return`, `break`, `continue`
+      or panic). It keeps the happy path unindented. Ono-Sendai uses it for early exits such as
+      `let Some(target) = contract.target() else { return Ok(None); };` in context narrowing
+      ([lesson](lesson:independent-reading-05)) and in tests that expect a particular variant
+      ([lesson](lesson:enums-matching-03)).
+    examples: [enums-matching-03, independent-reading-05, tasks-channels-04]
+  - id: lifetime
+    term: "Lifetime"
+    body: |
+      A lifetime is the region of code in which a borrow is valid, and a lifetime parameter such as
+      `'a` is a name for it in a signature. Lifetimes do not change how long anything lives; they state
+      where a returned or stored reference borrows from, so the compiler can check it. `Resolved<'r,
+      'a>` has two: its `contract` borrows the registry for `'r` and its `arguments` borrow the stage
+      for `'a`, so the contract stays usable after the stage is gone ([lesson](lesson:borrowing-04)).
+      See [lifetimes](concept:lifetimes) and [lifetime elision](glossary:lifetime-elision).
+    examples: [borrowing-03, borrowing-04, borrowing-01]
+  - id: lifetime-elision
+    term: "Lifetime elision"
+    body: |
+      Lifetime elision is the set of rules that let most signatures omit lifetime names: each elided
+      input reference gets its own lifetime; with exactly one input lifetime, outputs borrow from it;
+      in a method with `&self` or `&mut self`, outputs borrow from `self`. `Token::text(&self, source:
+      &'a str) -> &'a str` needs an explicit `'a` because the default would tie the text to the token,
+      although it lives in `source` ([lesson](lesson:borrowing-01)). `'_` spells an elided lifetime
+      explicitly.
+    examples: [borrowing-01, borrowing-03]
+  - id: macro
+    term: "Macro"
+    body: |
+      A macro is code that writes code at compile time, invoked with `!` (`vec![...]`, `matches!`,
+      `tokio::select!`) or as an attribute or derive. Declarative macros (`macro_rules!`) match their
+      input against rules and expand to Rust; Ono-Sendai uses one to turn a table of rows into error
+      codes and their names, read best by reading the invocation first ([lesson](lesson:derives-macros-02)).
+      Built-in macros such as `include_str!` embed files into the binary
+      ([lesson](lesson:derives-macros-04)).
+    examples: [derives-macros-02, derives-macros-04]
+  - id: match-guard
+    term: "Match guard"
+    body: |
+      A match guard is an `if` condition after a pattern, `PATTERN if condition => ...`; the arm is
+      taken only if the pattern matches **and** the condition is true, otherwise matching continues
+      with the next arm. `RecordValue::access` uses `Some(Value::Error(error)) if
+      !self.declares_error(name)` so that an error stored in an `error`-typed field counts as a known
+      value, not a failed read ([lesson](lesson:option-03)). The compiler does not use guards for
+      exhaustiveness, so a later catch-all arm is still needed.
+    examples: [option-03, smart-pointers-04]
+  - id: module
+    term: "Module"
+    body: |
+      A module (`mod name;`) is a named namespace inside a [crate](glossary:crate), stored in `name.rs`
+      or `name/mod.rs`, and paths such as `crate::`, `super::` and `self::` navigate the tree. A crate
+      root can keep modules private and re-export chosen items with `pub use`, as `ono-parser` does
+      ([lesson](lesson:reading-rust-02)). The parser is a directory module of eight sub-modules that
+      add `impl` blocks to the same type ([lesson](lesson:structs-methods-04)). See
+      [modules](concept:modules).
+    examples: [reading-rust-02, structs-methods-04]
+  - id: move
+    term: "Move"
+    body: |
+      A move transfers ownership: assigning a non-[`Copy`](glossary:copy) value, passing it by value or
+      storing it in a struct makes the new place the owner, and the compiler rejects any later use of
+      the old name. A move copies only the value's own bytes (for a `Vec`, pointer, length and
+      capacity), never its heap contents. `RecordValue::builder(schema, provenance)` takes both
+      arguments by value and moves them into the new record ([lesson](lesson:ownership-moves-01)). See
+      [moves](concept:moves).
+    examples: [ownership-moves-01, ownership-moves-02, ownership-moves-04]
+  - id: move-closure
+    term: "Move closure"
+    body: |
+      `move |args| ...` makes a [closure](glossary:closure) take ownership of everything it captures
+      instead of borrowing it. That is required when the closure must outlive the current scope, for
+      example a closure handed to the pipeline engine or an `async move` block passed to `tokio::spawn`
+      in `ValueStream::spawn`, which must be [`'static`](glossary:static-lifetime)
+      ([lesson](lesson:tasks-channels-01)). Capturing an `Arc` by move moves that handle; code that
+      needs to keep its own handle clones the `Arc` first ([lesson](lesson:iterators-closures-03)).
+    examples: [iterators-closures-03, tasks-channels-01]
+  - id: mutable-reference
+    term: "Mutable reference"
+    body: |
+      A mutable reference `&mut T` is an **exclusive** borrow: while it is live, no other reference to
+      the same value may be used, which is what lets the holder change it safely. `Table::push_row(&mut
+      self, ...)` changes a table in place, while `with_row(mut self, ...)` takes the table by value
+      and hands it back ([lesson](lesson:mutability-01)). The parser advances its cursor through
+      `&mut self` in `peek`, `bump` and `eat` ([lesson](lesson:mutability-02)). See
+      [mutable borrowing](concept:mutable-borrowing).
+    examples: [mutability-01, mutability-02, mutability-04]
+  - id: mutex
+    term: "`Mutex`"
+    body: |
+      `Mutex<T>` gives mutable access to `T` through a shared reference by letting one thread at a time
+      hold its lock; `lock()` returns a guard that derefs to `T` and unlocks when
+      [dropped](glossary:drop). A lock is poisoned if a thread panicked while holding it, so `lock()`
+      returns a `Result`. `Arc<Mutex<...>>` is the common pairing: the [`Arc`](glossary:arc) shares
+      ownership, the `Mutex` synchronizes mutation, as in the process sample table and the background
+      job results ([lesson](lesson:smart-pointers-03)).
+    examples: [smart-pointers-02, smart-pointers-03, tasks-channels-03]
+  - id: newtype
+    term: "Newtype"
+    body: |
+      A newtype is a tuple struct with one field that gives a primitive a meaning and rules of its own:
+      `ExitStatus(u8)` or `Fd(u16)`. It costs nothing at run time, but the compiler no longer lets a raw
+      `u8` or `u16` stand in for it. `Fd` has a public getter and a crate-private conversion, which keeps
+      raw descriptors inside `ono-process` ([lesson](lesson:structs-methods-03)). See
+      [newtypes](concept:newtypes).
+    examples: [functions-types-01, structs-methods-03]
+  - id: object-safety
+    term: "Object safety (dyn compatibility)"
+    body: |
+      A trait is dyn-compatible (formerly "object-safe") when it can be used as `dyn Trait`: roughly,
+      its methods take `self` by reference, and none is generic or returns `Self`. A plain `async fn`
+      in a trait returns an unnamed future type per implementation, so such a trait is not
+      dyn-compatible; that is why `CommandImpl` returns a boxed `OutcomeFuture` and `Provider` uses
+      [`#[async_trait]`](glossary:async-trait) ([lesson](lesson:async-03)). `Provider` and
+      `CommandImpl` are written so they can live in `Arc<dyn ...>` collections
+      ([lesson](lesson:traits-04)).
+    examples: [traits-04, async-03]
+  - id: oncelock
+    term: "`OnceLock`"
+    body: |
+      `std::sync::OnceLock<T>` is a cell that can be set once, safely from any thread; `get_or_init`
+      runs its closure on the first call and returns a reference to the stored value on every later
+      one. As a `static`, it is a value computed on first use and then shared by the whole program.
+      `CommandRegistry::embedded()` uses one so the embedded [command contracts](glossary:command-contract)
+      are parsed at most once per process, and callers get a `&'static CommandRegistry`
+      ([lesson](lesson:derives-macros-04)).
+    examples: [derives-macros-04]
+  - id: option
+    term: "`Option`"
+    body: |
+      `Option<T>` is the enum `Some(T)` or `None`: absence made explicit in the type instead of a null
+      or a magic value. `ExitStatus::signal` returns `Option<u8>` rather than, say, 0 for "no signal"
+      ([lesson](lesson:option-01)). `as_ref` and `as_deref` borrow through an `Option` without taking its
+      contents, and `?` on an `Option` returns `None` early ([lesson](lesson:option-04)). In
+      Ono-Sendai's data model an unknown *value* is `Value::Null`, not `None`; see
+      [`FieldAccess`](glossary:field-access).
+    examples: [option-01, option-04, option-03]
+  - id: ownership
+    term: "Ownership"
+    body: |
+      Every value in Rust has exactly one owner (a variable, a field or a parameter), and when the owner
+      goes out of scope the value is [dropped](glossary:drop). Ownership can be
+      [moved](glossary:move), temporarily lent out by [borrowing](glossary:borrow), or shared among
+      several owners with [`Arc`](glossary:arc). `prepare_stage` in the executor is a good exercise:
+      every value in it is borrowed, moved, dropped or cloned on purpose
+      ([lesson](lesson:ownership-moves-04)). See [ownership](concept:ownership).
+    examples: [ownership-moves-01, ownership-moves-04, smart-pointers-01]
+  - id: pattern-matching
+    term: "Pattern matching"
+    body: |
+      Pattern matching tests a value against shapes and binds names to its parts: `match` with arms,
+      `if let`, [`let else`](glossary:let-else), [let chains](glossary:let-chain) and `matches!`. A
+      `match` must be exhaustive, and arms are tried in order. Ono-Sendai's `Statement::span` binds each
+      variant's payload, including one or-pattern that binds the same name in three variants
+      ([lesson](lesson:enums-matching-03)), and `ono`'s `main` matches on how the shell was started to
+      choose an exit status ([lesson](lesson:enums-matching-04)). See
+      [pattern matching](concept:pattern-matching).
+    examples: [enums-matching-03, option-03, enums-matching-04]
+  - id: pipeline-stage
+    term: "Pipeline stage"
+    body: |
+      A stage is one command in a pipeline such as `get process | where cpu > 20`. In a native
+      pipeline each stage is bound against its [command contract](glossary:command-contract) and runs
+      as its own Tokio [task](glossary:task): a producer sends values, a transform receives from the
+      previous stage and sends to the next, joined by bounded [channels](glossary:channel)
+      ([lesson](lesson:tasks-channels-01)). `ValueStream::stage` gives each new stage the pipeline's
+      capacity, cancel token and diagnostics, "so a composed pipeline stays one pipeline". See
+      [typed pipelines](topic:pipeline).
+    examples: [tasks-channels-01, execution-path-02, ownership-moves-04]
+  - id: provenance
+    term: "Provenance"
+    body: |
+      `Provenance` records where a record came from: the [provider](glossary:provider) that produced
+      it and the schema it was read under (as in `Provenance::local("nss", schema_id)`), optionally its
+      source, and the instant of the reading. The `Provider::id` doc says a provider's id "appears in
+      every record's provenance, so a user can always ask where a value came from". Every
+      `RecordValue` is built with one ([lesson](lesson:ownership-moves-01)). Because ordinary `==` on
+      records compares provenance too, `diff` and `watch` use `Value::same_data` to compare data rather
+      than readings ([lesson](lesson:iterators-closures-02)).
+    examples: [ownership-moves-01, iterators-closures-02]
+  - id: provider
+    term: "Provider"
+    body: |
+      A provider is the code behind the shell's knowledge of one system, such as processes, DNS or
+      systemd. It implements the `Provider` trait (`Send + Sync + Debug`): required methods declare its
+      id, targets, schemas and capabilities, `snapshot` returns a [`ValueStream`](glossary:value-stream)
+      of records, and defaults say honestly what it cannot do, such as `subscribe` returning
+      `provider.unsupported` ([lesson](lesson:provider-boundary-01)). Providers never format output; the
+      shell reaches them through `Arc<dyn Provider>` in a `ProviderRegistry`. See
+      [providers](topic:providers).
+    examples: [traits-03, provider-boundary-01, provider-boundary-02]
+  - id: question-mark-operator
+    term: "Question-mark operator (`?`)"
+    body: |
+      `expr?` on a `Result` evaluates to the `Ok` value, or returns early from the function with the
+      `Err`, first converting it with `From::from` into the function's error type. On an `Option` it
+      returns `None` early. Ono-Sendai's `?` usage relies on that conversion: `impl From<ErrorValue> for
+      Flow` lets evaluator code apply `?` to any `ErrorValue` result ([lesson](lesson:conversions-03)).
+      `ok_or_else` turns an `Option` into a `Result` first ([lesson](lesson:result-errors-03)). See
+      [the `?` operator](concept:question-mark).
+    examples: [result-errors-03, conversions-03, option-04]
+  - id: record
+    term: "Record"
+    body: |
+      A `RecordValue` is a typed object bound to a [schema](glossary:schema): its declared fields are
+      stored in a `Vec<Value>` by schema position, extra fields in a `MapValue`, and a
+      [provenance](glossary:provenance) says where it came from. Providers build records with
+      `RecordValue::builder(...)`, `.set(...)?` and `.build()`; fields never set stay `Value::Null`,
+      which means unknown ([lesson](lesson:ownership-moves-01)). In a pipeline a record travels as
+      `Value::Record(Arc<RecordValue>)`, so passing it on is a refcount bump. See
+      [records and schemas](topic:records-schemas).
+    examples: [ownership-moves-01, option-03, smart-pointers-01]
+  - id: reference-counting
+    term: "Reference counting"
+    body: |
+      Reference counting keeps a count of owners next to a heap value: cloning the handle increments the
+      count, dropping one decrements it, and the value is freed when the count reaches zero. `Arc` uses
+      an atomic counter so handles can be cloned and dropped on different threads; `Rc` is the
+      single-thread version. Ono-Sendai's `Value` doc states the consequence directly: "cloning a value
+      is a refcount bump whatever it holds" ([lesson](lesson:smart-pointers-01)). The count governs
+      lifetime only; it does not synchronize access to the contents.
+    examples: [smart-pointers-01, ownership-moves-03]
+  - id: result
+    term: "`Result`"
+    body: |
+      `Result<T, E>` is the enum `Ok(T)` or `Err(E)`: failure as an ordinary value the caller must deal
+      with. `Value::as_bool` returns `Result<bool, ErrorValue>`, `Err` carrying a type-mismatch
+      [error value](glossary:error-value) ([lesson](lesson:result-errors-01)). Crates often define an
+      alias such as `ono_process::Result<T>` ([lesson](lesson:result-errors-02)). Not every fallible
+      code returns one: Ono-Sendai's parser collects diagnostics instead so it can report every error at
+      once ([lesson](lesson:result-errors-04)).
+    examples: [result-errors-01, result-errors-04, result-errors-02]
+  - id: schema
+    term: "Schema"
+    body: |
+      A `Schema` declares the fields and types of one kind of [record](glossary:record) and gives each
+      field a position, so a record can store its values in schema order. Providers declare the schemas
+      they produce, and `SchemaRegistry::register` accepts a schema once per id and returns the shared
+      `Arc<Schema>` handle callers keep ([lesson](lesson:mutability-03)). `Schema::validate` checks a
+      record against the schema and returns the first violation ([lesson](lesson:result-errors-04)).
+    examples: [mutability-03, result-errors-04, ownership-moves-01]
+  - id: select
+    term: "`select!`"
+    body: |
+      `tokio::select!` waits on several futures at once, runs the branch of the first to complete, and
+      **drops** the others, which [cancels](glossary:cancellation) them. By default it picks randomly
+      among ready branches; `biased;` checks them in written order. `StreamSink::send` puts the cancel
+      token first with `biased;` "so a cancelled pipeline stops rather than racing the channel for one
+      more value" ([lesson](lesson:tasks-channels-02)). The foreground driver races the pipeline
+      against Ctrl-C the same way ([lesson](lesson:tasks-channels-04)).
+    examples: [tasks-channels-02, tasks-channels-04]
+  - id: send
+    term: "`Send`"
+    body: |
+      `Send` is an automatically implemented marker trait for types whose ownership may be transferred
+      to another thread. Most types are `Send`; `Rc` and raw pointers are not. `tokio::spawn` on a
+      multi-threaded runtime requires the future to be `Send`, since the task may move between worker
+      threads at an await, which is why `ValueStream::spawn` bounds its producer with `Send + 'static`
+      ([lesson](lesson:tasks-channels-01)). `OutcomeFuture` is a `dyn Future + Send` for the same
+      reason. See [`Send` and `Sync`](concept:send-sync).
+    examples: [tasks-channels-01, provider-boundary-01, async-03]
+  - id: serde
+    term: "Serde"
+    body: |
+      Serde is the serialization framework whose `Serialize` and `Deserialize` derives, plus
+      `#[serde(...)]` field attributes, describe how a Rust type maps to JSON, YAML or another format.
+      Read those derives as a description of the file format: Ono-Sendai's history entries and adapter
+      packs are defined this way, and command contracts are first read into plain `Raw*` structs, then
+      validated in Rust ([lesson](lesson:derives-macros-03)). `from_serde::<T>` shows serde bounds on a
+      generic ([lesson](lesson:generics-03)).
+    examples: [derives-macros-03, generics-03]
+  - id: shared-reference
+    term: "Shared reference"
+    body: |
+      A shared reference `&T` lends read access to a value; any number may exist at once, and while
+      they do the value cannot be changed (except through [interior mutability](glossary:interior-mutability)).
+      It is more than a pointer: the compiler guarantees it is non-null, aligned, points to a live value
+      and does not outlive it. `Span::of(&self, source: &str) -> &str` returns a borrowed slice of the
+      source line rather than a copy ([lesson](lesson:borrowing-01)). A `&T` is itself
+      [`Copy`](glossary:copy).
+    examples: [borrowing-01, structs-methods-02, borrowing-02]
+  - id: slice
+    term: "Slice"
+    body: |
+      A slice `&[T]` is a borrowed view of a contiguous run of elements owned elsewhere, such as a
+      `Vec<T>` or an array: a pointer plus a length. Indexing with a range (`&arguments[1..]`) makes a
+      sub-slice without copying. `CommandRegistry::resolve` returns the remaining arguments as a slice of
+      the caller's arguments ([lesson](lesson:borrowing-04)), and `ono_protocol::decode` reads one frame
+      out of a byte buffer, taking the header with `buffer.get(..FRAME_HEADER_LEN)`, a checked slice
+      that is `None` when too few bytes have arrived ([lesson](lesson:unseen-with-solutions-01)). See
+      [string slice](glossary:string-slice).
+    examples: [borrowing-02, unseen-with-solutions-01, borrowing-04]
+  - id: smart-pointer
+    term: "Smart pointer"
+    body: |
+      A smart pointer is a type that acts like a reference (it implements `Deref`) but also owns its
+      target and adds behaviour, usually in its `Drop`. Ono-Sendai uses three: [`Box`](glossary:box) for
+      single ownership on the heap, [`Arc`](glossary:arc) for shared ownership, and
+      [`Cow`](glossary:cow) for borrowing when possible and owning when needed
+      ([lesson](lesson:smart-pointers-04)). `String` and `Vec` are smart pointers in the same sense.
+      See [smart pointers](concept:smart-pointers).
+    examples: [smart-pointers-01, smart-pointers-04]
+  - id: spawn-blocking
+    term: "`spawn_blocking`"
+    body: |
+      `tokio::task::spawn_blocking(f)` runs an ordinary closure on a separate pool of threads reserved
+      for code that blocks in system calls, so it cannot stall the async worker threads. It returns a
+      `JoinHandle<T>` that is a future of `Result<T, JoinError>`. Ono-Sendai runs NSS lookups such as
+      `getpwuid_r` this way under a timeout; if the timeout wins, only the *waiting* is cancelled and the
+      closure keeps running to completion ([lesson](lesson:async-04)).
+    examples: [async-04]
+  - id: static-lifetime
+    term: "`'static`"
+    body: |
+      `'static` as a bound (`T: 'static`) means the type holds no borrow that could expire: it owns all
+      its data or borrows only from things that live for the whole program. It does not mean the value
+      lives forever. `ValueStream::spawn` requires its producer closure to be `Send + 'static` because
+      `tokio::spawn` may run the task after the caller's stack frame is gone
+      ([lesson](lesson:tasks-channels-01)). As a reference lifetime, `&'static CommandRegistry` really is
+      a borrow valid for the whole program, such as the embedded registry kept in a `static`
+      [`OnceLock`](glossary:oncelock).
+    examples: [tasks-channels-01, borrowing-04, derives-macros-04]
+  - id: static-dispatch
+    term: "Static dispatch"
+    body: |
+      Static dispatch resolves a trait method call at compile time: for a [generic](glossary:generic)
+      or [`impl Trait`](glossary:impl-trait) parameter, the compiler generates a copy of the function
+      for each concrete type, so calls can be inlined. `Value::list(items: impl IntoIterator<Item =
+      Value>)` is compiled once per argument type ([lesson](lesson:generics-01)). `Where::new` accepts a
+      predicate statically and then boxes it into a trait object, moving from static to
+      [dynamic dispatch](glossary:dynamic-dispatch) ([lesson](lesson:generics-02)).
+    examples: [generics-01, generics-02]
+  - id: string-slice
+    term: "String slice (`&str` vs `String`)"
+    body: |
+      `String` owns a growable, heap-allocated UTF-8 buffer; `&str` is a borrowed view of UTF-8 text
+      owned elsewhere (a `String`, a literal in the binary, or part of the source line). Functions that
+      only read text take `&str`, and a `&String` coerces to it. The parser hands out `&str` slices of
+      the source instead of copies ([lesson](lesson:borrowing-01)), while `Table` stores owned `String`s
+      and lends `&str` views ([lesson](lesson:borrowing-02)). `Value::String` holds `Arc<str>`: shared,
+      immutable text.
+    examples: [borrowing-02, borrowing-01, functions-types-04]
+  - id: sync
+    term: "`Sync`"
+    body: |
+      `Sync` is a marker trait for types that may be accessed through shared references from several
+      threads at once; formally, `T` is `Sync` when `&T` is `Send`. `Arc<T>` is only `Send` and `Sync`
+      if `T` is `Sync`, so an `Arc` of shared mutable state needs a `Mutex` or atomics inside, which is
+      exactly what `CancelToken` and the `env` provider have ([lesson](lesson:smart-pointers-02)). The
+      `Provider` and `Clock` traits require `Send + Sync` so implementations can be shared as
+      `Arc<dyn ...>` ([lesson](lesson:provider-boundary-01)).
+    examples: [smart-pointers-02, provider-boundary-01, traits-01]
+  - id: task
+    term: "Task"
+    body: |
+      A task is a future handed to the runtime with `tokio::spawn`, which then polls it independently of
+      its spawner; on a multi-threaded runtime different tasks can run in parallel on different worker
+      threads. Tasks are much lighter than OS threads. Every stage of a native pipeline is a spawned
+      task ([lesson](lesson:tasks-channels-01)). Dropping a task's `JoinHandle` detaches it rather than
+      stopping it. Ono-Sendai also uses real OS threads, for example to drain pipes, and bridges them to
+      tasks with `blocking_send` ([lesson](lesson:tasks-channels-03)).
+    examples: [tasks-channels-01, tasks-channels-03, execution-path-02]
+  - id: tokio-runtime
+    term: "Tokio runtime"
+    body: |
+      The Tokio runtime is the executor that polls futures, schedules [tasks](glossary:task) on worker
+      threads, and drives timers and I/O. Ono-Sendai's session builds a multi-threaded runtime lazily,
+      the first time a native pipeline needs one, and returns `None` rather than panicking if the
+      operating system refuses ([lesson](lesson:async-04)). The synchronous evaluator enters it with
+      [`block_on`](glossary:block-on). See [async execution](topic:async-execution).
+    examples: [async-04, execution-path-02]
+  - id: trait
+    term: "Trait"
+    body: |
+      A trait names a set of behaviour, methods (possibly with default bodies) and associated items,
+      that types implement. The `Clock` trait lets a provider ask for the time without depending on
+      whether it gets the system clock or a test clock ([lesson](lesson:traits-01)); the `Provider`
+      trait separates what every provider must say from what it may leave to an honest default
+      ([lesson](lesson:traits-03)). Traits are more than interfaces: they also drive generics
+      (bounds), operator and conversion behaviour, and marker properties such as `Send`.
+    examples: [traits-01, traits-03, provider-boundary-01]
+  - id: trait-bound
+    term: "Trait bound"
+    body: |
+      A trait bound (`T: Display`, `F: FnOnce(StreamSink) -> Fut + Send + 'static`) constrains a
+      [generic](glossary:generic) parameter to types that implement certain traits, and in return lets
+      the body use those traits' methods. Bounds can be written inline or in a
+      [where clause](glossary:where-clause). `ValueStream::spawn` bounds both its closure type and the
+      future it returns, so the producer can be moved into a spawned task
+      ([lesson](lesson:tasks-channels-01)). See [trait bounds](concept:trait-bounds).
+    examples: [generics-02, tasks-channels-01, generics-01]
+  - id: trait-object
+    term: "Trait object"
+    body: |
+      A trait object (`dyn Trait`) is a value of some type that implements the trait, whose concrete type
+      is known only at run time; it always sits behind a pointer such as `&dyn`, `Box<dyn>` or
+      `Arc<dyn>`, which carries a vtable. `Arc<dyn Clock>` lets a provider use the real or a test clock
+      ([lesson](lesson:traits-01)), and `TemporalProvider` wraps an inner `Arc<dyn Provider>`
+      ([lesson](lesson:provider-boundary-04)). Only [dyn-compatible](glossary:object-safety) traits can
+      be trait objects. See [trait objects](concept:trait-objects).
+    examples: [traits-01, traits-04, provider-boundary-04]
+  - id: value
+    term: "`Value`"
+    body: |
+      `ono_value::Value` is the enum of everything that flows through a pipeline: `Null` (known to be
+      unknown), scalars with meaning such as `ByteSize`, `Duration`, `Ip` and `Port`, and compound
+      `List`, `Map`, `Record` and `Error` variants ([lesson](lesson:enums-matching-02)). Every compound
+      case sits behind an `Arc`, so cloning a `Value` is a refcount bump whatever it holds
+      ([lesson](lesson:smart-pointers-01)). Streams are deliberately not a variant. See
+      [the value model](topic:value-model).
+    examples: [enums-matching-02, smart-pointers-01, result-errors-01]
+  - id: value-stream
+    term: "`ValueStream`"
+    body: |
+      `ono_pipeline::ValueStream` is the receiving end of one pipeline stage: a bounded channel of
+      [`Value`](glossary:value)s plus a separate channel of `ErrorValue`s, with the pipeline's
+      capacity, [cancel token](glossary:cancel-token) and diagnostics. `ValueStream::spawn` runs a
+      producer as a task and `stage` adds a transform after it ([lesson](lesson:tasks-channels-01)).
+      A provider's `snapshot` returns one, putting per-object failures on the error channel so the
+      objects that could be read still arrive ([lesson](lesson:provider-boundary-02)).
+    examples: [tasks-channels-01, provider-boundary-02, async-01]
+  - id: visibility
+    term: "Visibility"
+    body: |
+      Items are private to their module by default; `pub` exposes them everywhere, `pub(crate)` only
+      inside the crate, and `pub(super)` only to the parent module. Visibility is how Ono-Sendai draws
+      boundaries: `Fd` has a public getter but a crate-private conversion, so raw descriptors stay
+      inside `ono-process` ([lesson](lesson:structs-methods-03)), and the parser's state struct has
+      `pub(super)` fields shared only among its own sub-modules ([lesson](lesson:structs-methods-04)).
+      See [visibility](concept:visibility).
+    examples: [structs-methods-03, structs-methods-04]
+  - id: where-clause
+    term: "Where clause"
+    body: |
+      A `where` clause lists [trait bounds](glossary:trait-bound) after a signature instead of inline,
+      which keeps long bounds readable and allows bounds on types other than the parameters themselves.
+      `ValueStream::spawn<F, Fut>` states `where F: FnOnce(StreamSink) -> Fut + Send + 'static, Fut:
+      Future<Output = ()> + Send + 'static` ([lesson](lesson:tasks-channels-01)). The
+      [blanket implementation](glossary:blanket-implementation) of `Predicate` uses one to cover every
+      fitting closure ([lesson](lesson:generics-02)). Not to be confused with Ono-Sendai's `where`
+      command.
+    examples: [generics-02, tasks-channels-01]
