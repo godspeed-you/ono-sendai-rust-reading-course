@@ -1,0 +1,85 @@
+id: basics
+number: 1
+title: Basics
+summary: |
+  Two short functions, read with a lot of help. Continue with [the next chapter](chapter:deeper).
+lessons:
+  - id: basics-01
+    title: Greeting a user
+    stage: guided
+    summary: A function that borrows a string.
+    prerequisites: []
+    concepts: [borrowing]
+    ono_topics: [text-handling]
+    objectives:
+      - Explain what `&str` means in a parameter list.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          This lesson reads `greet`. It relates to [borrowing](concept:borrowing),
+          to [text handling](topic:text-handling), to the [borrow](glossary:borrow) glossary entry
+          and leads on to [counting words](lesson:basics-02).
+      - type: code
+        snippet: greet
+        caption: The whole function.
+        highlight: [4]
+        annotations:
+          - lines: 4
+            token: "&str"
+            kind: rust
+            body: The parameter is borrowed, not owned.
+          - lines: 5-6
+            kind: flow
+            body: The last expression is the return value.
+      - type: diagram
+        kind: ownership
+        title: Who owns the name?
+        art: |
+          caller ──lends──► greet
+        description: The caller keeps ownership; `greet` only borrows the name.
+      - type: exercise
+        id: basics-01-q1
+        exercise_type: multiple-choice
+        prompt: Who owns the string passed as `name`?
+        choices:
+          - text: The caller.
+            correct: true
+            feedback: Right, `&str` is a borrow.
+          - text: The function `greet`.
+            correct: false
+            feedback: A `&str` parameter does not take ownership.
+        hints:
+          - level: 1
+            body: Look at the `&` in front of the type.
+          - level: 2
+            body: A reference never owns what it points to.
+      - type: exercise
+        id: basics-01-q2
+        exercise_type: explain-line
+        prompt: Explain line 5.
+        snippets: [greet]
+        solution: |
+          It builds a new `String` with `format!` and returns it as the last expression.
+  - id: basics-02
+    title: Counting words
+    stage: assisted
+    summary: An iterator chain in one line.
+    prerequisites: [basics-01]
+    concepts: [borrowing]
+    ono_topics: [text-handling]
+    objectives:
+      - Trace a value through an iterator chain.
+    sections:
+      - type: code
+        snippet: count-words
+      - type: exercise
+        id: basics-02-q1
+        exercise_type: trace-value
+        prompt: What does `count_words("a b  c")` return?
+        hints:
+          - level: 1
+            body: Consecutive spaces do not create empty words.
+        solution: |
+          It returns `3`: `split_whitespace` skips runs of whitespace.

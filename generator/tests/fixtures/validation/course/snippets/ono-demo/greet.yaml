@@ -1,0 +1,14 @@
+id: greet
+source:
+  file: crates/ono-demo/src/lib.rs
+  commit: a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+segments:
+  - start_line: 3
+    end_line: 6
+    anchor: "pub fn greet"
+    content_hash: sha256:97a7126c74172c02a3c1ac90bdb0e33ac79d77e284d336616102a8421266f40c
+    code: |
+      /// Greets a user by name.
+      pub fn greet(name: &str) -> String {
+          format!("hello, {name}")
+      }

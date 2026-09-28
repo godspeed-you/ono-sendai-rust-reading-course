@@ -1,0 +1,11 @@
+terms:
+  - id: borrow
+    term: Borrow
+    body: |
+      A reference to a value that does not take ownership. See
+      [the first lesson](lesson:basics-01).
+    examples: [basics-01]
+  - id: variant
+    term: Variant
+    body: One of the alternatives of an [enum](concept:enums).
+    examples: [deeper-02]

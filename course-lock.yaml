@@ -1,0 +1,9 @@
+# The course version and the one Ono-Sendai revision it teaches from (spec §18, §67).
+# The commit is authoritative; `version` is informational and is checked against the checkout's
+# tag by `./course validate --ono <checkout>`.
+course:
+  version: 1.0.0
+ono_sendai:
+  repository: https://github.com/godspeed-you/ono-sendai
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+  version: v0.6.2

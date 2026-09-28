@@ -1,0 +1,21 @@
+id: sum-until-negative
+source:
+  file: crates/ono-demo/src/lib.rs
+  commit: a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+segments:
+  - start_line: 13
+    end_line: 23
+    anchor: "pub fn sum_until_negative"
+    content_hash: sha256:b5430b6667d6fa97ad12c0c248f3c85f2ea24828c185ca5825d0f1dbfeb87b41
+    code: |
+      /// Adds up all values, stopping at the first negative one.
+      pub fn sum_until_negative(values: &[i64]) -> i64 {
+          let mut total = 0;
+          for v in values {
+              if *v < 0 {
+                  break;
+              }
+              total += v;
+          }
+          total
+      }
