@@ -1,0 +1,33 @@
+title: Mini Reading Course
+tagline: A tiny fixture course that exercises every part of the renderer.
+chapters:
+  - chapters/01-values.yaml
+  - chapters/02-evaluation.yaml
+concepts:
+  - id: enums
+    title: Enums
+    summary: A type that is exactly one of several named variants.
+  - id: borrowing
+    title: Borrowing
+    summary: Using a value through a reference (`&T`) without taking ownership.
+  - id: pattern-matching
+    title: Pattern matching
+    summary: Choosing a branch by the *shape* of a value with `match`.
+  - id: error-handling
+    title: Error handling
+    summary: Returning `Result<T, E>` and propagating failures with `?`.
+ono_topics:
+  - id: value-model
+    title: The value model
+    summary: How data between commands is represented, see [Enums](concept:enums).
+  - id: evaluation
+    title: Evaluation
+    summary: How words and commands turn into values.
+checklists:
+  independent-reading:
+    title: Independent-reading checklist
+    items:
+      - I can summarize the purpose of this code.
+      - I identified the major inputs and outputs.
+      - I followed the main control flow, including every early return.
+      - I understand which values are owned, borrowed, moved or cloned.

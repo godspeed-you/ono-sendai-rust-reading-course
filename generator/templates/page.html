@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="{{description}}">
+<meta name="generator" content="ono-course {{generator_version}}">
+<title>{{title}}</title>
+<link rel="icon" href="{{root}}assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{root}}assets/course.css">
+<script src="{{root}}assets/course.js" defer></script>
+</head>
+<body class="page page-{{kind}}" data-page="{{kind}}"{{body_attrs}}>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="site-header">
+<div class="header-inner">
+<a class="brand" href="{{root}}index.html"><svg class="brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="7" class="brand-mark-bg"/><path d="M9 11l6 5-6 5" class="brand-mark-fg"/><path d="M17 22h7" class="brand-mark-fg"/></svg><span class="brand-text"><span class="brand-name">Ono-Sendai</span> <span class="brand-sub">Rust Reading Course</span></span></a>
+<nav class="site-links" aria-label="Site">
+<ul>
+{{site_links}}
+</ul>
+</nav>
+<a class="nav-jump" href="#course-nav">Contents</a>
+<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="course-nav" hidden>Menu</button>
+</div>
+</header>
+<div class="layout">
+<main id="main" tabindex="-1">
+<p class="storage-note" role="note" hidden>This browser does not let the course store anything, so progress, ticked checklists and notes are kept only until you leave this page. Everything else works normally.</p>
+{{main}}
+</main>
+{{nav}}
+</div>
+<footer class="site-footer">
+<div class="footer-inner">
+<p class="footer-versions">Ono-Sendai Rust Reading Course <strong>{{course_version}}</strong> · reads {{ono_label}} at commit <code>{{short_commit}}</code></p>
+<p class="footer-contract">Static. Offline. No server. No account. No LLM. · <a href="{{root}}about.html">About this build</a></p>
+</div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,12 @@
+terms:
+  - id: enum
+    term: enum
+    body: |
+      A type whose values are exactly one of a fixed set of *variants*, e.g. `Value::Int(3)`.
+    examples: [values-01]
+  - id: borrow
+    term: Borrow
+    body: |
+      Access to a value through a reference such as `&self`, without taking ownership.
+      Compare [the lesson on methods](lesson:values-01).
+    examples: [values-01, eval-01]

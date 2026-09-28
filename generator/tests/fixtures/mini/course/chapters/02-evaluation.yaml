@@ -1,0 +1,99 @@
+id: evaluation
+number: 2
+title: Evaluation
+summary: |
+  From words to values, and from commands to results.
+lessons:
+  - id: eval-01
+    title: Evaluating a word
+    stage: practice
+    summary: Read a whole function that returns a `Result`.
+    prerequisites: [values-02]
+    concepts: [error-handling, pattern-matching]
+    ono_topics: [evaluation]
+    objectives:
+      - Read a complete function and describe its control flow
+    sections:
+      - type: code
+        snippet: eval-word
+      - type: exercise
+        id: eval-01-q1
+        exercise_type: read-function
+        prompt: |
+          Describe what `eval_word` does for `$x`, `42` and `hello`.
+        hints:
+          - level: 1
+            body: There is an early `return`.
+          - level: 2
+            body: "`parse::<i64>()` can fail."
+        solution:
+          summary: |
+            Variables are looked up, numbers parsed, everything else becomes text.
+          analysis:
+            - aspect: purpose
+              body: Turn one word into a `Value`.
+            - aspect: control-flow
+              body: An early return for variables, then a `match` on the parse result.
+            - aspect: inputs
+              body: A borrowed context and a borrowed word.
+          guarantees: |
+            The function never returns `Err`, although its signature allows it.
+          semantics: |
+            `cloned()` copies the stored value, so the context keeps its own.
+          interpretation: |
+            Returning `Result` leaves room for future failure modes.
+  - id: eval-02
+    title: Summing values
+    stage: transfer
+    summary: Unseen code with a type check inside a loop.
+    concepts: [error-handling]
+    ono_topics: [evaluation]
+    objectives:
+      - Transfer what you learned to a new function
+    sections:
+      - type: code
+        snippet: eval-sum
+      - type: exercise
+        id: eval-02-q1
+        exercise_type: trace-control-flow
+        prompt: |
+          When does `sum` return early?
+        hints:
+          - level: 1
+            body: Look at the second match arm.
+        solution:
+          summary: |
+            On the first value that is not an integer.
+          analysis:
+            - aspect: control-flow
+              body: The loop stops at the first mismatch.
+            - aspect: errors
+              body: A `TypeMismatch` names the found type.
+            - aspect: outputs
+              body: The total, or the first error.
+          guarantees: |
+            All integers before the mismatch were added, but the total is discarded.
+          semantics: |
+            `return` inside the loop leaves the whole function.
+          interpretation: |
+            Failing fast keeps error messages precise.
+  - id: eval-03
+    title: Reading on your own
+    stage: independent
+    summary: Read the command runner without a solution.
+    concepts: [error-handling, borrowing]
+    ono_topics: [evaluation]
+    objectives:
+      - Read unseen code independently
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          This is the last lesson. There is no solution.
+      - type: exercise
+        id: eval-03-q1
+        exercise_type: read-function
+        prompt: |
+          Read `run` and decide when you understand it.
+        snippets: [eval-run]
+        checklist: independent-reading

@@ -1,0 +1,152 @@
+id: values
+number: 1
+title: Values & variants
+summary: |
+  How a tiny shell represents the data flowing between commands. Read
+  [the value model](topic:value-model) for the bigger picture.
+lessons:
+  - id: values-01
+    title: The <Value> enum & its methods
+    stage: guided
+    summary: Read an enum declaration and a method that borrows `self`.
+    prerequisites: []
+    concepts: [enums, borrowing]
+    ono_topics: [value-model]
+    objectives:
+      - Read an `enum` declaration and name its variants
+      - Explain what `&self` means in a method signature
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          Every command in the shell produces a `Value`. This is the type that travels through
+          a pipeline, so almost every other file uses it.
+      - type: code
+        snippet: value-enum
+        highlight: [10, 12]
+        caption: |
+          The whole declaration. The derive line gives `Value` debugging output, cloning and
+          equality for free.
+        annotations:
+          - lines: 7
+            kind: rust
+            body: |
+              `#[derive(...)]` asks the compiler to generate trait implementations.
+          - lines: 8
+            token: enum
+            kind: rust
+            body: |
+              `enum` declares a type that is exactly one of the listed variants.
+          - lines: 8-13
+            kind: ono
+            body: |
+              Four variants are enough for this shell: *nothing*, integers, text and lists.
+      - type: prose
+        kind: rust
+        title: Methods that borrow
+        body: |
+          A method taking `&self` only *reads* the value: the caller keeps ownership.
+          See [borrowing](concept:borrowing) and the [glossary](glossary:borrow).
+      - type: code
+        snippet: value-type-name
+        annotations:
+          - lines: 17
+            token: "&self"
+            kind: ownership
+            body: |
+              `&self` borrows the value immutably for the duration of the call.
+          - lines: 18-23
+            kind: flow
+            body: |
+              `match` picks exactly one arm; every variant is covered.
+      - type: diagram
+        kind: ownership
+        title: Who owns the value?
+        art: |
+          caller ──owns──► Value
+             │
+             └── &Value ──► type_name()
+        description: |
+          The caller owns the `Value`. `type_name` receives only a shared reference and returns
+          a `&'static str`, so ownership never moves.
+      - type: prose
+        kind: ono
+        body: |
+          Error messages need a short type name, which is why this method exists.
+      - type: exercise
+        id: values-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          After `v.type_name()` returns, who owns `v`?
+        choices:
+          - text: The caller still owns `v`
+            correct: true
+            feedback: |
+              Right: `&self` only borrows.
+          - text: "`type_name` took ownership"
+            feedback: |
+              No — it would need `self`, not `&self`, to take ownership.
+          - text: Nobody; `v` was dropped
+            feedback: |
+              Nothing moved, so nothing was dropped.
+        hints:
+          - level: 1
+            body: Look at the first parameter.
+          - level: 2
+            body: Compare `self` and `&self`.
+      - type: exercise
+        id: values-01-q2
+        exercise_type: explain-line
+        prompt: |
+          Explain line 17 in your own words.
+
+          Mention the return type as well.
+        hints:
+          - level: 1
+            body: What does `'static` say about the returned string?
+        solution: |
+          The method borrows `self` and returns a string slice that lives for the whole program.
+      - type: prose
+        kind: recap
+        body: |
+          An enum lists variants; `&self` borrows.
+  - id: values-02
+    title: A shortened view of methods
+    stage: assisted
+    summary: Follow a value through a method that consumes `self`.
+    prerequisites: [values-01]
+    concepts: [borrowing, pattern-matching]
+    ono_topics: [value-model]
+    objectives:
+      - Contrast `self` with `&self`
+    sections:
+      - type: prose
+        kind: black-box
+        body: |
+          Traits such as `Display` stay a black box for now.
+      - type: code
+        snippet: value-methods
+        highlight: [30]
+        annotations:
+          - lines: 30
+            token: self
+            kind: ownership
+            body: |
+              Plain `self`: the method consumes the value.
+      - type: exercise
+        id: values-02-q1
+        exercise_type: trace-value
+        prompt: |
+          Trace `items` through `into_list` and through the display code below.
+        snippets: [value-methods, value-display]
+        hints:
+          - level: 1
+            body: Where does `items` come from?
+          - level: 2
+            body: It is moved out of the `List` variant.
+        solution: |
+          `items` is moved out of the consumed value and returned.
+      - type: prose
+        kind: note
+        body: |
+          The same snippet can appear twice on one page; ids stay unique.

@@ -1,0 +1,10 @@
+id: value-display
+source:
+  file: crates/mini-shell/src/value.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 38
+  end_line: 55
+  anchor: "impl fmt::Display for Value"
+  content_hash: sha256:c6005dc8fd52d3b927265b15f2ff436a0bbe7a5fa7cd886939ef8798dff4f35d
+  code: "impl fmt::Display for Value {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        match self {\n            Value::Nothing => Ok(()),\n            Value::Int(n) => write!(f, \"{n}\"),\n            Value::Text(s) => write!(f, \"{s}\"),\n            Value::List(items) => {\n                for (i, v) in items.iter().enumerate() {\n                    if i > 0 && i < items.len() {\n                        write!(f, \" \")?;\n                    }\n                    write!(f, \"{v}\")?;\n                }\n                Ok(())\n            }\n        }\n    }\n}\n"

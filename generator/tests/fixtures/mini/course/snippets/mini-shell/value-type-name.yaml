@@ -1,0 +1,10 @@
+id: value-type-name
+source:
+  file: crates/mini-shell/src/value.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 15
+  end_line: 24
+  anchor: "pub fn type_name"
+  content_hash: sha256:1c8a9581b568ddd8a97d0641973ec4e9c761d4e018f39e842a63f06d713966cb
+  code: "impl Value {\n    /// A short name of the value's type, used in error messages.\n    pub fn type_name(&self) -> &'static str {\n        match self {\n            Value::Nothing => \"nothing\",\n            Value::Int(_) => \"int\",\n            Value::Text(_) => \"text\",\n            Value::List(_) => \"list\",\n        }\n    }\n"

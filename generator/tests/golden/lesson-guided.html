@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Read an enum declaration and a method that borrows `self`. — Stage 1 of 5: Guided reading">
+<meta name="generator" content="ono-course 1.0.0">
+<title>The &lt;Value&gt; enum &amp; its methods · Mini Reading Course</title>
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/course.css">
+<script src="../assets/course.js" defer></script>
+</head>
+<body class="page page-lesson" data-page="lesson" data-lesson="values-01" data-stage="guided">
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="site-header">
+<div class="header-inner">
+<a class="brand" href="../index.html"><svg class="brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="7" class="brand-mark-bg"/><path d="M9 11l6 5-6 5" class="brand-mark-fg"/><path d="M17 22h7" class="brand-mark-fg"/></svg><span class="brand-text"><span class="brand-name">Ono-Sendai</span> <span class="brand-sub">Rust Reading Course</span></span></a>
+<nav class="site-links" aria-label="Site">
+<ul>
+<li><a href="../index.html">Course home</a></li>
+<li><a href="../learn-rust.html">Learn Rust</a></li>
+<li><a href="../ono-sendai.html">Understand Ono-Sendai</a></li>
+<li><a href="../glossary.html">Glossary</a></li>
+<li><a href="../about.html">About</a></li>
+</ul>
+</nav>
+<a class="nav-jump" href="#course-nav">Contents</a>
+<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="course-nav" hidden>Menu</button>
+</div>
+</header>
+<div class="layout">
+<main id="main" tabindex="-1">
+<p class="storage-note" role="note" hidden>This browser does not let the course store anything, so progress, ticked checklists and notes are kept only until you leave this page. Everything else works normally.</p>
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="../index.html">Course home</a></li><li><a href="../chapters/01-values.html">Chapter 1: Values &amp; variants</a></li><li><span aria-current="page">Lesson 1 of 2</span></li></ol></nav>
+<header class="page-head lesson-head">
+<p class="kicker">Chapter 1 · Lesson 1 of 2 <span class="kicker-overall">· Lesson 1 of 5 in the course</span></p>
+<h1>The &lt;Value&gt; enum &amp; its methods</h1>
+<p class="lede">Read an enum declaration and a method that borrows `self`.</p>
+<div class="stage-badge stage-guided" data-stage="guided"><p class="stage-badge-name">Stage 1 of 5 · <strong>Guided reading</strong></p><p class="stage-badge-support">Annotated code, hints and full solutions.</p></div>
+</header>
+<section class="lesson-overview" aria-labelledby="overview-h">
+<h2 id="overview-h">In this lesson</h2>
+<dl class="overview">
+<dt>You will learn to</dt>
+<dd><ul class="objectives">
+<li>Read an <code>enum</code> declaration and name its variants</li>
+<li>Explain what <code>&amp;self</code> means in a method signature</li>
+</ul></dd>
+<dt>Before this lesson</dt>
+<dd><p>No prerequisites beyond the lessons before it.</p></dd>
+<dt>Rust concepts</dt>
+<dd><ul class="tags tags-concepts" aria-label="Rust concepts"><li><a class="tag" href="../learn-rust.html#concept-enums">Enums</a></li><li><a class="tag" href="../learn-rust.html#concept-borrowing">Borrowing</a></li></ul></dd>
+<dt>Ono-Sendai topics</dt>
+<dd><ul class="tags tags-topics" aria-label="Ono-Sendai topics"><li><a class="tag" href="../ono-sendai.html#topic-value-model">The value model</a></li></ul></dd>
+</dl>
+</section>
+<section class="lesson-body" aria-labelledby="reading-h">
+<h2 id="reading-h">Reading</h2>
+<div class="prose prose-context" data-kind="context">
+<p class="prose-label"><span class="prose-icon" aria-hidden="true">›</span>Where we are</p>
+<p>Every command in the shell produces a <code>Value</code>. This is the type that travels through
+a pipeline, so almost every other file uses it.</p>
+</div>
+<figure class="code-figure has-ann" id="f1" data-snippet="value-enum" style="--ln-digits:2;--ann-cols:2">
+<div class="code-head">
+<p class="provenance"><span class="prov-ono">Ono-Sendai v0.1.0</span> · <span class="prov-file"><code>crates/mini-shell/src/value.rs</code>:1–13</span> · <span class="prov-commit">commit <code>0123456</code></span></p>
+<details class="source-details"><summary>Source details</summary>
+<dl class="source-meta">
+<dt>File</dt><dd><code>crates/mini-shell/src/value.rs</code></dd>
+<dt>Lines shown</dt><dd>1–13</dd>
+<dt>Commit</dt><dd><code class="hash">0123456789abcdef0123456789abcdef01234567</code></dd>
+<dt>Ono-Sendai version</dt><dd>v0.1.0</dd>
+<dt>Snippet id</dt><dd><code>value-enum</code></dd>
+<dt>Segments</dt><dd><ul class="segments"><li>Lines 1–13 · anchor <code>pub enum Value</code> · <code class="hash">sha256:da21c40a038b646633c89ee723350a3786f1a4f9123548513ff3cebe867f0778</code></li></ul></dd>
+</dl>
+<p class="exact-note">The code is quoted exactly from this commit. Line numbers are the real line numbers in the file.</p>
+</details>
+</div>
+<p class="hl-note"><span class="hl-swatch" aria-hidden="true"></span>Highlighted lines: 10, 12</p>
+<div class="code-tools" hidden><button type="button" class="btn btn-small code-wrap" aria-pressed="false">Wrap long lines</button><button type="button" class="btn btn-small ann-all" data-state="collapsed">Expand all annotations</button></div>
+<div class="code-scroll" tabindex="0" role="region" aria-label="Source code: crates/mini-shell/src/value.rs, lines 1–13"><pre class="source" translate="no"><code><span class="line" data-line="1"><span class="gut"><span class="marks"></span><span class="ln" data-n="1" aria-hidden="true"></span></span><span class="lc"><span class="tok-doc">//! Values that flow through a pipeline.</span></span></span><span class="line" data-line="2"><span class="gut"><span class="marks"></span><span class="ln" data-n="2" aria-hidden="true"></span></span><span class="lc"><span class="tok-doc">//! Design notes: https://example.com/ono/values</span></span></span><span class="line" data-line="3"><span class="gut"><span class="marks"></span><span class="ln" data-n="3" aria-hidden="true"></span></span><span class="lc"></span></span><span class="line" data-line="4"><span class="gut"><span class="marks"></span><span class="ln" data-n="4" aria-hidden="true"></span></span><span class="lc"><span class="tok-kw">use</span> std::fmt;</span></span><span class="line" data-line="5"><span class="gut"><span class="marks"></span><span class="ln" data-n="5" aria-hidden="true"></span></span><span class="lc"></span></span><span class="line" data-line="6"><span class="gut"><span class="marks"></span><span class="ln" data-n="6" aria-hidden="true"></span></span><span class="lc"><span class="tok-doc">/// A value produced by a command.</span></span></span><span class="line ann" data-line="7" data-ann="1"><span class="gut"><span class="marks"><a class="ann-marker" href="#f1-ann-1" data-ann="1" data-n="1" aria-label="Annotation 1: Rust, line 7"></a></span><span class="ln" data-n="7" aria-hidden="true"></span></span><span class="lc"><span class="tok-attr">#[derive(Debug, Clone, PartialEq)]</span></span></span><span class="line ann" data-line="8" data-ann="2 3"><span class="gut"><span class="marks"><a class="ann-marker" href="#f1-ann-2" data-ann="2" data-n="2" aria-label="Annotation 2: Rust, line 8"></a><a class="ann-marker" href="#f1-ann-3" data-ann="3" data-n="3" aria-label="Annotation 3: Ono-Sendai, lines 8–13"></a></span><span class="ln" data-n="8" aria-hidden="true"></span></span><span class="lc"><span class="tok-kw">pub</span> <span class="tok-kw"><mark class="ann-token" data-ann="2">enum</mark></span> <span class="tok-ty">Value</span> {</span></span><span class="line ann" data-line="9" data-ann="3"><span class="gut"><span class="marks"></span><span class="ln" data-n="9" aria-hidden="true"></span></span><span class="lc">    <span class="tok-ty">Nothing</span>,</span></span><span class="line hl ann" data-line="10" data-ann="3"><span class="gut"><span class="marks"></span><span class="ln" data-n="10" aria-hidden="true"></span></span><span class="lc">    <span class="tok-ty">Int</span>(<span class="tok-ty">i64</span>),</span></span><span class="line ann" data-line="11" data-ann="3"><span class="gut"><span class="marks"></span><span class="ln" data-n="11" aria-hidden="true"></span></span><span class="lc">    <span class="tok-ty">Text</span>(<span class="tok-ty">String</span>),</span></span><span class="line hl ann" data-line="12" data-ann="3"><span class="gut"><span class="marks"></span><span class="ln" data-n="12" aria-hidden="true"></span></span><span class="lc">    <span class="tok-ty">List</span>(<span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Value</span>&gt;),</span></span><span class="line ann" data-line="13" data-ann="3"><span class="gut"><span class="marks"></span><span class="ln" data-n="13" aria-hidden="true"></span></span><span class="lc">}</span></span></code></pre></div>
+<div class="ann-panel">
+<p class="ann-heading" id="f1-ann-h">Annotations</p>
+<ol class="annotations" aria-labelledby="f1-ann-h">
+<li><details class="annotation ann-kind-rust" id="f1-ann-1" data-ann="1" data-lines="7-7"><summary><span class="ann-num">1</span><span class="ann-meta"><span class="ann-kind">Rust</span> <span class="ann-lines">Line 7</span></span></summary>
+<div class="ann-body">
+<p><code>#[derive(...)]</code> asks the compiler to generate trait implementations.</p>
+</div>
+</details></li>
+<li><details class="annotation ann-kind-rust" id="f1-ann-2" data-ann="2" data-lines="8-8"><summary><span class="ann-num">2</span><span class="ann-meta"><span class="ann-kind">Rust</span> <span class="ann-lines">Line 8</span> <code class="ann-token-label">enum</code></span></summary>
+<div class="ann-body">
+<p><code>enum</code> declares a type that is exactly one of the listed variants.</p>
+</div>
+</details></li>
+<li><details class="annotation ann-kind-ono" id="f1-ann-3" data-ann="3" data-lines="8-13"><summary><span class="ann-num">3</span><span class="ann-meta"><span class="ann-kind">Ono-Sendai</span> <span class="ann-lines">Lines 8–13</span></span></summary>
+<div class="ann-body">
+<p>Four variants are enough for this shell: <em>nothing</em>, integers, text and lists.</p>
+</div>
+</details></li>
+</ol>
+</div>
+<figcaption class="code-caption">
+<p>The whole declaration. The derive line gives <code>Value</code> debugging output, cloning and
+equality for free.</p>
+</figcaption>
+</figure>
+<div class="prose prose-rust" data-kind="rust">
+<p class="prose-label"><span class="prose-icon" aria-hidden="true">{ }</span>What does this Rust mean?</p>
+<h3>Methods that borrow</h3>
+<p>A method taking <code>&amp;self</code> only <em>reads</em> the value: the caller keeps ownership.
+See <a href="../learn-rust.html#concept-borrowing">borrowing</a> and the <a href="../glossary.html#term-borrow">glossary</a>.</p>
+</div>
+<figure class="code-figure has-ann" id="f2" data-snippet="value-type-name" style="--ln-digits:2">
+<div class="code-head">
+<p class="provenance"><span class="prov-ono">Ono-Sendai v0.1.0</span> · <span class="prov-file"><code>crates/mini-shell/src/value.rs</code>:15–24</span> · <span class="prov-commit">commit <code>0123456</code></span></p>
+<details class="source-details"><summary>Source details</summary>
+<dl class="source-meta">
+<dt>File</dt><dd><code>crates/mini-shell/src/value.rs</code></dd>
+<dt>Lines shown</dt><dd>15–24</dd>
+<dt>Commit</dt><dd><code class="hash">0123456789abcdef0123456789abcdef01234567</code></dd>
+<dt>Ono-Sendai version</dt><dd>v0.1.0</dd>
+<dt>Snippet id</dt><dd><code>value-type-name</code></dd>
+<dt>Segments</dt><dd><ul class="segments"><li>Lines 15–24 · anchor <code>pub fn type_name</code> · <code class="hash">sha256:1c8a9581b568ddd8a97d0641973ec4e9c761d4e018f39e842a63f06d713966cb</code></li></ul></dd>
+</dl>
+<p class="exact-note">The code is quoted exactly from this commit. Line numbers are the real line numbers in the file.</p>
+</details>
+</div>
+<div class="code-tools" hidden><button type="button" class="btn btn-small code-wrap" aria-pressed="false">Wrap long lines</button><button type="button" class="btn btn-small ann-all" data-state="collapsed">Expand all annotations</button></div>
+<div class="code-scroll" tabindex="0" role="region" aria-label="Source code: crates/mini-shell/src/value.rs, lines 15–24"><pre class="source" translate="no"><code><span class="line" data-line="15"><span class="gut"><span class="marks"></span><span class="ln" data-n="15" aria-hidden="true"></span></span><span class="lc"><span class="tok-kw">impl</span> <span class="tok-ty">Value</span> {</span></span><span class="line" data-line="16"><span class="gut"><span class="marks"></span><span class="ln" data-n="16" aria-hidden="true"></span></span><span class="lc">    <span class="tok-doc">/// A short name of the value&#39;s type, used in error messages.</span></span></span><span class="line ann" data-line="17" data-ann="1"><span class="gut"><span class="marks"><a class="ann-marker" href="#f2-ann-1" data-ann="1" data-n="1" aria-label="Annotation 1: Ownership, line 17"></a></span><span class="ln" data-n="17" aria-hidden="true"></span></span><span class="lc">    <span class="tok-kw">pub</span> <span class="tok-kw">fn</span> type_name(<mark class="ann-token" data-ann="1">&amp;</mark><span class="tok-kw"><mark class="ann-token" data-ann="1">self</mark></span>) -&gt; &amp;<span class="tok-life">&#39;static</span> <span class="tok-ty">str</span> {</span></span><span class="line ann" data-line="18" data-ann="2"><span class="gut"><span class="marks"><a class="ann-marker" href="#f2-ann-2" data-ann="2" data-n="2" aria-label="Annotation 2: Control flow, lines 18–23"></a></span><span class="ln" data-n="18" aria-hidden="true"></span></span><span class="lc">        <span class="tok-kw">match</span> <span class="tok-kw">self</span> {</span></span><span class="line ann" data-line="19" data-ann="2"><span class="gut"><span class="marks"></span><span class="ln" data-n="19" aria-hidden="true"></span></span><span class="lc">            <span class="tok-ty">Value</span>::<span class="tok-ty">Nothing</span> =&gt; <span class="tok-str">&quot;nothing&quot;</span>,</span></span><span class="line ann" data-line="20" data-ann="2"><span class="gut"><span class="marks"></span><span class="ln" data-n="20" aria-hidden="true"></span></span><span class="lc">            <span class="tok-ty">Value</span>::<span class="tok-ty">Int</span>(_) =&gt; <span class="tok-str">&quot;int&quot;</span>,</span></span><span class="line ann" data-line="21" data-ann="2"><span class="gut"><span class="marks"></span><span class="ln" data-n="21" aria-hidden="true"></span></span><span class="lc">            <span class="tok-ty">Value</span>::<span class="tok-ty">Text</span>(_) =&gt; <span class="tok-str">&quot;text&quot;</span>,</span></span><span class="line ann" data-line="22" data-ann="2"><span class="gut"><span class="marks"></span><span class="ln" data-n="22" aria-hidden="true"></span></span><span class="lc">            <span class="tok-ty">Value</span>::<span class="tok-ty">List</span>(_) =&gt; <span class="tok-str">&quot;list&quot;</span>,</span></span><span class="line ann" data-line="23" data-ann="2"><span class="gut"><span class="marks"></span><span class="ln" data-n="23" aria-hidden="true"></span></span><span class="lc">        }</span></span><span class="line" data-line="24"><span class="gut"><span class="marks"></span><span class="ln" data-n="24" aria-hidden="true"></span></span><span class="lc">    }</span></span></code></pre></div>
+<div class="ann-panel">
+<p class="ann-heading" id="f2-ann-h">Annotations</p>
+<ol class="annotations" aria-labelledby="f2-ann-h">
+<li><details class="annotation ann-kind-ownership" id="f2-ann-1" data-ann="1" data-lines="17-17"><summary><span class="ann-num">1</span><span class="ann-meta"><span class="ann-kind">Ownership</span> <span class="ann-lines">Line 17</span> <code class="ann-token-label">&amp;self</code></span></summary>
+<div class="ann-body">
+<p><code>&amp;self</code> borrows the value immutably for the duration of the call.</p>
+</div>
+</details></li>
+<li><details class="annotation ann-kind-flow" id="f2-ann-2" data-ann="2" data-lines="18-23"><summary><span class="ann-num">2</span><span class="ann-meta"><span class="ann-kind">Control flow</span> <span class="ann-lines">Lines 18–23</span></span></summary>
+<div class="ann-body">
+<p><code>match</code> picks exactly one arm; every variant is covered.</p>
+</div>
+</details></li>
+</ol>
+</div>
+</figure>
+<figure class="diagram ownership-diagram">
+<figcaption><span class="diagram-kind">Ownership diagram</span> <span class="diagram-title">Who owns the value?</span></figcaption>
+<div class="diagram-scroll" tabindex="0" role="img" aria-label="Ownership diagram: Who owns the value?. A text description follows."><pre class="diagram-art" aria-hidden="true">caller ──owns──► Value
+   │
+   └── &amp;Value ──► type_name()</pre></div>
+<div class="diagram-text">
+<p class="diagram-text-label">Text description</p>
+<p>The caller owns the <code>Value</code>. <code>type_name</code> receives only a shared reference and returns
+a <code>&amp;'static str</code>, so ownership never moves.</p>
+</div>
+</figure>
+<div class="prose prose-ono" data-kind="ono">
+<p class="prose-label"><span class="prose-icon" aria-hidden="true">◆</span>Why does Ono-Sendai do this?</p>
+<p>Error messages need a short type name, which is why this method exists.</p>
+</div>
+<section class="exercise" id="ex-values-01-q1" data-exercise="values-01-q1" data-exercise-type="multiple-choice" data-has-solution="true" aria-labelledby="ex-values-01-q1-title">
+<h3 id="ex-values-01-q1-title"><span class="ex-number">Exercise 1</span> <span class="ex-type">Multiple choice</span></h3>
+<form class="mc" data-exercise="values-01-q1" novalidate>
+<fieldset>
+<legend>After <code>v.type_name()</code> returns, who owns <code>v</code>?</legend>
+<div class="choices">
+<label class="choice"><input type="radio" name="ex-values-01-q1-answer" value="1" data-correct="true"> <span class="choice-text">The caller still owns <code>v</code></span></label>
+<label class="choice"><input type="radio" name="ex-values-01-q1-answer" value="2" data-correct="false"> <span class="choice-text"><code>type_name</code> took ownership</span></label>
+<label class="choice"><input type="radio" name="ex-values-01-q1-answer" value="3" data-correct="false"> <span class="choice-text">Nobody; <code>v</code> was dropped</span></label>
+</div>
+</fieldset>
+<div class="mc-actions"><button type="submit" class="btn mc-check" hidden>Check answer</button></div>
+<div class="mc-feedback" role="status" aria-live="polite">
+<p class="mc-verdict"></p>
+<div class="mc-explanation" data-choice="1" hidden>
+<p>Right: <code>&amp;self</code> only borrows.</p>
+</div>
+<div class="mc-explanation" data-choice="2" hidden>
+<p>No — it would need <code>self</code>, not <code>&amp;self</code>, to take ownership.</p>
+</div>
+<div class="mc-explanation" data-choice="3" hidden>
+<p>Nothing moved, so nothing was dropped.</p>
+</div>
+</div>
+<details class="mc-answer"><summary>Show answer and explanations</summary>
+<ol class="mc-all">
+<li class="is-correct"><p class="mc-answer-choice"><span class="verdict verdict-correct">Correct answer</span> The caller still owns <code>v</code></p>
+<p>Right: <code>&amp;self</code> only borrows.</p>
+</li>
+<li class="is-incorrect"><p class="mc-answer-choice"><span class="verdict verdict-incorrect">Not correct</span> <code>type_name</code> took ownership</p>
+<p>No — it would need <code>self</code>, not <code>&amp;self</code>, to take ownership.</p>
+</li>
+<li class="is-incorrect"><p class="mc-answer-choice"><span class="verdict verdict-incorrect">Not correct</span> Nobody; <code>v</code> was dropped</p>
+<p>Nothing moved, so nothing was dropped.</p>
+</li>
+</ol>
+</details>
+</form>
+<div class="hints">
+<details class="hint" data-level="1"><summary><span class="hint-title">Hint 1</span></summary>
+<div class="hint-body">
+<p>Look at the first parameter.</p>
+</div>
+</details>
+<details class="hint" data-level="2"><summary><span class="hint-title">Hint 2</span><span class="hint-lock" hidden> — open Hint 1 first</span></summary>
+<div class="hint-body">
+<p>Compare <code>self</code> and <code>&amp;self</code>.</p>
+</div>
+</details>
+</div>
+</section>
+<section class="exercise" id="ex-values-01-q2" data-exercise="values-01-q2" data-exercise-type="explain-line" data-has-solution="true" aria-labelledby="ex-values-01-q2-title">
+<h3 id="ex-values-01-q2-title"><span class="ex-number">Exercise 2</span> <span class="ex-type">Explain this line</span></h3>
+<div class="prompt" id="ex-values-01-q2-prompt">
+<p>Explain line 17 in your own words.</p>
+<p>Mention the return type as well.</p>
+</div>
+<div class="scratchpad">
+<label for="ex-values-01-q2-notes">Private notes — stay in this browser and are never graded</label>
+<textarea id="ex-values-01-q2-notes" class="notes" data-exercise="values-01-q2" rows="5" spellcheck="false"></textarea>
+<p class="notes-status" aria-live="polite"></p>
+</div>
+<div class="hints">
+<details class="hint" data-level="1"><summary><span class="hint-title">Hint 1</span></summary>
+<div class="hint-body">
+<p>What does <code>'static</code> say about the returned string?</p>
+</div>
+</details>
+</div>
+<details class="solution"><summary>Show worked solution</summary>
+<div class="solution-body">
+<p>The method borrows <code>self</code> and returns a string slice that lives for the whole program.</p>
+</div>
+</details>
+</section>
+<div class="prose prose-recap" data-kind="recap">
+<p class="prose-label"><span class="prose-icon" aria-hidden="true">✓</span>Recap</p>
+<p>An enum lists variants; <code>&amp;self</code> borrows.</p>
+</div>
+</section>
+<div class="lesson-end">
+<div class="complete" hidden><button type="button" class="btn mark-complete" data-lesson="values-01" aria-pressed="false">Mark lesson complete</button><p class="complete-status" role="status"></p></div>
+<nav class="pager" aria-label="Previous and next lesson">
+<a class="pager-prev" href="../index.html"><span class="pager-dir">Back to</span><span class="pager-title">Course home</span></a>
+<a class="pager-next" rel="next" href="../lessons/values-02.html"><span class="pager-dir">Next lesson</span><span class="pager-title">A shortened view of methods</span></a>
+</nav>
+</div>
+</main>
+<nav id="course-nav" class="course-nav" aria-label="Course contents">
+<div class="nav-head"><p class="nav-title">Course contents</p><button type="button" class="btn btn-small nav-close" hidden>Close menu</button></div>
+<ul class="nav-site">
+<li><a href="../index.html">Course home</a></li>
+<li><a href="../learn-rust.html">Learn Rust</a></li>
+<li><a href="../ono-sendai.html">Understand Ono-Sendai</a></li>
+<li><a href="../glossary.html">Glossary</a></li>
+<li><a href="../about.html">About</a></li>
+</ul>
+<ol class="nav-chapters">
+<li><details class="nav-chapter" open><summary><span class="nav-ch-num">1</span> <span class="nav-ch-title">Values &amp; variants</span></summary>
+<ol class="nav-lessons">
+<li class="nav-overview"><a href="../chapters/01-values.html">Chapter overview</a></li>
+<li data-lesson-id="values-01"><a href="../lessons/values-01.html" aria-current="page"><span class="stage-chip stage-guided"><span class="vh">Stage </span>1<span class="vh">: Guided reading</span></span><span class="nav-l-title">The &lt;Value&gt; enum &amp; its methods</span></a></li>
+<li data-lesson-id="values-02"><a href="../lessons/values-02.html"><span class="stage-chip stage-assisted"><span class="vh">Stage </span>2<span class="vh">: Assisted interpretation</span></span><span class="nav-l-title">A shortened view of methods</span></a></li>
+</ol>
+</details></li>
+<li><details class="nav-chapter"><summary><span class="nav-ch-num">2</span> <span class="nav-ch-title">Evaluation</span></summary>
+<ol class="nav-lessons">
+<li class="nav-overview"><a href="../chapters/02-evaluation.html">Chapter overview</a></li>
+<li data-lesson-id="eval-01"><a href="../lessons/eval-01.html"><span class="stage-chip stage-practice"><span class="vh">Stage </span>3<span class="vh">: Code-reading exercises</span></span><span class="nav-l-title">Evaluating a word</span></a></li>
+<li data-lesson-id="eval-02"><a href="../lessons/eval-02.html"><span class="stage-chip stage-transfer"><span class="vh">Stage </span>4<span class="vh">: Unseen code, with solutions</span></span><span class="nav-l-title">Summing values</span></a></li>
+<li data-lesson-id="eval-03"><a href="../lessons/eval-03.html"><span class="stage-chip stage-independent"><span class="vh">Stage </span>5<span class="vh">: Independent reading</span></span><span class="nav-l-title">Reading on your own</span></a></li>
+</ol>
+</details></li>
+</ol>
+</nav>
+</div>
+<footer class="site-footer">
+<div class="footer-inner">
+<p class="footer-versions">Ono-Sendai Rust Reading Course <strong>0.9.0</strong> · reads Ono-Sendai <strong>v0.1.0</strong> at commit <code>0123456</code></p>
+<p class="footer-contract">Static. Offline. No server. No account. No LLM. · <a href="../about.html">About this build</a></p>
+</div>
+</footer>
+</body>
+</html>
