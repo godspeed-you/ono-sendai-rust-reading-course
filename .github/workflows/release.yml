@@ -1,0 +1,59 @@
+name: Release
+
+# A tag vX.Y.Z builds, verifies and publishes the course (spec §71). Every check of the CI
+# workflow runs first; the release fails if any of them — including the offline check — fails.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the course version
+        run: |
+          expected="v${{ needs.verify.outputs.version }}"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match course-lock.yaml course.version ($expected)"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-archives
+          path: release
+
+      - name: Check archives and checksums
+        run: |
+          cd release
+          sha256sum --check --strict SHA256SUMS
+          ls -l
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(mktemp)
+          {
+            echo "**Static. Offline. No server. No account. No LLM.**"
+            echo "Download, extract, open \`index.html\`, and learn Rust by reading real Ono-Sendai code."
+            echo
+            sed -n 's/^  \(commit\|version\): \(.*\)$/- Ono-Sendai \1: \2/p' course-lock.yaml | tail -2
+            echo
+            echo "See CHANGELOG.md for what changed."
+          } > "$notes"
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --title "Ono-Sendai Rust Reading Course $GITHUB_REF_NAME" \
+            --notes-file "$notes" --verify-tag
