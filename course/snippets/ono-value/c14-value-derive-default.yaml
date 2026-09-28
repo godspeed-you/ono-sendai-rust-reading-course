@@ -1,0 +1,21 @@
+id: c14-value-derive-default
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 38
+  end_line: 48
+  anchor: '#[default]'
+  content_hash: sha256:8bb5757f6d30266e75f0a60e76a5700fb65eb761dcc0475141db154fe55755ed
+  code: |
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub enum Value {
+        /// A value that is known to be unknown (spec §10.5).
+        #[default]
+        Null,
+        /// A boolean.
+        Bool(bool),
+        /// A signed integer.
+        Int(i128),
+        /// A binary floating-point number.
+        Float(f64),

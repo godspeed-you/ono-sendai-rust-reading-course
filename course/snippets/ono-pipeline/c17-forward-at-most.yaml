@@ -1,0 +1,38 @@
+id: c17-forward-at-most
+source:
+  file: crates/ono-pipeline/src/stream.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 551
+  end_line: 557
+  anchor: 'fn windowed(self, window: Window) -> Self {'
+  content_hash: sha256:2fbfc626fd4dd62447ccce03ef56107bd52c2debc73c5b68d99808511688bdb6
+  code: |2
+        /// Truncates the stream to the first `window.limit()` values, which bounds it (spec §11.1).
+        fn windowed(self, window: Window) -> Self {
+            let limit = window.limit();
+            self.stage(Boundedness::Bounded, move |input, sink| async move {
+                forward_at_most(input, &sink, limit).await;
+            })
+        }
+- start_line: 614
+  end_line: 629
+  anchor: pub(crate) async fn forward_at_most(
+  content_hash: sha256:e111e37c256e5367ef72a7a1cd91747ccb7d4dbc462ac67408b2efdfeb4d10d6
+  code: |
+    /// Forwards at most `limit` values, then stops and lets the upstream channel close.
+    ///
+    /// Dropping the input is what makes `get log --follow | take 3` terminate: the producer's next
+    /// send fails, exactly as `yes | head -1` receives `SIGPIPE`.
+    pub(crate) async fn forward_at_most(mut input: ValueStream, sink: &StreamSink, limit: usize) {
+        let mut sent = 0;
+        while sent < limit {
+            let Some(value) = input.next_value(sink).await else {
+                return;
+            };
+            if sink.send(value).await.is_err() {
+                return;
+            }
+            sent += 1;
+        }
+    }

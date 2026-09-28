@@ -1,0 +1,131 @@
+id: c20-history-record-flush
+source:
+  file: crates/ono-history/src/store.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 51
+  end_line: 62
+  anchor: pub struct History {
+  content_hash: sha256:c0328e80a397281462d51f2e5e30a17a0a4042ffdebb50623bcc62e7b95caacf
+  code: |
+    /// What the shell remembers, and the file it remembers it in.
+    #[derive(Debug)]
+    pub struct History {
+        path: PathBuf,
+        policy: Policy,
+        entries: Vec<Entry>,
+        ids: IdSource,
+        /// How many entries the file already holds, so an ordinary flush appends one line.
+        persisted: usize,
+        /// Set when trimming dropped an entry the file still holds, forcing a rewrite.
+        stale: bool,
+    }
+- start_line: 127
+  end_line: 202
+  anchor: let temporary = self.path.with_extension("jsonl.new");
+  content_hash: sha256:0e2344bc2d012c4034646d56184350767438a8dcd46d625ac154b6c22ddf3338
+  code: |2
+        /// Records `command`, applying the policy: hidden commands are not stored at all, secrets are
+        /// replaced before the text is kept, and a collapsed repeat is not stored twice.
+        ///
+        /// Returns the entry's identity, or `None` when the policy declined to record it.
+        pub fn record(&mut self, command: &str, cwd: &Path, outcome: Outcome) -> Option<String> {
+            if !self.policy.should_record(command) {
+                return None;
+            }
+            let text = self.policy.redact(command);
+            let previous = self.entries.last().map(Entry::command_text);
+            if self.policy.collapses(previous, &text) {
+                return None;
+            }
+
+            let id = self.ids.next_id();
+            self.entries.push(Entry::new(
+                id.clone(),
+                self.ids.session().to_owned(),
+                text,
+                cwd.to_path_buf(),
+                Some(outcome),
+            ));
+
+            let limit = self.policy.entry_limit();
+            if self.entries.len() > limit {
+                let excess = self.entries.len() - limit;
+                self.entries.drain(..excess);
+                self.persisted = self.persisted.saturating_sub(excess);
+                self.stale = true;
+            }
+            Some(id)
+        }
+
+        /// Writes everything not yet on disk.
+        ///
+        /// An ordinary flush appends the new lines. A flush after trimming rewrites the file through
+        /// a temporary and a rename, so a reader never sees a half-written history.
+        ///
+        /// # Errors
+        ///
+        /// Returns a [`HistoryError`] if the file cannot be written.
+        pub fn flush(&mut self) -> Result<(), HistoryError> {
+            let fail = |action: &'static str, cause: std::io::Error| HistoryError {
+                path: self.path.clone(),
+                action,
+                cause,
+            };
+
+            if self.stale {
+                let temporary = self.path.with_extension("jsonl.new");
+                let mut file = private_file(&temporary).map_err(|cause| fail("write", cause))?;
+                for entry in &self.entries {
+                    write_entry(&mut file, entry).map_err(|cause| fail("write", cause))?;
+                }
+                file.sync_all().map_err(|cause| fail("write", cause))?;
+                drop(file);
+                std::fs::rename(&temporary, &self.path).map_err(|cause| fail("replace", cause))?;
+                self.persisted = self.entries.len();
+                self.stale = false;
+                return Ok(());
+            }
+
+            if self.persisted >= self.entries.len() {
+                return Ok(());
+            }
+            let mut file = private_options()
+                .append(true)
+                .open(&self.path)
+                .map_err(|cause| fail("append to", cause))?;
+            for entry in &self.entries[self.persisted..] {
+                write_entry(&mut file, entry).map_err(|cause| fail("append to", cause))?;
+            }
+            file.flush().map_err(|cause| fail("append to", cause))?;
+            self.persisted = self.entries.len();
+            Ok(())
+        }
+- start_line: 243
+  end_line: 254
+  anchor: fn private_options() -> OpenOptions {
+  content_hash: sha256:d5600b5fb6716165355ae579284be33e14a6631a8c377ec9d83b04f5f98a0a8d
+  code: |
+    fn private_options() -> OpenOptions {
+        let mut options = OpenOptions::new();
+        options.create(true).write(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options
+    }
+
+    /// Creates or truncates a file that only its owner can read.
+    fn private_file(path: &Path) -> std::io::Result<File> {
+        private_options().truncate(true).open(path)
+    }
+- start_line: 272
+  end_line: 277
+  anchor: fn write_entry(
+  content_hash: sha256:fe0d4ae41e9272463f16948fea8d9cf1f234e1408183c6feeb1ca39beb3016a3
+  code: |
+    fn write_entry(file: &mut File, entry: &Entry) -> std::io::Result<()> {
+        let line = serde_json::to_string(entry)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")
+    }

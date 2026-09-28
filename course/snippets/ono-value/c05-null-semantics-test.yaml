@@ -1,0 +1,21 @@
+id: c05-null-semantics-test
+source:
+  file: crates/ono-value/tests/null_semantics.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 94
+  end_line: 104
+  anchor: fn should_keep_the_three_outcomes_distinguishable_from_one_another()
+  content_hash: sha256:2c913197a0cb1986cdcb76234786b577285c42e4785f91cbc9c191fbf45ba1ef
+  code: |
+    #[test]
+    fn should_keep_the_three_outcomes_distinguishable_from_one_another() {
+        let record = record();
+        let absent = record.access("nothing_like_this");
+        let unknown = record.access("owner");
+        let failed = record.access("memory");
+
+        assert_ne!(absent, unknown, "absent and unknown must not collapse");
+        assert_ne!(unknown, failed, "unknown and failed must not collapse");
+        assert_ne!(absent, failed, "absent and failed must not collapse");
+    }

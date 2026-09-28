@@ -1,0 +1,21 @@
+id: c11-value-list
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 126
+  end_line: 136
+  anchor: 'pub fn list(items: impl IntoIterator<Item = Value>) -> Self {'
+  content_hash: sha256:f81717e14e639ba979e5893f38e902d0928e50c3febb019f31ae6f1cf95e07e7
+  code: |2
+        /// Builds a string value.
+        #[must_use]
+        pub fn string(text: &str) -> Self {
+            Value::String(text.into())
+        }
+
+        /// Builds a list value.
+        #[must_use]
+        pub fn list(items: impl IntoIterator<Item = Value>) -> Self {
+            Value::List(items.into_iter().collect())
+        }

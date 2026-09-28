@@ -1,0 +1,47 @@
+id: c02-exit-status
+source:
+  file: crates/ono-core/src/exit.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 16
+  end_line: 21
+  anchor: pub struct ExitStatus(u8);
+  content_hash: sha256:088ee749258ef07d13b7883ba258a7ba23bd7275ed0e8e74575c20db12f7cee9
+  code: |
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct ExitStatus(u8);
+
+    impl ExitStatus {
+        /// The command succeeded.
+        pub const SUCCESS: Self = Self(0);
+- start_line: 33
+  end_line: 58
+  anchor: Self(128u8.saturating_add(signal))
+  content_hash: sha256:8778d01d8d4bdbd619495e0c713cc39b11b20f39689d296c435fb3c0e13b579c
+  code: |2
+        /// Wraps a raw status a program chose for itself, unchanged (spec §16.4).
+        #[must_use]
+        pub const fn from_code(code: u8) -> Self {
+            Self(code)
+        }
+
+        /// The status for a process terminated by `signal`, as `128 + signal`.
+        ///
+        /// Signals above 127 cannot be represented in a wait status and saturate rather than wrap,
+        /// so a nonsensical signal number can never be mistaken for success.
+        #[must_use]
+        pub const fn from_signal(signal: u8) -> Self {
+            Self(128u8.saturating_add(signal))
+        }
+
+        /// The raw status value.
+        #[must_use]
+        pub const fn code(self) -> u8 {
+            self.0
+        }
+
+        /// Whether the command succeeded, which is true only for zero.
+        #[must_use]
+        pub const fn is_success(self) -> bool {
+            self.0 == 0
+        }

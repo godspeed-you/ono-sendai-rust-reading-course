@@ -1,0 +1,785 @@
+id: mutability
+number: 9
+title: Mutability and borrowed mutation
+summary: |
+  In Rust, nothing changes unless the code says so. A binding needs `let mut` before it may be
+  reassigned or modified, a method needs `&mut self` or `mut self` before it may change its value,
+  and a function needs a `&mut T` parameter before it may change something it does not own.
+
+  The rule behind `&mut` is **exclusivity**: while a mutable borrow exists, it is the *only* way to
+  reach the value. No shared reference to the same value may be in use at the same time. That rule
+  is what lets the compiler rule out "someone changed this while I was reading it" bugs, and
+  Ono-Sendai's code is shaped by it in visible ways:
+
+  - `Table::with_row(mut self)` and `Table::push_row(&mut self)`: two ways to change a value, one by
+    taking ownership and one by borrowing exclusively;
+  - the parser's `peek`, `bump` and `eat`, which move a cursor through the source line behind
+    `&mut self`, and `parse_program`, which lends its vector to a helper;
+  - `SchemaRegistry::register`, where the order of lines is forced by borrowing and moving, and
+    `Command::resolved_env`, which mutates only a local;
+  - `distance` and `MapValue::insert`, which use `std::mem::swap` and `std::mem::replace` to
+    exchange values through mutable borrows without cloning.
+
+  This chapter builds on [borrowing](chapter:borrowing). Mutation *behind a shared reference*
+  (`Mutex`, atomics) is a different mechanism and waits for [chapter 15](chapter:smart-pointers).
+lessons:
+  - id: mutability-01
+    title: "Two ways to change a table: `mut self` and `&mut self`"
+    stage: assisted
+    summary: "`with_row` takes the table and hands it back; `push_row` borrows it exclusively. Both change the same data, with different ownership."
+    prerequisites: [borrowing-02]
+    concepts: [mutability, mutable-borrowing, methods]
+    ono_topics: [rendering]
+    objectives:
+      - Distinguish a mutable binding (`let mut`, `mut self`, `mut cells`) from a mutable borrow (`&mut self`).
+      - Explain what a caller gives up when calling a `mut self` method versus a `&mut self` method.
+      - Recognise the automatic `&mut` borrow in a method call such as `table.push_row(…)`.
+    sections:
+      - type: prose
+        kind: context
+        title: Building a table row by row
+        body: |
+          A renderer turns a list of values into a `Table` (see [lesson 8.2](lesson:borrowing-02)
+          for its fields). There are two situations: code that knows all its rows up front and
+          wants to write the table as one expression, and code that adds rows in a loop.
+          `ono-render` offers one method for each.
+      - type: code
+        snippet: c09-table-builders
+        caption: "`ono-render/src/table.rs`."
+        annotations:
+          - lines: 153
+            token: "mut self"
+            kind: ownership
+            body: |
+              The method takes the table **by value** (the caller's table moves in) and makes the
+              binding `self` mutable inside the method. The caller gets the table back as the
+              return value.
+          - lines: 154
+            token: "self.push_row(cells)"
+            kind: rust
+            body: |
+              `self` is an owned, mutable local here, so calling a `&mut self` method on it is
+              allowed: Rust borrows it mutably for the duration of the call.
+          - lines: 159
+            token: "&mut self, mut cells"
+            kind: rust
+            body: |
+              `&mut self` is an **exclusive borrow**: the caller keeps ownership, and the method
+              may change the table. `mut cells` is different: the vector is moved in, and `mut`
+              only makes this local binding changeable so that `resize` may be called on it. The
+              caller cannot see that `mut`.
+          - lines: 160
+            token: "resize"
+            kind: ono
+            body: |
+              Pads a short row with empty cells or cuts a long one to the number of columns, as the
+              doc comment on `with_row` explains.
+      - type: prose
+        kind: rust
+        title: A mutable binding versus a mutable borrow
+        body: |
+          `mut` appears in two different roles:
+
+          | written | meaning | who owns the value |
+          |---|---|---|
+          | `let mut x`, `mut self`, `mut cells` | this binding may be modified | the binding itself |
+          | `&mut T`, `&mut self` | an exclusive borrow that may modify | someone else, who waits |
+
+          A `mut` on a binding is private to the function: `fn with_row(mut self, …)` has the same
+          signature, for callers, as `fn with_row(self, …)`. A `&mut` in a parameter type is part
+          of the contract: the caller must be able to lend its value exclusively.
+
+          Exclusivity means: while `push_row` runs, no other reference to that table can be used.
+          The compiler checks this at every call site.
+      - type: code
+        snippet: c09-renderer-table
+        caption: |
+          `ono-render/src/value.rs`. `Shape::of(values)` decides what kind of list this is; the
+          arms build the table. `record_table` and `map_table` are other methods of the renderer.
+        annotations:
+          - lines: 124
+            token: "&self"
+            kind: ownership
+            body: |
+              The renderer only reads its own settings, so `&self` is enough. The values come in as
+              a shared slice: `table` never changes them.
+          - lines: 130
+            token: "let mut table"
+            kind: rust
+            body: |
+              Without `mut` the next line would not compile: `push_row` needs `&mut table`, and a
+              binding that is not `mut` cannot be borrowed mutably.
+          - lines: 132
+            token: "table.push_row"
+            kind: rust
+            body: |
+              **Method-call autoref**: `table.push_row(x)` is shorthand for
+              `Table::push_row(&mut table, x)`. The `&mut` borrow lasts only for the call.
+          - lines: 134
+            kind: ownership
+            body: |
+              The finished table is the value of the `match` arm, so it is **moved** out to the
+              caller. The `mut` binding is gone, and the caller decides whether its own binding is
+              mutable.
+      - type: prose
+        kind: ono
+        title: Why both styles exist
+        body: |
+          The source states each purpose:
+
+          - `with_row` is "builder style": it lets code that knows its rows write
+            `Table::new(columns).with_row(a).with_row(b)` as one expression, with no mutable
+            binding at the call site. The same pair exists for trees: `TreeNode::with_child(mut
+            self, …)` and `push_child(&mut self, …)` in `tree.rs`.
+          - `push_row` fits the loop in `Renderer::table`, where the number of rows is only known
+            while iterating.
+
+          `with_row` is implemented by calling `push_row`, so the padding rule ("a malformed row
+          can never make the layout panic in front of a user") exists in one place only.
+
+          The `Mixed` arm has its own documented reason: it "deliberately does not union the
+          columns of the different shapes, because a row that lacks a column would then look
+          exactly like a row whose value is unknown".
+      - type: exercise
+        id: mutability-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A caller has `let table = Table::new(columns);` (no `mut`). Which of these two lines
+          compiles? Decide first, then read the feedback.
+
+          - A: `let table = table.with_row(cells);`
+          - B: `table.push_row(cells);`
+        choices:
+          - text: Only A.
+            correct: true
+            feedback: |
+              Correct. `with_row` takes the table by value: the old binding is moved from, and the
+              new binding `table` receives the result. No mutable borrow of the caller's binding is
+              needed. B needs `&mut table`, which requires `let mut table`.
+          - text: Only B.
+            feedback: |
+              B needs to borrow `table` mutably, and a binding declared without `mut` cannot be
+              borrowed mutably. A works because `with_row` takes ownership instead of borrowing.
+          - text: Both.
+            feedback: |
+              `mut` on a binding is required for `&mut` borrows of it. Line 130 of the renderer
+              writes `let mut table` for exactly this reason.
+          - text: Neither.
+            feedback: |
+              A compiles: moving a value into a `mut self` method does not require the caller's
+              binding to be `mut`. The `mut` in `mut self` belongs to the method's own binding.
+        hints:
+          - level: 1
+            body: Which of the two methods borrows the caller's table, and which takes it?
+          - level: 2
+            body: Is the `mut` in `mut self` visible to the caller?
+      - type: exercise
+        id: mutability-01-q2
+        exercise_type: trace-value
+        prompt: |
+          Trace the `Table` built in the `Shape::Scalars` arm of `Renderer::table` for two values.
+          For every line that touches `table`, say whether it is created, mutably borrowed, or
+          moved, and who owns it afterwards.
+        hints:
+          - level: 1
+            body: Start at line 130 and count how many times `push_row` runs.
+          - level: 2
+            body: Each `push_row` call borrows; the final line of the arm neither borrows nor copies.
+        solution: |
+          - Line 130: `Table::new(...)` creates a table with one column and no rows; the local
+            binding `table` owns it, and is `mut`.
+          - Lines 131–133, first value: `table.push_row(...)` borrows `&mut table` for the call.
+            `vec![self.cell(value)]` builds a new `Vec<Cell>` that is **moved** into `push_row` and
+            then into `self.rows`. The borrow ends when `push_row` returns.
+          - Same for the second value: a second, separate `&mut` borrow. Two exclusive borrows in
+            sequence are fine; they never overlap.
+          - Line 134: `table` is the value of the arm, so the table is **moved** to the caller of
+            `Renderer::table`. Nothing is cloned. `values` was only borrowed (`&[Value]`), so the
+            caller still owns its values.
+      - type: exercise
+        id: mutability-01-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 159, `pub fn push_row(&mut self, mut cells: Vec<Cell>) {`. For each of the
+          two `mut`s, say what it permits and whether the caller can tell it is there.
+        hints:
+          - level: 1
+            body: One `mut` is part of a type, the other is part of a pattern.
+          - level: 2
+            body: Which of the two parameters does the function own?
+        solution: |
+          - `&mut self` is part of the parameter's **type**: the method receives an exclusive
+            borrow of the caller's table. It permits changing the table (line 161 pushes a row),
+            and the caller must provide an exclusive borrow, so it must have a `mut` binding or
+            already hold a `&mut Table`. The caller can see this.
+          - `mut cells` is part of the parameter **pattern**: `cells` is an owned `Vec<Cell>` moved
+            in by the caller, and `mut` makes the local binding modifiable so `resize` (line 160)
+            can change it before it is moved into `self.rows`. The caller cannot tell: it has
+            handed over the vector either way.
+
+  - id: mutability-02
+    title: "A cursor behind `&mut self`: `peek`, `bump` and `eat`"
+    stage: assisted
+    summary: "The parser advances through the source line with exclusive borrows of itself, and lends its statement list to a helper with `&mut Vec`."
+    prerequisites: [mutability-01, borrowing-03]
+    concepts: [mutable-borrowing, mutability, methods]
+    ono_topics: [parsing]
+    objectives:
+      - Explain why a method that "only looks" can still need `&mut self`.
+      - Read `if let Some(record) = &mut self.record` as a mutable borrow into an `Option` field.
+      - Follow a `&mut Vec` lent to a helper and the moment the borrow ends.
+      - Recognise that a mutable borrow must end before the borrowed value is moved.
+    sections:
+      - type: prose
+        kind: context
+        title: The parser's token access
+        body: |
+          The module doc of `state.rs` describes this code: "Nothing here decides what a construct
+          means: `peek`, `bump` and `eat` hand the next token over in the lexical mode the caller
+          asks for, and the recording hook behind them is what `tokens` uses to reconstruct the
+          stream a highlighter needs."
+
+          `self.pos` is a byte offset into the source line. Every other parser file reads the
+          source through these methods.
+      - type: code
+        snippet: c09-parser-cursor
+        caption: "`ono-parser/src/parser/state.rs`. `next_token` is the mode-sensitive lexer; it returns a `Copy` `Token` and borrows nothing afterwards."
+        annotations:
+          - lines: 46
+            token: "&mut self"
+            kind: rust
+            body: |
+              `peek` does not consume the next *significant* token, but it does move `self.pos`
+              past comments and records them (lines 49–54). Changing a field requires `&mut self`,
+              whatever the method's name suggests.
+          - lines: 51
+            token: "&mut self.record"
+            kind: ownership
+            body: |
+              `record` is an `Option<Vec<Token>>`. Matching on `&mut self.record` gives
+              `record: &mut Vec<Token>`, a mutable borrow of the vector **inside** the option, so
+              `push` changes the parser's own vector. No vector is moved out.
+          - lines: 61-62
+            token: "&self"
+            kind: rust
+            body: |
+              `peek_after` looks further ahead without changing the parser, so `&self` is enough.
+              Its cursor is a **local** `let mut at`: mutating a local needs no mutable access to
+              `self`.
+          - lines: 86
+            token: ".then(|| self.bump(mode))"
+            kind: flow
+            body: |
+              `bool::then` runs the closure only if the condition is true, giving `Some(token)`,
+              and otherwise returns `None`. So `eat` consumes the token only when it has the
+              expected kind. The closure uses `self` mutably; [chapter 12](chapter:iterators-closures)
+              covers closures.
+      - type: prose
+        kind: rust
+        title: Exclusive, and short
+        body: |
+          `&mut self` gives a method sole access to the parser for as long as the call runs. The
+          compiler only needs each exclusive borrow to be exclusive *while it is used*, so the
+          sequence
+
+          ```rust
+          let token = self.peek(mode);   // &mut borrow 1 ends here
+          self.bump(mode);               // &mut borrow 2
+          ```
+
+          is fine: the two borrows never overlap. It works in the parser because `Token` is a
+          `Copy` value holding no reference to the parser. If `peek` returned a reference into the
+          parser, that reference would keep borrow 1 alive, and `bump` would be rejected.
+
+          This is the practical shape of the exclusivity rule: code does not *hold* a mutable
+          borrow for long; it takes one per call.
+      - type: code
+        snippet: c09-parse-program
+        caption: "`ono-parser/src/parser/statements.rs`. `skip_separators`, `parse_statement` and `finish_statement` are other `&mut self` methods."
+        annotations:
+          - lines: 23
+            token: "&mut statements"
+            kind: ownership
+            body: |
+              `parse_program` owns the vector (line 16) and **lends it exclusively** to the
+              helper, which pushes into it. When the call returns, the borrow ends and
+              `parse_program` can use `statements` again.
+          - lines: 22-29
+            kind: flow
+            body: |
+              A progress guard. If parsing a statement did not advance `pos` at all, one token is
+              consumed by force, so the loop cannot spin forever on input it does not understand.
+          - lines: 31-32
+            kind: ownership
+            body: |
+              After the loop the vector is **moved** into the `Program`. That is allowed because no
+              borrow of it is active any more.
+      - type: code
+        snippet: c09-parse-entry
+        caption: "`ono-parser/src/parser/mod.rs`: the public entry point that creates the parser."
+        annotations:
+          - lines: 84
+            token: "parser.parse_program()"
+            kind: ownership
+            body: |
+              Autoref: this borrows `&mut parser` for the call. The returned `Program` is owned and
+              holds no reference to the parser, so the borrow ends here.
+          - lines: 87
+            token: "parser.diagnostics"
+            kind: ownership
+            body: |
+              Moves the diagnostics vector **out of a field** of the local parser. That is only
+              possible because the mutable borrow from line 84 is over. The parser is not used
+              again afterwards.
+      - type: diagram
+        kind: control-flow
+        title: One exclusive borrow at a time
+        art: |2
+          parse(source)
+            let mut parser = Parser::new(source)     parser owns: pos, diagnostics, record …
+            │
+            ├─ parser.parse_program()  ── &mut parser ───────────────┐
+            │     let mut statements = Vec::new()                    │
+            │     loop:                                              │
+            │       self.peek(..)              &mut (short, ends)    │
+            │       self.parse_statement_into(&mut statements)       │
+            │           ├ &mut self        (reborrow of parser)      │
+            │           └ &mut statements  (lent, ends on return)    │
+            │     Program { statements, .. }   statements moved      │
+            │  ◄─ returns Program ───────────── borrow of parser ends┘
+            │
+            └─ Parsed { program, diagnostics: parser.diagnostics }   field moved out
+        description: |
+          `parse` owns the parser. Calling `parse_program` lends the parser exclusively for the
+          whole call. Inside, each call such as `peek` takes a short exclusive borrow of the parser
+          that ends when the call returns. `parse_statement_into` receives two exclusive borrows at
+          once, but of two different values: the parser (`&mut self`) and the local statement
+          vector (`&mut statements`). When it returns, both borrows end, the vector is moved into
+          the `Program`, and `parse_program` returns. Only after that, with no borrow left, does
+          `parse` move the diagnostics out of the parser into the `Parsed` result.
+      - type: prose
+        kind: ono
+        title: Why the cursor is guarded this way
+        body: |
+          `parse` promises that it "never panics and always returns a tree, whatever it is handed"
+          (mod.rs lines 72–74). Two pieces of this code serve that promise:
+
+          - The progress guard in `parse_program` (lines 22–29) guarantees termination: every loop
+            iteration either advances `pos` through a statement or consumes one token.
+          - Diagnostics are **collected** in `self.diagnostics` (a `Vec` changed through
+            `&mut self`) instead of returned as errors, so parsing continues after a problem. See
+            the contrast in [chapter 6](chapter:result-errors).
+
+          The recording hook (`record: Option<Vec<Token>>`) is `None` for normal parsing and
+          `Some(Vec::new())` when `tokens()` wants the token stream for syntax highlighting, so
+          highlighting reuses the parser instead of lexing separately.
+      - type: exercise
+        id: mutability-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `peek` is documented as "The next significant token, without consuming it". Why does it
+          still take `&mut self`? Choose before reading the feedback.
+        choices:
+          - text: It moves `self.pos` past comments and may push them into `self.record`.
+            correct: true
+            feedback: |
+              Correct. Lines 49–54 change two fields when the next token is a comment. Any change
+              to a field requires `&mut self`, whatever the method is called.
+          - text: Every method of a struct with a lifetime parameter must take `&mut self`.
+            feedback: |
+              `peek_after` on line 61 takes `&self`, and `Parser<'a>` has a lifetime parameter. The
+              lifetime says nothing about mutability.
+          - text: Calling `next_token` requires a mutable borrow of the source.
+            feedback: |
+              `next_token` receives `self.text()`, a shared `&str`. `peek_after` calls the same
+              function with only `&self`.
+          - text: "It doesn't need it; `&self` would work just as well."
+            feedback: |
+              With `&self`, the assignments `self.pos = …` and `record.push(…)` would be rejected:
+              a shared borrow never allows changing the value.
+        hints:
+          - level: 1
+            body: Look for assignments to fields of `self` inside `peek`.
+          - level: 2
+            body: Compare `peek` with `peek_after`. Where does each keep its position?
+      - type: exercise
+        id: mutability-02-q2
+        exercise_type: predict
+        prompt: |
+          Suppose lines 84 and 87 of `parse` were reordered so that the diagnostics are taken
+          first:
+
+          ```rust
+          let mut parser = Parser::new(source);
+          let diagnostics = parser.diagnostics;
+          let program = parser.parse_program();
+          ```
+
+          Predict what the compiler says, and explain why the real order works.
+        hints:
+          - level: 1
+            body: What happens to a struct when one of its fields is moved out?
+          - level: 2
+            body: "`parse_program` needs `&mut parser`: a borrow of the **whole** struct."
+        solution: |
+          It does not compile. `let diagnostics = parser.diagnostics;` **moves** the vector out of
+          the field, leaving `parser` partially moved. `parser.parse_program()` then needs
+          `&mut parser`, a borrow of the whole struct, including the moved-out field, and the
+          compiler rejects borrowing a partially moved value. (Even if it were allowed, the parser
+          would push new diagnostics into a vector it no longer owns.)
+
+          In the real order, `parse_program` borrows the parser mutably, runs to completion, and
+          returns an owned `Program`. The borrow ends there. Only then is the diagnostics field
+          moved out, and `parser` is never used again, so the partial move is fine.
+      - type: exercise
+        id: mutability-02-q3
+        exercise_type: trace-control-flow
+        prompt: |
+          Trace `parse_program` on an input that `parse_statement_into` cannot make sense of at
+          all, so that a call advances `pos` by nothing. Which lines run, and why does the loop
+          still end?
+        hints:
+          - level: 1
+            body: Look at `before` and the comparison after the call.
+          - level: 2
+            body: What does `bump` do to `pos`, and what does it return at the end of input?
+        solution: |
+          1. Line 18 skips separators; line 19 peeks. If the next token is `Eof`, the loop breaks.
+          2. Line 22 remembers `pos`; line 23 lends `&mut statements` to `parse_statement_into`,
+             which pushes some (possibly error-recovered) statement and reports diagnostics.
+          3. Line 24: `pos` is unchanged, so the guard runs. `bump` (line 25) consumes one token,
+             which advances `pos` to that token's end, unless the token is `Eof` (bump does not
+             move past the end, see state.rs line 75). If it was `Eof`, line 27 breaks.
+          4. Otherwise the loop repeats with `pos` strictly larger than before.
+
+          Because every iteration either advances `pos` or breaks, and `pos` cannot exceed the
+          length of the input, the loop terminates on any input. That is the structural reason
+          behind the promise that `parse` "always returns a tree".
+
+  - id: mutability-03
+    title: "Order matters: `SchemaRegistry::register` and a mutable local"
+    stage: assisted
+    summary: "How borrowing and moving force the order of lines in a `&mut self` method, and how a `&self` method can still build something mutable."
+    prerequisites: [mutability-02]
+    concepts: [mutable-borrowing, borrowing, moves]
+    ono_topics: [records-schemas, process-execution]
+    objectives:
+      - Explain why a shared borrow from `get` must end before `insert` is called on the same map.
+      - Explain why `schema.id.clone()` has to come before `Arc::new(schema)`.
+      - Distinguish mutating `self` from mutating a local built from `&self`.
+    sections:
+      - type: prose
+        kind: context
+        title: Schemas are registered once and shared
+        body: |
+          Every record carries a schema (for example `ono.process/1`). Providers declare the
+          schemas they produce, and a `SchemaRegistry` (a `BTreeMap<SchemaId, Arc<Schema>>`)
+          collects them. Its doc comment states the policy: "Registering the identical schema
+          twice is accepted, so two independent providers may both declare a schema they share."
+          A *different* schema under the same id is an error.
+      - type: code
+        snippet: c09-schema-register
+        caption: "`ono-value/src/schema.rs`."
+        annotations:
+          - lines: 703
+            token: "&mut self, schema: Schema"
+            kind: ownership
+            body: |
+              The registry is borrowed exclusively (it may be changed), and the schema is taken
+              **by value**: the caller hands it over.
+          - lines: 704
+            token: "self.schemas.get(&schema.id)"
+            kind: ownership
+            body: |
+              `get` returns `Option<&Arc<Schema>>`, a **shared** borrow into the map. `existing` is
+              used only inside this `if` block, so the borrow ends when the block ends.
+          - lines: 705
+            token: "**existing == schema"
+            kind: rust
+            body: |
+              `existing` is `&Arc<Schema>`. One `*` goes through the reference, the second through
+              the `Arc`, leaving a `Schema` that can be compared with the one passed in.
+          - lines: 716-717
+            kind: ownership
+            body: |
+              The id is cloned **first**, because the next line moves `schema` into `Arc::new`.
+              After line 717, `schema` can no longer be used.
+      - type: prose
+        kind: black-box
+        title: "`Arc` and `Arc::clone`"
+        body: |
+          For this lesson, read `Arc<Schema>` as "a schema several owners share", and
+          `Arc::clone(&handle)` as "one more handle to the same schema", which does not copy the
+          schema. [Chapter 15](chapter:smart-pointers) explains `Arc` properly.
+      - type: prose
+        kind: rust
+        title: Why the lines are in this order
+        body: |
+          Two rules decide the shape of `register`:
+
+          1. **No `&mut` use while a shared borrow is in use.** `insert` on line 718 needs
+             `&mut self.schemas`. The shared borrow `existing` from line 704 must be over by then.
+             It is: `existing` is only used inside the `if` block, and the compiler ends a borrow
+             after its last use. If the code tried to keep `existing` and then insert, it would be
+             rejected.
+          2. **No use after a move.** `Arc::new(schema)` moves the schema into a new allocation.
+             The map needs the id as its key, so the id is cloned out while `schema` is still
+             usable. Swapping lines 716 and 717 would not compile.
+
+          The early `return`s on lines 706 and 708 leave the function while `existing` is still
+          in scope, and that is fine: they do not touch the map mutably.
+      - type: diagram
+        kind: ownership
+        title: Borrows and moves in `register`, line by line
+        art: |2
+          line 703  self: &mut SchemaRegistry         schema: Schema (owned)
+          line 704  existing = &Arc<Schema> ──shared borrow of self.schemas──┐
+          line 705    compare **existing with schema                          │
+          line 706    return Ok(Arc::clone(existing))   (early exit)          │
+          line 715  } ◄─────────────────────────── shared borrow ends ────────┘
+          line 716  id = schema.id.clone()           schema still owned here
+          line 717  handle = Arc::new(schema)        schema MOVED into the Arc
+          line 718  self.schemas.insert(id, …)       &mut self.schemas (exclusive)
+          line 719  Ok(handle)                       handle MOVED to the caller
+        description: |
+          The function starts owning `schema` and holding an exclusive borrow of the registry.
+          Line 704 takes a shared borrow into the map; it lasts until the end of the `if` block
+          at line 715, or until one of the early returns. After the block no borrow of the map is
+          active. Line 716 clones the id while `schema` is still owned. Line 717 moves the schema
+          into a new `Arc`. Line 718 uses the exclusive borrow of the registry to insert the id
+          and a second handle. Line 719 moves the first handle to the caller.
+      - type: code
+        snippet: c09-resolved-env
+        caption: "`ono-process/src/command.rs`. `EnvChange` is an enum with `Set(key, value)`, `Unset(key)` and `Clear`. The doc mentions `inherited`, but the function takes no such parameter: read the code, not only the comment."
+        annotations:
+          - lines: 308
+            token: "&self"
+            kind: ownership
+            body: |
+              Only a shared borrow of the command: `resolved_env` cannot change the command's list
+              of environment changes.
+          - lines: 312
+            token: "let mut changes"
+            kind: rust
+            body: |
+              A **local** vector, owned by this call. It may be changed freely (`clear`, `retain`,
+              `push`) because nobody else can see it.
+          - lines: 318
+            token: "key.clone()"
+            kind: ownership
+            body: |
+              `key` and `value` are references into `self.env` (the loop iterates `&self.env`). The
+              result must own its strings, and the command is only borrowed, so they are cloned.
+      - type: prose
+        kind: ono
+        title: What `resolved_env` computes
+        body: |
+          A command's environment changes are recorded in order as they are added with `.env(…)`,
+          `.env_remove(…)` and `.env_clear()`. Before the process is started, they are folded into
+          one list: a later change to a key replaces an earlier one, and `Clear` forgets
+          everything before it. Two tests in the same file pin this down,
+          `should_let_a_later_environment_change_replace_an_earlier_one` and the one about
+          clearing. The doc also says why it returns `None` when nothing was changed: "so the
+          common case costs nothing". No vector is allocated for a command that inherits the
+          shell's environment unchanged.
+      - type: exercise
+        id: mutability-03-q1
+        exercise_type: predict
+        prompt: |
+          Predict what the compiler says if lines 716 and 717 of `register` are swapped:
+
+          ```rust
+          let handle = Arc::new(schema);
+          let id = schema.id.clone();
+          ```
+
+          Then name a different way to get the id that would work after the swap.
+        hints:
+          - level: 1
+            body: What does `Arc::new` do with its argument?
+          - level: 2
+            body: After the move, is there still a way to reach the schema? Think of `handle`.
+        solution: |
+          It fails with "borrow of moved value: `schema`". `Arc::new(schema)` takes the schema by
+          value, so the local binding is moved from, and reading `schema.id` afterwards is
+          rejected.
+
+          After the swap, the schema is still reachable through the `Arc`: `handle.id.clone()`
+          reads the field through the handle (auto-deref makes `handle.id` work like
+          `(*handle).id`). The original code simply takes the id before the move, which avoids the
+          question.
+      - type: exercise
+        id: mutability-03-q2
+        exercise_type: trace-value
+        prompt: |
+          A command is built with
+          `Command::new("env").env("A", "1").env_clear().env("B", "2").env("B", "3")`.
+          Trace `changes` through `resolved_env` and give the return value.
+        hints:
+          - level: 1
+            body: Write down `self.env` first, in order.
+          - level: 2
+            body: "`Clear` empties `changes`; `Set` first removes any entry with the same key, then pushes."
+        solution: |
+          `self.env` is `[Set(A, 1), Clear, Set(B, 2), Set(B, 3)]`, so the early `return None` does
+          not apply.
+
+          | change | effect on `changes` |
+          |---|---|
+          | `Set(A, 1)` | `retain` removes nothing, push `(A, Some(1))` → `[(A, Some(1))]` |
+          | `Clear` | `clear()` → `[]` |
+          | `Set(B, 2)` | push `(B, Some(2))` → `[(B, Some(2))]` |
+          | `Set(B, 3)` | `retain` drops the old `B`, push `(B, Some(3))` → `[(B, Some(3))]` |
+
+          The result is `Some(vec![("B", Some("3"))])` (as `OsString`s). The command itself is
+          unchanged: `self.env` still holds all four changes, because `resolved_env` only borrowed
+          it. Whether the process starts from an empty environment is asked separately through
+          `clears_env`.
+
+  - id: mutability-04
+    title: "Exchanging values through `&mut`: `distance` and `MapValue::insert`"
+    stage: assisted
+    summary: "`std::mem::swap` and `std::mem::replace` exchange values behind mutable borrows without cloning."
+    prerequisites: [mutability-03]
+    concepts: [mutable-borrowing, collections, mutability]
+    ono_topics: [command-registry, value-model]
+    objectives:
+      - Read index assignment (`v[i] = x`) as a mutation that needs a mutable binding.
+      - Explain what `std::mem::swap(&mut a, &mut b)` does and why it needs no clone.
+      - Explain why `std::mem::replace` is used to get the old value out of a `&mut` slot.
+    sections:
+      - type: prose
+        kind: context
+        title: Near misses and map entries
+        body: |
+          When a name does not resolve, Ono-Sendai suggests the closest one
+          ([lesson 8.4](lesson:borrowing-04) showed `closest`). Closeness is measured by
+          `distance`, a Levenshtein edit distance "over characters rather than bytes". Its tests
+          state examples: `distance("prcoess", "process") == 2`, `distance("", "get") == 3`.
+
+          The second snippet is `MapValue::insert`, which stores a value in an insertion-ordered
+          map and hands back the value that was there before.
+      - type: code
+        snippet: c09-distance
+        caption: "`ono-command/src/suggest.rs`. `(0..=n).collect()` builds the vector `[0, 1, …, n]`."
+        annotations:
+          - lines: 30-31
+            token: "let mut previous"
+            kind: rust
+            body: |
+              Two rows of the classic edit-distance table. Only two rows are kept at any time;
+              both are `mut` because they are overwritten on every pass.
+          - lines: 39
+            token: "current[column + 1] ="
+            kind: rust
+            body: |
+              **Index assignment** writes into the vector. It borrows `current` mutably for the
+              assignment, which requires the `mut` binding.
+          - lines: 41
+            token: "std::mem::swap(&mut previous, &mut current)"
+            kind: ownership
+            body: |
+              Exchanges the contents of the two bindings: the row just computed becomes
+              `previous`, and the old `previous` becomes the scratch row to overwrite next. Two
+              mutable borrows exist at once here, which is allowed because they borrow two
+              **different** values.
+      - type: prose
+        kind: rust
+        title: Why `swap`, and not assignment or a clone
+        body: |
+          The loop needs "the row I just finished" as `previous` and a writable row as `current`.
+          The alternatives are worse:
+
+          - `previous = current;` moves `current`'s vector into `previous` and leaves `current`
+            moved from. The next pass writes `current[0] = …`, which would not compile.
+          - `previous = current.clone();` works, but allocates a new vector and copies every
+            element on every pass.
+
+          `std::mem::swap` takes two `&mut Vec<usize>` and exchanges the values behind them. A
+          `Vec` is a small header (pointer, length, capacity), so this exchanges two headers and
+          touches no elements. The old `previous` contents do not need clearing, because every
+          element of `current` is overwritten on the next pass.
+      - type: code
+        snippet: c09-map-insert
+        caption: "`ono-value/src/map.rs`. `entries` is a `Vec<(Arc<str>, Value)>`, kept in insertion order."
+        annotations:
+          - lines: 65
+            token: "iter_mut()"
+            kind: ownership
+            body: |
+              Iterates over **mutable** references to the entries, `&mut (Arc<str>, Value)`.
+              `find` stops at the first entry whose key equals `key`.
+          - lines: 66
+            token: "Some((_, slot))"
+            kind: rust
+            body: |
+              Destructures the found `&mut (key, value)`. `slot` is a `&mut Value` pointing at the
+              value inside the vector.
+          - lines: 66
+            token: "std::mem::replace(slot, value)"
+            kind: ownership
+            body: |
+              Puts the new `value` into the slot and returns the **old** value, owned. Moving out of
+              a `&mut` would leave a hole, which Rust does not allow; `replace` fills the hole in
+              the same step.
+      - type: prose
+        kind: ono
+        title: Why the map is written this way
+        body: |
+          The doc of `MapValue` gives the design: keys keep insertion order "because a renderer
+          that reorders a user's keys is surprising", and re-inserting an existing key "keeps that
+          key's original position". Replacing the value in place, through `slot`, is what keeps
+          the position: the entry is never removed and re-pushed. Returning the old value as
+          `Option<Value>` follows the convention of the standard library's maps.
+      - type: exercise
+        id: mutability-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In `distance`, line 41 swaps the two rows. A reader suggests replacing it with
+          `previous = current;`. What happens?
+        choices:
+          - text: It does not compile, because `current` is moved and then written to on the next pass.
+            correct: true
+            feedback: |
+              Correct. Assignment moves the vector out of `current`. On the next iteration line 34
+              writes `current[0] = row + 1`, which uses a moved-from binding and is rejected.
+          - text: It compiles and computes the same result, only more slowly.
+            feedback: |
+              A plain assignment of a `Vec` is a move, not a copy. The move itself is cheap, but
+              the next use of `current` is a use after move, so it does not compile.
+          - text: It compiles, but `previous` and `current` then share one vector.
+            feedback: |
+              Rust has no implicit aliasing of owned values. After `previous = current;` only
+              `previous` owns the vector, and `current` is unusable.
+        hints:
+          - level: 1
+            body: Is `Vec<usize>` `Copy`?
+          - level: 2
+            body: Look at the first statement of the loop body, line 34.
+      - type: exercise
+        id: mutability-04-q2
+        exercise_type: explain-line
+        prompt: |
+          Explain line 66 of `MapValue::insert`,
+          `Some((_, slot)) => Some(std::mem::replace(slot, value)),`. What is the type of
+          `slot`, what happens to the old value, and why could the code not write
+          `let old = *slot; *slot = value;` instead?
+        hints:
+          - level: 1
+            body: "`iter_mut` hands out `&mut` references. What does destructuring a `&mut (A, B)` give?"
+          - level: 2
+            body: Can you move a non-`Copy` value out of something you only borrow?
+        solution: |
+          `iter_mut().find(…)` yields `Option<&mut (Arc<str>, Value)>`. The pattern `(_, slot)`
+          ignores the key and binds `slot: &mut Value`, a mutable borrow of the value stored in
+          the vector.
+
+          `std::mem::replace(slot, value)` moves the new `value` into the slot and returns the value
+          that was there, which the method returns as `Some(old)`. The caller now owns the old
+          value.
+
+          `let old = *slot;` would try to move a `Value` out through a borrow. `Value` is `Clone` but
+          not `Copy`, and moving out of a `&mut` would leave the slot empty for a moment, which Rust
+          forbids. `replace` puts the new value in and takes the old one out in a single step,
+          so the slot is never empty. (`*slot = value;` alone would compile, but it would drop the
+          old value instead of returning it.)

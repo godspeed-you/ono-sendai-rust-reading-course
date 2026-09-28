@@ -1,0 +1,98 @@
+id: c21-link-inner
+source:
+  file: crates/ono-protocol/src/link.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 33
+  anchor: messages the remote has sent
+  content_hash: sha256:edfd2d1da0a9e930393c47ce380974a3e97840d4318743ef6e3dc05b8c3c1668
+  code: |
+    //! The local end of a link: the handshake, the stream table, and the credit that bounds it.
+    //!
+    //! # Multiplexing
+    //!
+    //! One connection carries many concurrent queries (spec §21.4: "typed RPC / multiplexed
+    //! streams"). Each has a stream id, its own inbound queue, and its own cancellation; a stream
+    //! that stalls or is cancelled does not touch the others, because routing happens on the frame
+    //! header and never needs the payload.
+    //!
+    //! # Backpressure, and why it is credit rather than the socket
+    //!
+    //! Spec §11.2 requires that a slow consumer stop an infinite producer, and ADR-0013 makes a
+    //! bounded channel the mechanism locally. A remote producer is on the other side of a socket, and
+    //! the socket's own flow control is per *connection*: letting it be the bound would mean a
+    //! consumer that stopped reading one query would stall every other query on the same link, and
+    //! would still allow the peer to buffer whatever the network path holds.
+    //!
+    //! So each stream carries a **credit window**, negotiated in the handshake. Opening a stream
+    //! grants the remote `window` messages. The consumer grants more only as it takes messages out,
+    //! so at any moment
+    //!
+    //! ```text
+    //! messages the remote has sent  ≤  messages the consumer has taken  +  window
+    //! ```
+    //!
+    //! which is the bound `crates/ono-protocol/tests/streams.rs` asserts directly against a producer
+    //! that never stops. The inbound queue is sized to the window, so a peer that respects its credit
+    //! never fills it; one that does not is refusing the protocol and the link fails with
+    //! `remote.protocol_mismatch` rather than growing.
+    //!
+    //! Credit is returned in halves rather than one at a time: a grant per message would double the
+    //! frame count of every stream for no gain, and half a window is early enough that a peer with a
+    //! round trip of latency never runs dry.
+- start_line: 228
+  end_line: 256
+  anchor: struct LinkInner {
+  content_hash: sha256:9f8fb7a464e3e76568049d4156b12c49410712cf28b31d37bd8bdd77a6412b6d
+  code: |
+    /// What the reader task hands to a stream.
+    ///
+    /// A value travels unboxed because it is the hot path — every object of every remote query goes
+    /// through here — while the rarer and much larger payloads are boxed, so that a stream of values
+    /// does not pay for the size of an error record it is not carrying.
+    #[derive(Debug)]
+    enum Inbound {
+        Value(Value),
+        Event(Box<ObjectEvent>),
+        Failure(Box<ErrorValue>),
+        Outcome(Box<ActionOutcome>),
+        End,
+    }
+
+    #[derive(Debug)]
+    struct Registered {
+        sender: mpsc::Sender<Inbound>,
+    }
+
+    #[derive(Debug)]
+    struct LinkInner {
+        frames: FrameSink,
+        streams: Mutex<HashMap<u32, Registered>>,
+        next_id: AtomicU32,
+        alive: AtomicBool,
+        failure: Mutex<Option<ErrorValue>>,
+        limits: Limits,
+        window: u32,
+    }
+- start_line: 295
+  end_line: 310
+  anchor: 'fn grant(&self, id: u32, credit: u32)'
+  content_hash: sha256:66ecbc873a887f2150607dc775f5f1d773b5b3c83c6948e0df98d8f7ba92228f
+  code: |2
+        fn release(&self, id: u32) {
+            self.with_streams(|streams| streams.remove(&id));
+        }
+
+        fn cancel_stream(&self, id: u32) {
+            self.release(id);
+            if let Ok(payload) = encode_message(&Message::Cancel, &self.limits) {
+                let _ = self.frames.send(Frame::new(FrameKind::Cancel, id, payload));
+            }
+        }
+
+        fn grant(&self, id: u32, credit: u32) {
+            if let Ok(payload) = encode_message(&Message::Credit(credit), &self.limits) {
+                let _ = self.frames.send(Frame::new(FrameKind::Credit, id, payload));
+            }
+        }

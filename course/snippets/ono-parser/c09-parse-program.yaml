@@ -1,0 +1,39 @@
+id: c09-parse-program
+source:
+  file: crates/ono-parser/src/parser/statements.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 14
+  end_line: 42
+  anchor: self.parse_statement_into(&mut statements);
+  content_hash: sha256:953aecad5fc2517df8bf78448c1acb3401e70cd5e1228f07b2b03ab539c3cd62
+  code: |
+    impl Parser<'_> {
+        pub(super) fn parse_program(&mut self) -> Program {
+            let mut statements = Vec::new();
+            loop {
+                self.skip_separators();
+                if self.peek(LexMode::Words).kind == TokenKind::Eof {
+                    break;
+                }
+                let before = self.pos;
+                self.parse_statement_into(&mut statements);
+                if self.pos == before {
+                    let token = self.bump(LexMode::Words);
+                    if token.kind == TokenKind::Eof {
+                        break;
+                    }
+                }
+            }
+            Program {
+                statements,
+                span: Span::new(0, self.limit as u32),
+            }
+        }
+
+        /// Parses one statement and the terminator that follows it.
+        pub(super) fn parse_statement_into(&mut self, statements: &mut Vec<Statement>) {
+            let (statement, block_terminated) = self.parse_statement();
+            statements.push(statement);
+            self.finish_statement(block_terminated);
+        }

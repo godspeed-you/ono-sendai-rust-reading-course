@@ -1,0 +1,31 @@
+id: c16-dns-run-bounded
+source:
+  file: crates/ono-provider-net/src/dns.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 248
+  end_line: 268
+  anchor: let lookup = tokio::task::spawn_blocking(move || self.run(&schema));
+  content_hash: sha256:d4b5f1b5a039ecf9596d2b28b132c8a95a99950932ac96c9057e0c73703e6299
+  code: |2
+        /// The lookup on a blocking thread, bounded by [`LOOKUP_TIMEOUT`].
+        async fn run_bounded(self, schema: Arc<Schema>) -> Result<Vec<RecordValue>, ErrorValue> {
+            let query = self.query.clone();
+            let lookup = tokio::task::spawn_blocking(move || self.run(&schema));
+            match tokio::time::timeout(LOOKUP_TIMEOUT, lookup).await {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(joined)) => Err(ErrorValue::new(
+                    ErrorCode::ProviderUnavailable,
+                    format!("the resolver thread stopped before answering for `{query}`: {joined}"),
+                )),
+                Err(_) => Err(ErrorValue::new(
+                    ErrorCode::ProviderUnavailable,
+                    format!(
+                        "the resolver did not answer for `{query}` within {}s",
+                        LOOKUP_TIMEOUT.as_secs()
+                    ),
+                )
+                .with_help("no nameserver is answering; the name may still exist")
+                .with_retryable(true)),
+            }
+        }

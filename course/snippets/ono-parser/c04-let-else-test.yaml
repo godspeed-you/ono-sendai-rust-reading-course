@@ -1,0 +1,25 @@
+id: c04-let-else-test
+source:
+  file: crates/ono-parser/tests/parse_statements.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 22
+  end_line: 36
+  anchor: let Statement::Let(binding) = only(
+  content_hash: sha256:6ace3d47a48a32bd0d5af5782989d22140c8d2687fae754dfcfec09b7bc685ec
+  code: |
+    fn only(source: &str) -> Statement {
+        let mut statements = statements(source);
+        assert_eq!(statements.len(), 1, "expected one statement in {source:?}");
+        statements.remove(0)
+    }
+
+    #[test]
+    fn should_bind_a_pipeline_when_the_statement_is_a_let() {
+        let Statement::Let(binding) = only("let hot = get process | where cpu > 50") else {
+            panic!("expected a let statement");
+        };
+        assert_eq!(binding.name, "hot");
+        assert!(binding.ty.is_none());
+        assert_eq!(binding.value.head.stages.len(), 2);
+    }

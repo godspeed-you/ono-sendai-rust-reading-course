@@ -1,0 +1,62 @@
+id: c16-session-runtime
+source:
+  file: crates/ono-cli/src/session.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 787
+  end_line: 810
+  anchor: .thread_name("ono")
+  content_hash: sha256:60d645a8e241d476c2fab79623ed6c212d7dd39dd6724c25a725218287f3beb2
+  code: |2
+        /// The async runtime native pipelines run on, built the first time one is needed.
+        ///
+        /// Returns `None` only if the operating system refuses to start it, which a caller reports as
+        /// a structured error rather than treating as impossible.
+        pub fn runtime(&mut self) -> Option<&tokio::runtime::Runtime> {
+            if self.execution.runtime.is_none() {
+                self.execution.runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .thread_name("ono")
+                    .build()
+                    .ok();
+            }
+            self.execution.runtime.as_ref()
+        }
+
+        /// A handle to the runtime, cloneable and borrow-free, once it exists.
+        #[must_use]
+        pub fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
+            self.execution
+                .runtime
+                .as_ref()
+                .map(tokio::runtime::Runtime::handle)
+                .cloned()
+        }
+- start_line: 1425
+  end_line: 1447
+  anchor: runtime.block_on(crate::providers::register_async(&mut registry));
+  content_hash: sha256:6d5784edcacfbed648e41537b49a6a6afd1552a8e00af47c16689a61bfcd54f4
+  code: |2
+        pub fn providers(&mut self) -> &ProviderRegistry {
+            if self.provider.providers.is_none() {
+                let environment: Vec<(String, String)> = self
+                    .environment
+                    .env
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.to_string_lossy().into_owned(),
+                            value.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect();
+                let mut registry = crate::providers::registry_with_tables(
+                    environment,
+                    std::sync::Arc::clone(&self.jobs.tables),
+                    std::sync::Arc::clone(&self.environment.env_provider),
+                );
+                if let Some(runtime) = self.runtime() {
+                    runtime.block_on(crate::providers::register_async(&mut registry));
+                }
+                self.provider.providers = Some(registry);
+            }

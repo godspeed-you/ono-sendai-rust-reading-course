@@ -1,0 +1,115 @@
+id: c18-native-segment-assemble
+source:
+  file: crates/ono-cli/src/eval/native/foreground.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 42
+  end_line: 69
+  anchor: 'let mut bound: Vec<(&''static CommandContract, BoundArguments)> = Vec::new();'
+  content_hash: sha256:78cf57dc605439ec84714cc9fd7bcc8e66d6c1f75d0d2b5085692212fd9e44c2
+  code: |2
+        let table = implementations(session).map_err(Flow::Failed)?;
+        // Taken before the pipeline borrows the session: a live view paints with the session's
+        // theme, not with whatever the default happens to be (spec §44, ADR-0332).
+        let theme = ono_render::Theme::clone(session.theme());
+
+        // Everything is bound before anything runs. A pipeline that cannot be built runs no part of
+        // itself, so a typo in the third stage never leaves the first two half-done.
+        let mut bound: Vec<(&'static CommandContract, BoundArguments)> = Vec::new();
+        let mut structured = input.is_none() || seed.is_some();
+        for index in indices {
+            let stage = &list.stages[*index];
+            let Some((contract, mut arguments)) = bind_stage(session, registry, stage, structured)?
+            else {
+                return Err(Flow::Failed(ErrorValue::new(
+                    ErrorCode::ResolveCommandNotFound,
+                    format!("`{}` is not a native command here", stage.span),
+                )));
+            };
+            // `format table` without `--max-rows` truncates where the sink would (spec §13.3,
+            // ADR-0094 §6): the setting is the session's, so the shell hands it in here.
+            if contract.id() == "ono.data.format"
+                && let Some(limit) = table_row_limit(session)
+            {
+                arguments = arguments.with_option("max-rows", Value::Int(limit as i128));
+            }
+            structured = !produces_bytes(contract);
+            bound.push((contract, arguments));
+        }
+- start_line: 156
+  end_line: 164
+  anchor: let handle = runtime.handle().clone();
+  content_hash: sha256:a50c9c714d54485e2faba6ad2387d4f82e487a6778e3c96890e35e13887c5ce5
+  code: |2
+        let (runtime, providers) = session.pipeline_context().ok_or_else(|| {
+            Flow::Failed(ErrorValue::new(
+                ErrorCode::IoPermissionDenied,
+                "the operating system refused to start the pipeline runtime",
+            ))
+        })?;
+        // Owned, so the borrow of the session ends with the assembly below and the evaluator can be
+        // called again while this pipeline is still running — which is the whole point (ADR-0480).
+        let handle = runtime.handle().clone();
+- start_line: 215
+  end_line: 238
+  anchor: let mut invocation = Invocation::new(contract, arguments, providers)
+  content_hash: sha256:c519784e3ae2df78cd2354bcd0039279e671c28d65fc2347e1b8ff01f14fecb8
+  code: |2
+            let mut failed_rows = carried_failure;
+            let final_stage = bound.len().saturating_sub(1);
+            for (position, (contract, arguments)) in bound.iter().enumerate() {
+                if let Some((_, at)) = blocks.iter().find(|(held, _)| *held == position) {
+                    let Some(previous) = stream.take() else {
+                        return Err(each_needs_a_stream());
+                    };
+                    stream = Some(asking_stage(previous, *at, asked.clone()));
+                    continue;
+                }
+                let started = std::time::Instant::now();
+                // v0.5 §4: every stage carries the session's temporal coordinate, or the one its
+                // own `--at` names. `CommandTable::run` reads it there — the read-only rule of §4.7
+                // and the historical evaluation of §4.5 are one seam, not two (ADR-0691).
+                let temporal = crate::temporal::invocation_context(arguments).await?;
+                let mut invocation = Invocation::new(contract, arguments, providers)
+                    .with_scope(std::sync::Arc::clone(&scope))
+                    .with_context(context.clone())
+                    .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
+                    .with_temporal(temporal, registry)
+                    .with_display(displays && position == final_stage);
+                if let Some(previous) = stream.take() {
+                    invocation = invocation.with_input(previous);
+                }
+- start_line: 256
+  end_line: 262
+  anchor: match table.run(contract.id(), &mut invocation).await {
+  content_hash: sha256:8e7eaf3855b094bbe1873cc6d67eb67165c8fce58219688728f71f6ece0d2503
+  code: |2
+                match table.run(contract.id(), &mut invocation).await {
+                    // v0.4.1 §22.2: the configured materialization limits are stated once, here,
+                    // where the pipeline is assembled. Every stage built from this stream inherits
+                    // them, so a producer does not have to know they exist (ADR-0454).
+                    Ok(Outcome::Values(values)) => {
+                        stream = Some(values.with_materialization_limits(materialization));
+                    }
+- start_line: 302
+  end_line: 318
+  anchor: let assembled = handle.block_on(async {
+  content_hash: sha256:f88b478efff3729252f8a17a6fb595912048e071f9f4207ae6917db45158cdc4
+  code: |2
+                        return Err(error);
+                    }
+                }
+            }
+            Ok((stream, failed_rows))
+        };
+
+        let assembled = handle.block_on(async {
+            tokio::select! {
+                outcome = assemble => outcome,
+                () = interrupted() => Err(ErrorValue::new(ErrorCode::StreamCancelled, "interrupted")),
+            }
+        });
+        // Every sender that remains belongs to a block stage, so the driver below learns from the
+        // channel closing that no block will ask again.
+        drop(asked);
+        let (stream, failed_rows) = assembled.map_err(interrupted_flow)?;

@@ -1,0 +1,19 @@
+id: c09-parse-entry
+source:
+  file: crates/ono-parser/src/parser/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 81
+  end_line: 89
+  anchor: let program = parser.parse_program();
+  content_hash: sha256:dfaac4b4bffac868f920ce23bccf1eb0b479f1192c5c3093c9f96fe82c8fb590
+  code: |
+    #[must_use]
+    pub fn parse(source: &str) -> Parsed {
+        let mut parser = Parser::new(source);
+        let program = parser.parse_program();
+        Parsed {
+            program,
+            diagnostics: parser.diagnostics,
+        }
+    }

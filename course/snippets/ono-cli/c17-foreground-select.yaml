@@ -1,0 +1,45 @@
+id: c17-foreground-select
+source:
+  file: crates/ono-cli/src/eval/native/foreground.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 162
+  end_line: 181
+  anchor: let (asked, mut requests) = tokio::sync::mpsc::channel::<BlockRequest>(1);
+  content_hash: sha256:c4c3dcdf1861c825b1b1000d5a202c8a4648da2d0ba9e67b8f5b99dbc21b424b
+  code: |2+
+        // Owned, so the borrow of the session ends with the assembly below and the evaluator can be
+        // called again while this pipeline is still running — which is the whole point (ADR-0480).
+        let handle = runtime.handle().clone();
+
+        // Ctrl-C is delivered to the shell itself while a native pipeline runs — there is no child
+        // for the kernel to interrupt — so whatever this thread waits on races the interrupt note and
+        // loses to it (spec §18.5). Dropping the futures drops every stream receiver, which closes
+        // the bounded channels and stops every producer at its next send.
+        //
+        // The note is dropped by entering the foreground line rather than by reading it away here: a
+        // block runs one of these per item, and a bare `take_interrupt()` at each of them discards the
+        // Ctrl-C aimed at the line around them, whichever item happened to start next (ADR-0782). The
+        // outermost run still clears what the prompt left behind; a nested one clears nothing.
+        let _running = crate::eval::pipeline::ForegroundRun::begin();
+
+        // One request in flight. §25.3 keeps `each` serial, so a queue of items waiting to be run
+        // would buy nothing, and §65.7 forbids the shape it would take: "replacing a foreground
+        // `Vec` with an unbounded background queue is not a streaming fix".
+        let (asked, mut requests) = tokio::sync::mpsc::channel::<BlockRequest>(1);
+
+- start_line: 309
+  end_line: 318
+  anchor: let assembled = handle.block_on(async {
+  content_hash: sha256:a26d0df422510d19f24bab24df9ae3c01f9f8d124dabff47bcf391a736f9ca43
+  code: |2
+        let assembled = handle.block_on(async {
+            tokio::select! {
+                outcome = assemble => outcome,
+                () = interrupted() => Err(ErrorValue::new(ErrorCode::StreamCancelled, "interrupted")),
+            }
+        });
+        // Every sender that remains belongs to a block stage, so the driver below learns from the
+        // channel closing that no block will ask again.
+        drop(asked);
+        let (stream, failed_rows) = assembled.map_err(interrupted_flow)?;

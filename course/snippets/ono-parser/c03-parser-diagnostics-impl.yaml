@@ -1,0 +1,16 @@
+id: c03-parser-diagnostics-impl
+source:
+  file: crates/ono-parser/src/parser/diagnostics.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 12
+  end_line: 17
+  anchor: impl Parser<'_> {
+  content_hash: sha256:322ff8acec7d7e959fb67e9f7ed4729dd5ee6556cfb5904bd6c579f2191c77b0
+  code: |
+    use super::state::Parser;
+
+    impl Parser<'_> {
+        pub(super) fn report(&mut self, diagnostic: Diagnostic) {
+            self.diagnostics.push(diagnostic);
+        }

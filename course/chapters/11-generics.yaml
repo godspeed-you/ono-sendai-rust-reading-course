@@ -1,0 +1,875 @@
+id: generics
+number: 11
+title: Generics and trait bounds
+summary: |
+  [Chapter 10](chapter:traits) used traits to put different types behind one `dyn Trait`. The
+  other way to use a trait is as a **bound** on a generic type parameter: "this function works for
+  any type `T`, as long as `T` implements this trait". The compiler then produces a separate copy
+  of the function for each concrete type it is called with (*monomorphization*), and every call is
+  resolved at compile time. That is **static dispatch**, as opposed to the **dynamic dispatch**
+  through a vtable that `dyn Trait` uses.
+
+  Ono-Sendai uses both, often in the same few lines. This chapter reads:
+
+  - `impl Trait` in argument position (`Value::list`, `ErrorValue::new`): a generic parameter
+    without a name, so callers can pass whatever converts;
+  - blanket implementations and `where` clauses (`impl<F> Predicate for F where F: Fn(…)`), which
+    make every suitable closure a `Predicate`, and `Where::new`, which turns that static generic
+    into a stored `Box<dyn Predicate>`;
+  - `impl Trait` in return position (`key_function`), where the function, not the caller, picks
+    the type, and serde-bounded functions whose type parameter the caller picks through
+    inference;
+  - associated types (`type Item`, `type IntoIter`) in `MapValue`'s implementations of the
+    standard iterator traits.
+lessons:
+  - id: generics-01
+    title: "`impl Trait` in argument position: `Value::list` and `ErrorValue::new`"
+    stage: assisted
+    summary: "Accepting any type that can become what the function needs, and what the compiler does with it."
+    prerequisites: [traits-01]
+    concepts: [impl-trait, generics, trait-bounds]
+    ono_topics: [value-model, error-flow]
+    objectives:
+      - "Read `param: impl Trait` as an anonymous generic type parameter with a bound."
+      - Explain what `Into<Arc<str>>` lets a caller pass and where the conversion happens.
+      - Explain static dispatch and monomorphization for a generic function.
+    sections:
+      - type: prose
+        kind: context
+        title: Constructors used everywhere
+        body: |
+          Almost every failure in Ono-Sendai becomes an `ErrorValue` (see
+          [error flow](topic:error-flow)), and many values are built with small constructors on
+          `Value`. These functions are called from hundreds of places with different kinds of
+          input: string literals, `String`s built by `format!`, arrays, vectors. Their signatures
+          are written so that all of those work without conversions at the call site.
+      - type: code
+        snippet: c11-value-list
+        caption: "`ono-value/src/value.rs`. `Value::List` holds an `Arc<[Value]>`."
+        annotations:
+          - lines: 129
+            token: "text.into()"
+            kind: rust
+            body: |
+              Converts the borrowed `&str` into the `Arc<str>` that `Value::String` stores. The
+              target type is known from the variant, so `into()` needs no annotation. Converting
+              copies the text into a new shared allocation.
+          - lines: 134
+            token: "impl IntoIterator<Item = Value>"
+            kind: rust
+            body: |
+              "Any type that can be turned into an iterator of `Value`s": an array
+              `[Value::Int(1), Value::Int(2)]`, a `Vec<Value>`, or an iterator chain. `Item = Value`
+              constrains the iterator's **associated type** ([lesson 4](lesson:generics-04)).
+          - lines: 135
+            token: "items.into_iter().collect()"
+            kind: rust
+            body: |
+              Takes the items one by one and gathers them into the list type the variant needs.
+              How `collect` knows what to build is the subject of
+              [chapter 12](chapter:iterators-closures).
+      - type: code
+        snippet: c11-error-value-new
+        caption: "`ono-value/src/error.rs`, shortened: the constructor and one builder method."
+        annotations:
+          - lines: 106
+            token: "message: impl Into<Arc<str>>"
+            kind: type
+            body: |
+              The parameter's type is "anything that implements `Into<Arc<str>>`". `&str`, `String`
+              and `Box<str>` all do, so `ErrorValue::new(code, "literal")` and
+              `ErrorValue::new(code, format!(…))` both compile.
+          - lines: 109
+            token: "message.into()"
+            kind: ownership
+            body: |
+              The conversion happens here, inside the function, once. A `String` argument is
+              moved in and converted; a `&str` is copied into the new `Arc<str>`.
+          - lines: 134
+            token: "help: impl Into<Arc<str>>"
+            kind: rust
+            body: |
+              The same bound on a builder method, which also takes `mut self` and returns `Self`
+              ([chapter 9](lesson:mutability-01)).
+      - type: prose
+        kind: rust
+        title: "What `impl Trait` in an argument means"
+        body: |
+          `fn new(code: ErrorCode, message: impl Into<Arc<str>>)` is shorthand for a generic
+          function with an unnamed type parameter:
+
+          ```rust
+          fn new<M: Into<Arc<str>>>(code: ErrorCode, message: M) -> Self
+          ```
+
+          `M` is a **type parameter** and `Into<Arc<str>>` is its **bound**: inside the function,
+          only what the bound promises may be used, here the `into()` method. The caller decides
+          what `M` is, simply by passing an argument.
+
+          For every distinct type actually used, the compiler generates a separate copy of the
+          function (`new::<&str>`, `new::<String>`, …). Each copy calls the right `into()`
+          directly: **static dispatch**, with no vtable and no run-time lookup. The cost is more
+          machine code; the benefit is that the call is as direct as a hand-written one.
+
+          The sugar form has one limitation: the caller cannot name the type explicitly with
+          `::<…>` (the "turbofish"). Ono-Sendai's constructors never need to.
+
+          This also resolves the black box from [lesson 8.4](lesson:borrowing-04):
+          `closest(typed: &str, candidates: impl IntoIterator<Item = &'a str>)` accepts any source
+          of `&'a str` names.
+      - type: prose
+        kind: ono
+        title: Why the constructors are written this way
+        body: |
+          The `ErrorValue` doc says errors "are built in a chain rather than assembled field by
+          field, so a call site reads as one statement":
+
+          ```rust
+          ErrorValue::new(ErrorCode::IoPermissionDenied, "access denied")
+              .with_target(ValueRef::path(Path::new("/etc/shadow")))
+              .with_help("requires root or read capability")
+          ```
+
+          (quoted from the doc test on lines 84–86). With `impl Into<Arc<str>>`, the same chain
+          works whether the message is a literal or a `format!` result. Inside, the message is
+          stored as `Arc<str>`, which makes cloning an error cheap: errors are also values and
+          travel through pipelines.
+      - type: exercise
+        id: generics-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Which of these calls does **not** compile? (`name` is a `String`, `n` is an `i32`.)
+          Decide before reading the feedback.
+        choices:
+          - text: "`ErrorValue::new(code, n)`"
+            correct: true
+            feedback: |
+              Correct. `i32` does not implement `Into<Arc<str>>`; the bound on `message` rejects it
+              at compile time. `ErrorValue::new(code, n.to_string())` would work.
+          - text: "`ErrorValue::new(code, \"no such field\")`"
+            feedback: |
+              A `&'static str` implements `Into<Arc<str>>`. This is the most common form in the
+              codebase.
+          - text: "`ErrorValue::new(code, format!(\"no field `{name}`\"))`"
+            feedback: |
+              `format!` produces a `String`, and `String` implements `Into<Arc<str>>`. The string
+              is moved in and converted.
+          - text: "`ErrorValue::new(code, name.as_str())`"
+            feedback: |
+              `as_str()` gives a `&str`, which converts. The text is copied into the new
+              `Arc<str>`, and `name` is still usable afterwards.
+        hints:
+          - level: 1
+            body: The bound says what the argument must be able to become.
+          - level: 2
+            body: Which of the argument types is not a kind of text?
+      - type: exercise
+        id: generics-01-q2
+        exercise_type: predict
+        prompt: |
+          A crate calls `ErrorValue::new` 300 times: 200 times with string literals and 100 times
+          with `format!(…)` results. How many versions of `new` does the compiler generate for these
+          calls, and is any vtable involved when `message.into()` runs? Answer first.
+        hints:
+          - level: 1
+            body: Count distinct argument **types**, not call sites.
+          - level: 2
+            body: Is `Into<Arc<str>>` used as a `dyn` type anywhere in the signature?
+        solution: |
+          Two: one for `&'static str` (all literals have that type) and one for `String` (every
+          `format!` result). Call sites with the same argument type share one copy. (The compiler
+          may deduplicate or inline further, but conceptually there is one instance per type.)
+
+          No vtable is involved. `impl Into<Arc<str>>` in argument position is a generic
+          parameter, so each copy knows its concrete type at compile time and calls that type's
+          `into()` directly. That is static dispatch. A vtable appears only with `dyn Trait`, as
+          in [chapter 10](lesson:traits-02).
+      - type: exercise
+        id: generics-01-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 135, `Value::List(items.into_iter().collect())`, together with the signature
+          on line 134. Who decides the type of `items`, and who decides what `collect` builds?
+        hints:
+          - level: 1
+            body: One type is chosen by the caller; the other is fixed by the code on this line.
+          - level: 2
+            body: "What type does the `Value::List` variant hold?"
+        solution: |
+          The **caller** decides the type of `items` by what it passes: an array, a `Vec<Value>`,
+          an iterator chain. The bound `impl IntoIterator<Item = Value>` only requires that it can
+          be turned into an iterator yielding `Value`s. `into_iter()` does that conversion,
+          consuming `items`.
+
+          The **code** decides what `collect` builds: the result is passed straight to
+          `Value::List`, whose field is an `Arc<[Value]>`, so type inference makes `collect`
+          produce an `Arc<[Value]>`. The caller never has to know that lists are stored in an
+          `Arc`.
+
+  - id: generics-02
+    title: "Blanket impls and `Box<dyn Predicate>`: from static to dynamic"
+    stage: assisted
+    summary: "A `where` clause makes every fitting closure a `Predicate`; `Where::new` accepts one generically and stores it as a trait object."
+    prerequisites: [generics-01, traits-04]
+    concepts: [trait-bounds, generics, trait-objects]
+    ono_topics: [pipeline, crate-map]
+    objectives:
+      - "Read a blanket impl `impl<F> Trait for F where F: Fn(…) -> … + Send + Sync + 'static`."
+      - "Read an inline bound `<T: Transform>` and a `where` clause as the same kind of statement."
+      - Identify where a value crosses from static dispatch (generic parameter) to dynamic dispatch (`Box<dyn …>`), and explain why.
+    sections:
+      - type: prose
+        kind: context
+        title: "How `where cpu > 20` reaches the engine"
+        body: |
+          The pipeline engine, `ono-pipeline`, runs transforms such as `where`, `sort` and `group`
+          over streams of values. The user's condition `cpu > 20` is an expression in the parsed
+          program, but the engine cannot see the parser. The module doc explains the arrangement:
+          "Each of these is a trait with a blanket implementation for the matching closure, so the
+          evaluator passes a closure and a plugin passes a type. Neither needs an AST:
+          `ono-pipeline` does not depend on `ono-parser`, and cannot."
+      - type: code
+        snippet: c11-predicate-blanket
+        caption: "`ono-pipeline/src/function.rs`. The file continues with `Mapper` and `Folder`, built the same way."
+        annotations:
+          - lines: 15
+            token: "Send + Sync + 'static"
+            kind: rust
+            body: |
+              Supertraits every predicate must satisfy. Read `'static` as "owns everything it uses:
+              holds no borrow that could expire". `Send + Sync` allow it to be used from the
+              engine's tasks ([chapter 17](chapter:tasks-channels)).
+          - lines: 20
+            token: "impl<F> Predicate for F"
+            kind: rust
+            body: |
+              A **blanket implementation**: `Predicate` is implemented for *every* type `F` that
+              meets the `where` clause below, not for one named type.
+          - lines: 22
+            token: "F: Fn(&Value) -> Value"
+            kind: type
+            body: |
+              The bound: `F` must be callable with a `&Value` and return a `Value`. Every closure of
+              that shape qualifies (closures are the subject of
+              [chapter 12](chapter:iterators-closures)).
+          - lines: 25
+            token: "self(value)"
+            kind: flow
+            body: |
+              Inside the impl, `self` **is** the closure, so implementing `test` means calling it.
+      - type: prose
+        kind: rust
+        title: "Bounds, `where` clauses and blanket impls"
+        body: |
+          A bound can be written in three equivalent places:
+
+          ```rust
+          fn f<T: Transform>(t: T)                 // inline
+          fn f<T>(t: T) where T: Transform         // where clause
+          fn f(t: impl Transform)                  // anonymous, argument position
+          ```
+
+          `where` clauses are used when bounds get long, as with the closure bound here.
+
+          `impl<F> Predicate for F where …` applies the same idea to an `impl`: "for any `F` that
+          satisfies the bounds, here is how it is a `Predicate`". So a closure
+          `|value: &Value| Value::Bool(true)` is a `Predicate` without anyone writing an `impl` for
+          it, and a plugin can still write `impl Predicate for MyType` for a named type.
+      - type: prose
+        kind: ono
+        title: Why the predicate returns a `Value`
+        body: |
+          The doc of `Predicate` is explicit: the result "is a [`Value`] rather than a `bool`
+          because ADR-0014 gives the question four answers, not two: `Bool(true)` admits,
+          `Bool(false)` excludes, `Null` excludes as unknown, and an `Error` excludes and is
+          reported." A `bool` would erase the difference between "cpu is low" and "cpu could not
+          be read".
+      - type: code
+        snippet: c11-where-new
+        caption: "`ono-pipeline/src/transforms/filter.rs`: the `where` transform. Its doc test passes a closure straight to `Where::new`."
+        annotations:
+          - lines: 22
+            token: "Box<dyn Predicate>"
+            kind: type
+            body: |
+              The field stores the predicate as a **trait object**. `Where` itself has no type
+              parameter.
+          - lines: 43-45
+            token: "predicate: impl Predicate"
+            kind: rust
+            body: |
+              The constructor is generic (static dispatch), and immediately boxes its argument:
+              `Box::new(predicate)` is coerced to `Box<dyn Predicate>`. From here on, the concrete
+              closure type is erased.
+      - type: code
+        snippet: c11-where-call
+        caption: "`ono-command/src/impls/transform.rs`: the evaluator side builds the closure."
+        annotations:
+          - lines: 75
+            token: "Where::new(move |value: &Value| {"
+            kind: flow
+            body: |
+              A `move` closure that owns the parsed `predicate` expression and a handle to the
+              `scope`, so it satisfies `'static`. It is the `F` of the blanket impl.
+      - type: code
+        snippet: c11-stream-transform
+        caption: "`ono-pipeline/src/stream.rs`: how a transform is applied to a stream."
+        annotations:
+          - lines: 522
+            token: "<T: Transform>"
+            kind: rust
+            body: |
+              An inline bound: `transform` accepts any concrete transform type (`Where`, `Sort`,
+              `Group`, …), with one compiled copy per type.
+          - lines: 529
+            token: "Box::new(transform).apply(input)"
+            kind: rust
+            body: |
+              `Transform::apply` takes `self: Box<Self>`, so the transform is boxed and consumed.
+              Treat that receiver as a black box until [chapter 15](chapter:smart-pointers).
+      - type: diagram
+        kind: data-flow
+        title: Static at the edges, dynamic inside
+        art: |2
+          ono-command (evaluator)                      ono-pipeline (engine)
+          ───────────────────────                      ─────────────────────
+          closure C = move |value| evaluate_to_value(&predicate, value, &scope)
+                │
+                │  Where::new::<C>(C)        static: one copy of `new` for C
+                ▼
+          Where { predicate: Box<dyn Predicate> }   C erased: data ptr + vtable
+                │
+                │  input.transform::<Where>(w)   static: `transform` for Where
+                ▼
+          stage runs: for each value
+                self.predicate.test(&value)   dynamic: vtable → C's `test`
+                                                     → blanket impl → self(value)
+        description: |
+          The evaluator in `ono-command` builds a closure `C` that owns the parsed predicate
+          expression and a scope handle. `Where::new` is generic, so a copy of it is compiled for
+          `C` and called directly (static dispatch). It boxes the closure as `Box<dyn Predicate>`,
+          which erases the closure's type: the `Where` struct stores only a data pointer and a
+          vtable. `ValueStream::transform` is generic over the transform type and is also called
+          statically for `Where`. When the stage runs, each `self.predicate.test(&value)` call goes
+          through the vtable (dynamic dispatch) to the blanket implementation for `C`, which
+          calls the closure.
+      - type: prose
+        kind: rust
+        title: Why store a `Box<dyn Predicate>` instead of a generic field
+        body: |
+          `Where` could have been `struct Where<P: Predicate> { predicate: P }`. That would avoid
+          the box and the vtable, but every closure has its own unique type, so every `where` in
+          every program would produce a different `Where<…>` type, and the type parameter would
+          spread to everything that stores or names a `Where`. With `Box<dyn Predicate>`, `Where`
+          is one plain type; the generic parameter lives only in the constructor.
+
+          The price is one heap allocation per transform and one indirect call per value tested.
+          The source does not discuss this trade-off, so treat it as a reading of the code rather
+          than a stated design goal.
+      - type: exercise
+        id: generics-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In the evaluation of `get process | where cpu > 20`, which call is resolved by
+          **dynamic** dispatch? Choose before reading the feedback.
+        choices:
+          - text: "`self.predicate.test(&value)`, inside the running `where` stage."
+            correct: true
+            feedback: |
+              Correct. `predicate` is a `Box<dyn Predicate>`, so `test` is looked up in the vtable
+              for each value.
+          - text: "`Where::new(move |value: &Value| { … })`"
+            feedback: |
+              `new` takes `impl Predicate`, a generic parameter. The compiler knows the closure
+              type at this call and calls a copy of `new` made for it.
+          - text: "`input.transform(Where::new(…))`"
+            feedback: |
+              `transform<T: Transform>` is generic too; here `T` is `Where`, known at compile time.
+          - text: "None: generics make everything static."
+            feedback: |
+              The generic constructor stores its argument as `Box<dyn Predicate>`. Everything that
+              goes through that field afterwards is dynamic.
+        hints:
+          - level: 1
+            body: Look for `dyn` in the types involved.
+          - level: 2
+            body: "`impl Trait` and `<T: Trait>` are compile-time; `Box<dyn Trait>` is run-time."
+      - type: exercise
+        id: generics-02-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          Why is `Predicate` a trait with a blanket impl for closures, rather than either (a) a
+          plain closure type such as `Box<dyn Fn(&Value) -> Value + Send + Sync>` used directly,
+          or (b) a trait without the blanket impl? Use the module doc and the crate dependencies.
+        hints:
+          - level: 1
+            body: The module doc names two kinds of callers.
+          - level: 2
+            body: Which of the two kinds wants to write a named type with an `impl`, and which wants to pass a closure?
+        solution: |
+          The module doc names two callers: "the evaluator passes a closure and a plugin passes a
+          type".
+
+          - With (a), only closures would fit. A plugin (or any code) that wanted a named predicate
+            type with its own state and documentation would have to wrap it in a closure, and the
+            contract would have no name of its own to document the four-outcome rule of ADR-0014.
+          - With (b), the evaluator would have to define a struct and write `impl Predicate` for
+            every kind of condition, instead of passing the `move` closure it builds on the spot.
+          - The trait plus blanket impl gives both: a named contract (`Predicate::test`, with its
+            doc) that any type can implement, and automatic membership for every fitting closure.
+
+          The architectural point is the dependency direction. `ono-pipeline` "does not depend on
+          `ono-parser`, and cannot": it receives already-resolved behaviour (a predicate), never an
+          expression. Traits with bounds are how the engine states exactly what behaviour it needs
+          without knowing where it comes from.
+      - type: exercise
+        id: generics-02-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain lines 20–23:
+          `impl<F> Predicate for F where F: Fn(&Value) -> Value + Send + Sync + 'static,`.
+          Why must each of the bounds be there? Consider the supertraits on line 15.
+        hints:
+          - level: 1
+            body: An impl may only exist if the type also satisfies the trait's supertraits.
+          - level: 2
+            body: The body calls `self(value)`. Which bound makes that call legal?
+        solution: |
+          The line says: for any type `F`, `F` is a `Predicate` if the `where` clause holds.
+
+          - `Fn(&Value) -> Value` is what makes the body legal: `self(value)` calls `F` with a
+            `&Value` and gets a `Value`, which is exactly what `test` must return. `Fn` (rather
+            than `FnMut` or `FnOnce`) means it can be called through `&self`, repeatedly.
+          - `Send + Sync + 'static` repeat the supertraits of `Predicate` (line 15). A type can only
+            implement `Predicate` if it also meets them, so the blanket impl must require them of
+            `F`; otherwise the impl would be rejected. In practice this means the closure owns its
+            captures (the evaluator's closure is `move` and holds an `Arc` scope) and can be used
+            from the engine's tasks.
+
+  - id: generics-03
+    title: "`impl Trait` in return position, and a type the caller chooses"
+    stage: assisted
+    summary: "`key_function` returns an unnamed closure type; `from_serde::<T>` lets the call site pick `T` through inference."
+    prerequisites: [generics-02]
+    concepts: [impl-trait, generics, trait-bounds, serde]
+    ono_topics: [pipeline, remote-protocol]
+    objectives:
+      - Contrast `impl Trait` in argument position (caller chooses) with return position (function chooses).
+      - "Read `+ use<>` as \"the returned value borrows nothing from the arguments\"."
+      - Explain how a generic return type such as `from_serde<T>` is chosen by inference at the call site.
+    sections:
+      - type: prose
+        kind: context
+        title: Handing the engine a key
+        body: |
+          `sort`, `group` and `measure` need a key per value, such as the `user` of each process.
+          The engine's `KeyFn` trait (same file and same blanket-impl pattern as `Predicate`)
+          describes such a key. The evaluator's helper `key_function` builds one from the
+          expression the user wrote.
+      - type: code
+        snippet: c11-key-function
+        caption: "`ono-command/src/impls/transform.rs`, shortened: the `group` arm and the helper it calls."
+        annotations:
+          - lines: 242
+            token: "impl ono_pipeline::KeyFn + use<>"
+            kind: type
+            body: |
+              **`impl Trait` in return position**: the function returns one specific type that
+              implements `KeyFn`, but does not name it. Here that type is the closure on line 245,
+              which has no name that could be written.
+          - lines: 244
+            token: "Arc::clone(scope)"
+            kind: ownership
+            body: |
+              A second handle to the shared scope, owned by the closure. The caller's `scope` is
+              only borrowed.
+          - lines: 245
+            token: "move |value: &Value|"
+            kind: ownership
+            body: |
+              `move` makes the closure **own** `key` (an owned, cloned expression) and the new
+              `scope` handle. It borrows nothing from `key_function`'s parameters.
+          - lines: 93
+            token: "Group::new(key)"
+            kind: flow
+            body: |
+              The caller never learns the closure's type. It only knows it has a `KeyFn`, which is
+              all `Group::new` asks for.
+      - type: prose
+        kind: rust
+        title: Who chooses the type?
+        body: |
+          | position | example | who chooses the concrete type |
+          |---|---|---|
+          | argument | `fn new(key: impl KeyFn)` | the **caller**, by what it passes |
+          | return | `fn key_function(…) -> impl KeyFn` | the **function**, by what it returns |
+
+          A return-position `impl Trait` is an *opaque type*: the caller can use everything the
+          trait promises and nothing else. It is still static: the compiler knows the real type and
+          calls it directly. No box, no vtable. This is the usual way to return a closure or an
+          iterator chain, whose types cannot be written out.
+
+          `+ use<>` is edition-2024 syntax for **precise capturing**. It lists which generic
+          parameters and lifetimes the hidden type may depend on, and the empty list says: none.
+          So the returned key does not borrow `arguments`, `name`, `spelling` or `scope`, and may
+          outlive them. That is true of the code: the `move` closure owns everything it uses.
+      - type: code
+        snippet: c11-group-new
+        caption: "`ono-pipeline/src/transforms/group.rs`: the receiving end, the same pattern as `Where::new`."
+        annotations:
+          - lines: 27-29
+            token: "key: impl KeyFn"
+            kind: rust
+            body: |
+              Accepts the opaque key generically, then erases its type in a `Box<dyn KeyFn>`: static
+              at the call, dynamic in storage.
+      - type: prose
+        kind: ono
+        title: Why the evaluator returns a closure
+        body: |
+          The module doc of `transform.rs` describes the job: "read the expressions the contract
+          declares, compile them into the already-resolved functions the engine wants (ADR-0005),
+          and hand the engine the input stream." `key_function` is that compilation step for keys.
+          Returning `impl KeyFn` keeps the helper's result exactly as cheap as the closure itself,
+          and the `?` on line 243 means a missing key expression is reported before any stream is
+          touched.
+      - type: code
+        snippet: c11-serde-generics
+        caption: "`ono-protocol/src/message.rs`, shortened: decoding a frame's JSON payload into a typed message, and the helpers that convert serde's errors."
+        annotations:
+          - lines: 496
+            token: "from_serde(kind, json).map(Message::Hello)"
+            kind: type
+            body: |
+              No type is written at the call, yet `from_serde` has a type parameter `T`.
+              `Message::Hello` takes a `Hello`, so inference sets `T = Hello`.
+          - lines: 547
+            token: "<T: serde::de::DeserializeOwned>"
+            kind: crate
+            body: |
+              A bound from the `serde` crate: `T` can be built from serialized data without
+              borrowing from it. Read `DeserializeOwned` as "can be decoded from JSON into an owned
+              value"; [chapter 14](chapter:derives-macros) shows the derives that implement it.
+          - lines: 554
+            token: "detail: impl std::fmt::Display"
+            kind: rust
+            body: |
+              Any printable value: `serde_json::Error` in the helpers above, or a plain `&str`
+              elsewhere in the file. `to_string()` turns it into the stored `String`.
+      - type: prose
+        kind: rust
+        title: A type parameter that only appears in the return type
+        body: |
+          In `fn from_serde<T: DeserializeOwned>(kind: FrameKind, json: Json) -> Result<T, …>`, `T`
+          is not determined by any argument. The call site must fix it, either with a turbofish
+          (`from_serde::<Hello>(kind, json)`) or, as here, by what it does with the result:
+          `.map(Message::Hello)` only type-checks if the `Ok` value is a `Hello`. One generic
+          function thereby decodes `Hello`, `Accept`, `Reject` and `StartAdapt` payloads, with a
+          separately compiled copy for each.
+      - type: exercise
+        id: generics-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In `let key = key_function(arguments, "key", &spelling, &scope)?;`, what does the caller
+          know about the type of `key`?
+        choices:
+          - text: That it implements `KeyFn`, and nothing else about it.
+            correct: true
+            feedback: |
+              Correct. The return type is opaque: the caller may call `key.key(&value)` and pass
+              it wherever a `KeyFn` is accepted, but cannot name the type or rely on it being a
+              closure.
+          - text: "It is a `Box<dyn KeyFn>`."
+            feedback: |
+              Nothing is boxed in `key_function`. The box appears later, inside `Group::new`. An
+              `impl Trait` return is a concrete type, known to the compiler, not a trait object.
+          - text: That it is a closure, so the caller can call `key(&value)` directly.
+            feedback: |
+              The closure's own type is hidden. Only the trait's methods are available, so the call
+              would be `key.key(&value)`.
+          - text: The caller chooses its type, as with any generic.
+            feedback: |
+              That is argument position. In return position the function chooses the type, and the
+              caller must accept it.
+        hints:
+          - level: 1
+            body: What does the signature on line 242 promise, and what does it hide?
+          - level: 2
+            body: "Compare with `Group::new(key: impl KeyFn)`, where the other side chooses."
+      - type: exercise
+        id: generics-03-q2
+        exercise_type: explain-line
+        prompt: |
+          Explain `+ use<>` on line 242. What would it mean for the caller if the returned key were
+          allowed to borrow `arguments`, and why is `use<>` true of this closure?
+        hints:
+          - level: 1
+            body: Look at what the closure on line 245 captures, and how.
+          - level: 2
+            body: Is `key` a borrow of `arguments` or an owned value? What does `Arc::clone` return?
+        solution: |
+          `use<>` says the hidden return type captures **no** generic parameters or lifetimes from
+          the function's signature. The returned key therefore does not borrow `arguments`,
+          `name`, `spelling` or `scope`.
+
+          If it were allowed to borrow `arguments`, the key could only be used while the bound
+          arguments stayed alive and unchanged. It could not be moved into the engine's `Group`
+          transform, which requires a `KeyFn` that is `'static` (the trait's supertraits, like
+          `Predicate`'s).
+
+          The code makes `use<>` true: `expression(…)?` returns an owned `Expr` (it clones the
+          expression out of the arguments), `Arc::clone(scope)` returns an owned handle, and the
+          `move` closure takes ownership of both. Nothing it holds points into the parameters.
+      - type: exercise
+        id: generics-03-q3
+        exercise_type: trace-value
+        prompt: |
+          A remote peer sends a frame of kind `Hello`. Trace its JSON payload `json` through
+          line 496 and `from_serde`: what is `T`, what happens on success, and what does a
+          payload that does not match the `Hello` structure become?
+        hints:
+          - level: 1
+            body: Start from `.map(Message::Hello)` and work backwards to `T`.
+          - level: 2
+            body: "`map_err(|error| bad(kind, error))` runs only on the error path."
+        solution: |
+          1. `json` (an owned `serde_json::Value`, here called `Json`) is **moved** into
+             `from_serde(kind, json)`.
+          2. `.map(Message::Hello)` requires the `Ok` type to be `Hello`, so inference fixes
+             `T = Hello`. The bound `Hello: DeserializeOwned` must hold, which the protocol's
+             serde derives provide.
+          3. `serde_json::from_value(json)` consumes the JSON and tries to build a `Hello`.
+          4. Success: `Ok(hello)`, which `.map(Message::Hello)` wraps into
+             `Ok(Message::Hello(hello))`.
+          5. Failure: serde's error is converted by `map_err(|error| bad(kind, error))`. `bad`
+             accepts it as `impl Display` and returns
+             `ProtocolError::MalformedPayload { kind: Hello, detail: <serde's message> }`.
+
+          So every decoding failure, whatever the message type, reports which frame kind was
+          malformed and why, in one place.
+
+  - id: generics-04
+    title: "Associated types: `MapValue` and the iterator traits"
+    stage: assisted
+    summary: "`type Item` and `type IntoIter` are types an implementation chooses; `FromIterator` and `IntoIterator for &MapValue` make maps work with `collect` and `for`."
+    prerequisites: [generics-03]
+    concepts: [associated-types, generics, iterators]
+    ono_topics: [value-model]
+    objectives:
+      - Read `type Item = …;` in an `impl` as the implementation choosing a type for the trait.
+      - Explain the difference between an associated type and a generic trait parameter at a reading level.
+      - Read `impl<'a> IntoIterator for &'a MapValue` and say what it enables.
+    sections:
+      - type: prose
+        kind: context
+        title: "A map that keeps your order"
+        body: |
+          `Value::Map` holds a `MapValue`, a map from string keys to values. Its doc: "Two maps are
+          equal when they hold the same keys with the same values, whatever order they were built
+          in; iteration order is insertion order, because a renderer that reorders a user's keys is
+          surprising." Its storage is a plain `Vec<(Arc<str>, Value)>`
+          ([lesson 9.4](lesson:mutability-04) showed `insert`). The code below connects it to the
+          standard library's iterator traits.
+      - type: code
+        snippet: c11-map-value-traits
+        caption: "`ono-value/src/map.rs`."
+        annotations:
+          - lines: 81
+            token: "impl Iterator<Item = (&str, &Value)>"
+            kind: type
+            body: |
+              Return-position `impl Trait` again ([lesson 3](lesson:generics-03)): an unnamed
+              iterator type whose items are pairs of borrowed key and borrowed value.
+          - lines: 82
+            token: "&**key"
+            kind: rust
+            body: |
+              `key` is `&Arc<str>`. The first `*` goes through the reference, the second through
+              the `Arc`, giving `str`; `&` borrows it as `&str`.
+          - lines: 106-107
+            token: "FromIterator<(Arc<str>, Value)>"
+            kind: rust
+            body: |
+              Implementing `FromIterator` is what lets `.collect()` build a `MapValue` from an
+              iterator of `(key, value)` pairs. `from_iter` is a generic method with an inline
+              bound.
+          - lines: 116
+            token: "for &'a MapValue"
+            kind: rust
+            body: |
+              The trait is implemented for the **reference type** `&MapValue`, not for `MapValue`.
+              This makes `for (key, value) in &map { … }` possible: it iterates by borrowing.
+          - lines: 117-118
+            token: "type Item"
+            kind: type
+            body: |
+              **Associated types**: this implementation declares what its items are and what
+              iterator type `into_iter` returns.
+      - type: prose
+        kind: rust
+        title: What an associated type is
+        body: |
+          A trait can leave a *type* open for each implementation to fill in. `IntoIterator`
+          declares `type Item;` and `type IntoIter: Iterator<Item = Self::Item>;`, and every
+          `impl IntoIterator for X` must say what they are. Code that uses the trait then refers to
+          them as `<X as IntoIterator>::Item`, or through a constraint such as
+          `impl IntoIterator<Item = Value>` ([lesson 1](lesson:generics-01)).
+
+          The difference from a generic trait parameter:
+
+          - `FromIterator<(Arc<str>, Value)>` has a **parameter**. A type could implement
+            `FromIterator<A>` and `FromIterator<B>` for different `A` and `B`, and the caller's
+            item type selects one.
+          - `IntoIterator` has **associated types**. For a given `&MapValue` there is exactly one
+            item type and one iterator type, chosen by the implementation. Callers never pick
+            them.
+
+          You will meet more associated types: `Iterator::Item` in
+          [chapter 12](chapter:iterators-closures) and `FromStr::Err` in
+          [chapter 13](chapter:conversions).
+
+          `type IntoIter` cannot be written as `impl Iterator<…>` in an `impl` block in stable
+          Rust, so the code **boxes** the iterator to give it a nameable type:
+          `Box<dyn Iterator<Item = …> + 'a>`. The `+ 'a` says the boxed iterator borrows from the
+          map for `'a`. The cost is an allocation per `for` loop and dynamic dispatch per item.
+      - type: code
+        snippet: c11-map-collect
+        caption: "`ono-value/src/value.rs`, inside `Value::map_text`: rebuilding a map with its texts rewritten."
+        annotations:
+          - lines: 493
+            token: ".collect()"
+            kind: flow
+            body: |
+              Builds a `MapValue`, because `Arc::new(…)` inside `Value::Map(…)` requires one. This
+              calls the `FromIterator` implementation above, which inserts pair by pair in order.
+          - lines: 492
+            token: "Arc::from(key)"
+            kind: ownership
+            body: |
+              `key` is a borrowed `&str` from `map.iter()`; the new map needs an owned `Arc<str>`,
+              so the key text is copied into a new allocation.
+      - type: diagram
+        kind: data-flow
+        title: "Which trait does which job"
+        art: |2
+          MapValue { entries: Vec<(Arc<str>, Value)> }
+             │
+             │ map.iter()                 inherent method, -> impl Iterator<Item=(&str,&Value)>
+             │ for (k, v) in &map         IntoIterator for &MapValue
+             │                              Item     = (&'a str, &'a Value)
+             │                              IntoIter = Box<dyn Iterator<…> + 'a>
+             ▼
+          (&str, &Value) pairs  ── .map(|(k, v)| (Arc::from(k), f(v))) ──►
+             (Arc<str>, Value) pairs
+             │
+             │ .collect::<MapValue>()      FromIterator<(Arc<str>, Value)> for MapValue
+             ▼                                from_iter: insert each pair in order
+          new MapValue
+        description: |
+          A `MapValue` stores its entries in a vector. There are two ways to iterate it by
+          borrowing: the inherent method `iter()`, which returns an unnamed iterator of
+          `(&str, &Value)` pairs, and a `for` loop over `&map`, which uses the
+          `IntoIterator for &MapValue` implementation; that implementation declares its item type
+          and a boxed iterator type as associated types. To build a new map, code turns the
+          borrowed pairs into owned `(Arc<str>, Value)` pairs and calls `collect`. `collect` finds
+          the `FromIterator` implementation for `MapValue`, whose `from_iter` inserts each pair in
+          order and returns the new map.
+      - type: prose
+        kind: ono
+        title: What the codebase actually uses
+        body: |
+          `FromIterator` is used in practice: `Value::map_text` (above) and `RecordValue::map_text`
+          collect straight into a `MapValue`. The `for … in &map` form is enabled by the
+          `IntoIterator` impl, but the call sites found in `ono-value`, `ono-render` and
+          `ono-command` write `map.iter()` explicitly. Both are equivalent in what they yield.
+
+          `PartialEq` is written by hand (lines 96–104) rather than derived, because a derived
+          comparison would compare the vectors in order, and the doc promises order-insensitive
+          equality.
+      - type: exercise
+        id: generics-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In `impl<'a> IntoIterator for &'a MapValue`, what does `type Item = (&'a str, &'a Value);`
+          mean?
+        choices:
+          - text: "This implementation declares that iterating a `&MapValue` yields borrowed key/value pairs."
+            correct: true
+            feedback: |
+              Correct. The associated type is fixed by the implementation; every `for` loop over
+              `&map` yields `(&str, &Value)` pairs borrowing from the map.
+          - text: "Callers can choose any item type they like when iterating a map."
+            feedback: |
+              That would be a generic parameter. An associated type has one value per
+              implementation; callers cannot choose it.
+          - text: It creates a type alias usable anywhere in the crate as `Item`.
+            feedback: |
+              It is not a free-standing alias. It is reached through the trait, as
+              `<&MapValue as IntoIterator>::Item`.
+          - text: "Iteration moves the keys and values out of the map."
+            feedback: |
+              The implementation is for `&MapValue`, and the items are references with lifetime
+              `'a`. The map is only borrowed.
+        hints:
+          - level: 1
+            body: Who writes the `type Item = …` line, the trait or the implementation?
+          - level: 2
+            body: Look at the `&` in front of every part of the item type.
+      - type: exercise
+        id: generics-04-q2
+        exercise_type: predict
+        prompt: |
+          Predict the result of collecting these pairs into a `MapValue`, using `from_iter` and the
+          `insert` you read in [lesson 9.4](lesson:mutability-04):
+
+          ```rust
+          let map: MapValue = [
+              (Arc::from("pid"), Value::Int(1)),
+              (Arc::from("user"), Value::string("root")),
+              (Arc::from("pid"), Value::Int(2)),
+          ].into_iter().collect();
+          ```
+
+          How many entries, in which order, with which values?
+        hints:
+          - level: 1
+            body: "`from_iter` calls `insert` once per pair, in order."
+          - level: 2
+            body: What does `insert` do with a key that is already present, and where does the entry end up?
+        solution: |
+          Two entries: `pid` first, then `user`, with `pid = 2` and `user = "root"`.
+
+          `from_iter` starts from an empty map and inserts each pair in order. The first `pid`
+          is pushed; `user` is pushed; the second `pid` finds the existing entry, and `insert`
+          replaces its value through `mem::replace` without moving the entry, because "re-inserting
+          an existing key keeps that key's original position". The returned old value (`Int(1)`)
+          is discarded by `from_iter`'s loop.
+
+          The type annotation `let map: MapValue` is what tells `collect` to use
+          `FromIterator<(Arc<str>, Value)> for MapValue`.
+      - type: exercise
+        id: generics-04-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 118, `type IntoIter = Box<dyn Iterator<Item = (&'a str, &'a Value)> + 'a>;`,
+          and line 121, `Box::new(self.iter())`. Why is the iterator boxed, and what does `+ 'a`
+          promise?
+        hints:
+          - level: 1
+            body: What is the name of the type returned by `self.iter()`?
+          - level: 2
+            body: An associated type must be written out as a concrete type in the `impl`.
+        solution: |
+          `IntoIterator` requires the implementation to name its iterator type in `type IntoIter`.
+          `self.iter()` returns `impl Iterator<…>`, an opaque type built from a `map` over a slice
+          iterator with a closure, which has no name that can be written, and `impl Trait` is not
+          accepted in that position of an `impl` block on stable Rust. So the code boxes it:
+          `Box<dyn Iterator<Item = …>>` is a nameable type, and `Box::new(self.iter())` coerces the
+          concrete iterator into it.
+
+          `+ 'a` says the trait object may contain borrows that are valid for `'a`, the lifetime of
+          the `&'a MapValue` being iterated. The boxed iterator borrows the map, so it cannot be
+          used after the map is gone.
+
+          The price is a heap allocation for each `into_iter()` call and a dynamic call per item,
+          which is why code that cares can call `map.iter()` directly and keep static dispatch.

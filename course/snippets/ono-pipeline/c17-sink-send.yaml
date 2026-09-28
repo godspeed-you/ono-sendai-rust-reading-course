@@ -1,0 +1,38 @@
+id: c17-sink-send
+source:
+  file: crates/ono-pipeline/src/stream.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 180
+  end_line: 207
+  anchor: Cancellation that only *usually* wins
+  content_hash: sha256:e99bb64a97281e988370b2032cf47b9ed1c2fbfbc4122337e88cd515f2a60492
+  code: |
+    /// The writing end of a stream: what a producer or a transform sends into.
+    ///
+    /// Every send is bounded and cancellable. `send` waits when the channel is full, which is the
+    /// backpressure spec §11.2 requires — an infinite producer runs exactly as fast as its consumer
+    /// drains it, and no faster.
+    #[derive(Debug, Clone)]
+    pub struct StreamSink {
+        values: mpsc::Sender<Value>,
+        errors: mpsc::Sender<ErrorValue>,
+        cancel: CancelToken,
+        diagnostics: Diagnostics,
+    }
+
+    impl StreamSink {
+        /// Sends one value downstream, waiting for room.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`SinkClosed`] when the consumer has gone away or the pipeline was cancelled.
+        pub async fn send(&self, value: Value) -> Result<(), SinkClosed> {
+            tokio::select! {
+                // Biased, so a cancelled pipeline stops rather than racing the channel for one more
+                // value. Cancellation that only *usually* wins is cancellation a user cannot trust.
+                biased;
+                () = self.cancel.cancelled() => Err(SinkClosed),
+                result = self.values.send(value) => result.map_err(|_| SinkClosed),
+            }
+        }

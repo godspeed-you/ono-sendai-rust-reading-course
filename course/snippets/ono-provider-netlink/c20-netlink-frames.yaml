@@ -1,0 +1,125 @@
+id: c20-netlink-frames
+source:
+  file: crates/ono-provider-netlink/src/wire.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 6
+  anchor: no malformed length can turn a walk into a loop
+  content_hash: sha256:f4fb49f803835e922c767a6cb4df38d6b04dbd63332cafc4a67884917526ba95
+  code: |
+    //! Reading netlink messages and attributes out of a byte buffer.
+    //!
+    //! Everything the kernel sends arrives here first, and everything here treats it as untrusted
+    //! input (spec §35.6, ADR-0015 T7): every length is checked against what remains, every read is
+    //! a bounded slice rather than an index, and every step of an iterator consumes at least one
+    //! aligned header, so no malformed length can turn a walk into a loop.
+- start_line: 15
+  end_line: 85
+  anchor: a netlink message claims {length} bytes but only {remaining} remain
+  content_hash: sha256:cf78c1d8087e7c9bb49a86df7b9b4ffd4fb191a783c9ef70e96038e3c5c40c7a
+  code: |
+    /// One netlink message: its type and the payload behind the header.
+    #[derive(Debug, Clone, Copy)]
+    pub(crate) struct Message<'a> {
+        pub(crate) kind: u16,
+        pub(crate) payload: &'a [u8],
+    }
+
+    /// What the walk over a buffer produced: a message, or the reason it stopped.
+    #[derive(Debug)]
+    pub(crate) enum Frame<'a> {
+        /// A message whose header was consistent with the bytes that followed it.
+        Message(Message<'a>),
+        /// The buffer ended inside a message, or a header claimed a length the buffer cannot hold.
+        Malformed(ErrorValue),
+    }
+
+    /// Walks the netlink messages in `bytes`.
+    pub(crate) fn frames(bytes: &[u8]) -> Frames<'_> {
+        Frames { rest: bytes }
+    }
+
+    /// The iterator [`frames`] returns.
+    #[derive(Debug)]
+    pub(crate) struct Frames<'a> {
+        rest: &'a [u8],
+    }
+
+    impl<'a> Iterator for Frames<'a> {
+        type Item = Frame<'a>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.rest.is_empty() {
+                return None;
+            }
+            let remaining = self.rest.len();
+            if remaining < sys::NLMSG_HEADER {
+                self.rest = &[];
+                return Some(Frame::Malformed(truncated(format!(
+                    "a netlink message header needs {} bytes but {remaining} remain",
+                    sys::NLMSG_HEADER
+                ))));
+            }
+
+            let Some(length) = u32_at(self.rest, 0).map(|length| length as usize) else {
+                self.rest = &[];
+                return Some(Frame::Malformed(truncated(
+                    "a netlink message header ended before its length field".to_owned(),
+                )));
+            };
+            if length < sys::NLMSG_HEADER {
+                self.rest = &[];
+                return Some(Frame::Malformed(truncated(format!(
+                    "a netlink message claims {length} bytes, less than its own {}-byte header",
+                    sys::NLMSG_HEADER
+                ))));
+            }
+            if length > remaining {
+                self.rest = &[];
+                return Some(Frame::Malformed(truncated(format!(
+                    "a netlink message claims {length} bytes but only {remaining} remain"
+                ))));
+            }
+
+            let kind = u16_at(self.rest, 4).unwrap_or(0);
+            let payload = self.rest.get(sys::NLMSG_HEADER..length).unwrap_or(&[]);
+            // `length` is at least the header size, so the cursor always moves forward.
+            let advance = align(length).min(remaining);
+            self.rest = self.rest.get(advance..).unwrap_or(&[]);
+            Some(Frame::Message(Message { kind, payload }))
+        }
+    }
+- start_line: 139
+  end_line: 141
+  anchor: 'fn align(value: usize)'
+  content_hash: sha256:a022c0e5dedc0b5ec2f5be38230efe518ddadfe09509deaa70d5d6a65981e9ea
+  code: |
+    /// Rounds up to the netlink alignment.
+    fn align(value: usize) -> usize {
+        value.div_ceil(sys::ALIGN) * sys::ALIGN
+- start_line: 158
+  end_line: 165
+  anchor: pub(crate) fn u32_at(
+  content_hash: sha256:6e848c4e35f610dfb5d08a1d86808e0163dfdf6b6b1fbccfab31441ddc317b07
+  code: |
+    /// The native-endian `u32` at `offset`, if the buffer reaches that far.
+    pub(crate) fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
+        bytes
+            .get(offset..)
+            .and_then(<[u8]>::first_chunk::<4>)
+            .copied()
+            .map(u32::from_ne_bytes)
+    }
+- start_line: 286
+  end_line: 292
+  anchor: 'fn truncated(message: String)'
+  content_hash: sha256:547c670619531f6523004c5ee56b481a39bc94232ba769fdc452eefcadc9da52
+  code: |
+    /// A message this crate could not read at all.
+    fn truncated(message: String) -> ErrorValue {
+        ErrorValue::new(ErrorCode::ProviderSchemaViolation, message).with_help(
+            "the kernel's reply ended inside a message. The objects decoded before it are still \
+             good; this reports the ones that were not.",
+        )
+    }

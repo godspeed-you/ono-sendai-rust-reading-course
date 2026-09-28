@@ -1,0 +1,26 @@
+id: c13-run-while
+source:
+  file: crates/ono-cli/src/eval/control.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 32
+  end_line: 47
+  anchor: Err(Flow::Break) => break,
+  content_hash: sha256:90d2b0416dceeb3040cdc2820edcfaa017f78e25118595d965c4c80245cbd188
+  code: |
+    pub(super) fn run_while(
+        session: &mut Session,
+        loop_: &ono_parser::WhileStmt,
+        source: &str,
+    ) -> Eval<ExitStatus> {
+        let mut status = ExitStatus::SUCCESS;
+        while truthy(&eval_expr(session, &loop_.condition, source)?) {
+            match run_block(session, &loop_.body, source) {
+                Ok(reached) => status = reached,
+                Err(Flow::Break) => break,
+                Err(Flow::Continue) => continue,
+                Err(other) => return Err(other),
+            }
+        }
+        Ok(status)
+    }

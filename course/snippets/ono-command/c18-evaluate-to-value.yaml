@@ -1,0 +1,21 @@
+id: c18-evaluate-to-value
+source:
+  file: crates/ono-command/src/expr.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 377
+  end_line: 387
+  anchor: Err(error) => error.into_value(),
+  content_hash: sha256:cd5ec87b71a4b2d7c3d36ad66d5855234a378072fb4a2b7c4d36921414cdbbcd
+  code: |
+    /// Evaluates `expression` and reports a failure as the error *value* it is.
+    ///
+    /// This is the form a predicate needs: ADR-0014 gives `where` four answers, and an error is one of
+    /// them rather than a reason to stop the pipeline (spec §16.5).
+    #[must_use]
+    pub fn evaluate_to_value(expression: &Expr, current: &Value, scope: &Scope) -> Value {
+        match evaluate(expression, current, scope) {
+            Ok(value) => value,
+            Err(error) => error.into_value(),
+        }
+    }

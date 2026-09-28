@@ -1,0 +1,44 @@
+id: c06-value-as-bool
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 178
+  end_line: 200
+  anchor: Value::Bool(value) => Ok(*value),
+  content_hash: sha256:274cf28f57e7e9aa1052d79a13d4edf39f414e26bb573636b1a1b79661b6861b
+  code: |2
+        /// The value as a boolean.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::TypeMismatch`] if the value is not a boolean.
+        pub fn as_bool(&self) -> Result<bool, ErrorValue> {
+            match self {
+                Value::Bool(value) => Ok(*value),
+                other => Err(other.mismatch("bool")),
+            }
+        }
+
+        /// The value as an integer.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::TypeMismatch`] if the value is not an integer.
+        pub fn as_int(&self) -> Result<i128, ErrorValue> {
+            match self {
+                Value::Int(value) => Ok(*value),
+                other => Err(other.mismatch("int")),
+            }
+        }
+- start_line: 512
+  end_line: 517
+  anchor: 'fn mismatch(&self, wanted: &str) -> ErrorValue {'
+  content_hash: sha256:a6e66606cd4a296b10f25220a040c4b7e6729e7a2ea02f9af995943ba76ce8c8
+  code: |2
+        fn mismatch(&self, wanted: &str) -> ErrorValue {
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("expected {wanted} but found {}", self.type_name()),
+            )
+        }

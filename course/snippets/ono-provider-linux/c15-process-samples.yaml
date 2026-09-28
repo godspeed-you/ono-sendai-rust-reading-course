@@ -1,0 +1,69 @@
+id: c15-process-samples
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 170
+  end_line: 185
+  anchor: 'samples: Arc<Mutex<HashMap<(i64, u64), Sample>>>,'
+  content_hash: sha256:b6d7e9c68fd316f195d88df9e691c96da95937e6bcb1d37bb9825815db6f7126
+  code: |
+    /// Everything reading one process needs, cheap enough to hand to a streaming task.
+    #[derive(Debug, Clone)]
+    struct Reader {
+        proc_root: PathBuf,
+        accounts: Arc<dyn Accounts>,
+        clock: Arc<dyn Clock>,
+        boot_seconds: Option<i64>,
+        boot_id: Option<String>,
+        /// How long the machine had been up when this reader was made, from `/proc/uptime`. It is
+        /// read once per query rather than once per process: every process of one snapshot is
+        /// measured against the same instant (ADR-0232).
+        uptime_seconds: Option<f64>,
+        clock_ticks: u64,
+        page_size: u128,
+        samples: Arc<Mutex<HashMap<(i64, u64), Sample>>>,
+    }
+- start_line: 386
+  end_line: 393
+  anchor: let mut reader = self.clone();
+  content_hash: sha256:0aaa1360ea7b3a586ebcd4a524a319353aada8944f45d9567f3fd78029aaa93d
+  code: |
+    impl Reader {
+        /// The same reader, with the machine's uptime read again — once per query, so every process
+        /// of one answer is measured over a window ending at the same instant (ADR-0232).
+        fn refreshed(&self) -> Self {
+            let mut reader = self.clone();
+            reader.uptime_seconds = procfs::uptime_seconds(&self.proc_root);
+            reader
+        }
+- start_line: 430
+  end_line: 454
+  anchor: .and_then(|mut samples| samples.insert((pid, stat.starttime), sample));
+  content_hash: sha256:30f709da658860d2019af887a19e93fbadee3940629aa4bb4322a5fecd141a35
+  code: |2
+        fn cpu(&self, pid: i64, stat: &procfs::ProcStat) -> Option<(f64, ono_value::Duration)> {
+            let now = self.clock.now_nanos();
+            let sample = Sample {
+                ticks: stat.cpu_ticks(),
+                at_nanos: now,
+            };
+            let previous = self
+                .samples
+                .lock()
+                .ok()
+                .and_then(|mut samples| samples.insert((pid, stat.starttime), sample));
+            if let Some(previous) = previous
+                && let Some(elapsed) = now.checked_sub(previous.at_nanos)
+                && elapsed > 0
+                && let Some(ticks) = stat.cpu_ticks().checked_sub(previous.ticks)
+            {
+                let seconds = elapsed as f64 / 1e9;
+                let window = i128::try_from(elapsed).ok()?;
+                return Some((
+                    ticks as f64 / self.clock_ticks as f64 / seconds * 100.0,
+                    ono_value::Duration::from_nanoseconds(window),
+                ));
+            }
+            self.lifetime_share(stat)
+        }

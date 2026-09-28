@@ -1,0 +1,26 @@
+id: c18-transform-where
+source:
+  file: crates/ono-command/src/impls/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 63
+  end_line: 78
+  anchor: 'input.transform(Where::new(move |value: &Value| {'
+  content_hash: sha256:77518998f101d434c4bb61169478094a53e87bdb7672b15caa140213c51904b9
+  code: |2
+        fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+            let spelling = ctx.contract().spelling();
+            let arguments = ctx.arguments();
+            let scope = Arc::clone(ctx.scope());
+            let input = ctx.take_input().ok_or_else(|| needs_input(&spelling))?;
+
+            // `transform` is what raises `stream.unbounded_operation` before anything is read, so a
+            // blocking transform over an endless stream costs nothing (spec §11.1).
+            let output = match self.kind {
+                Kind::Where => {
+                    let predicate = expression(arguments, "predicate", &spelling)?;
+                    let scope = Arc::clone(&scope);
+                    input.transform(Where::new(move |value: &Value| {
+                        evaluate_to_value(&predicate, value, &scope)
+                    }))?
+                }

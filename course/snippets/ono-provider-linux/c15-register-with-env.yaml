@@ -1,0 +1,17 @@
+id: c15-register-with-env
+source:
+  file: crates/ono-provider-linux/src/lib.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 119
+  end_line: 125
+  anchor: registry.register(env);
+  content_hash: sha256:342ba187e4c8ae02fd9a5f2e4b0cdaa0f12b98bb37d39abda78829b2094d5fd4
+  code: |
+    /// The same providers, with an `env` provider the caller keeps a handle on — so the session can
+    /// [`EnvProvider::publish`] its bindings as they change.
+    pub fn register_with_env(registry: &mut ProviderRegistry, env: Arc<EnvProvider>) {
+        registry.register(Arc::new(ProcessProvider::new()));
+        registry.register(Arc::new(FileProvider::new()));
+        registry.register(Arc::new(IdentityProvider::new()));
+        registry.register(env);

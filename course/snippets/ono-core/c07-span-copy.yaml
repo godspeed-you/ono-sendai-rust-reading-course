@@ -1,0 +1,25 @@
+id: c07-span-copy
+source:
+  file: crates/ono-core/src/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 16
+  end_line: 20
+  anchor: pub struct Span {
+  content_hash: sha256:f9526521c908760016d3273f9cb72360b7407885fc9b8918a5aefcf1a21d3dcd
+  code: |
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct Span {
+        start: u32,
+        end: u32,
+    }
+- start_line: 48
+  end_line: 52
+  anchor: pub const fn start(self) -> u32 {
+  content_hash: sha256:eee1a510fd83355851a101240cf9f372ecd382f1cf60ef5813e07c8c93f18ee5
+  code: |2
+        /// First byte offset covered by the span.
+        #[must_use]
+        pub const fn start(self) -> u32 {
+            self.start
+        }

@@ -1,0 +1,56 @@
+id: c17-cancellation-test
+source:
+  file: crates/ono-pipeline/tests/cancellation.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 11
+  end_line: 56
+  anchor: async fn should_terminate_an_infinite_pipeline_when_it_is_cancelled()
+  content_hash: sha256:696dc6f9bd9eb63c56bdf4aaad370f777381244db0b18a090e6ebccc5d648b3a
+  code: |
+    fn endless(cancel: CancelToken) -> ValueStream {
+        ValueStream::spawn(
+            PipelineConfig::new()
+                .with_capacity(4)
+                .with_cancel_token(cancel),
+            Boundedness::Unbounded,
+            |sink| async move {
+                let mut next: i128 = 0;
+                while sink.send(Value::Int(next)).await.is_ok() {
+                    next += 1;
+                }
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn should_terminate_an_infinite_pipeline_when_it_is_cancelled() {
+        within(async {
+            let cancel = CancelToken::new();
+            let mut stream = endless(cancel.clone())
+                .transform(Where::new(|_: &Value| Value::Bool(true)))
+                .expect("`where` streams");
+
+            for _ in 0..3 {
+                stream
+                    .recv()
+                    .await
+                    .expect("values flow before cancellation");
+            }
+            cancel.cancel();
+
+            let mut cancelled = false;
+            while let Some(event) = stream.recv().await {
+                if let StreamEvent::Failure(error) = event {
+                    assert_eq!(error.code(), ErrorCode::StreamCancelled);
+                    assert_eq!(error.code().code(), "Ono-Sendai-E0802");
+                    cancelled = true;
+                }
+            }
+            assert!(
+                cancelled,
+                "a cancelled pipeline must tell its consumer why it ended (spec §18.5)"
+            );
+        })
+        .await;
+    }

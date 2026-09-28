@@ -1,0 +1,47 @@
+id: c19-lifetime-share-test
+source:
+  file: crates/ono-provider-linux/tests/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 852
+  end_line: 888
+  anchor: async fn should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed()
+  content_hash: sha256:d361ec724c54d77a796912fc33caa1079b8fd40350f8cb98c5565ca51130b34f
+  code: |
+    #[tokio::test]
+    async fn should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed() {
+        // A single procfs read cannot answer a rate over the last interval, but it can answer one:
+        // the kernel states how much CPU the process has used and when it started, and the quotient
+        // of the two is a share of one logical CPU over a window the record names. Silence would be
+        // the wrong answer — spec §28.1's own example is `get process | where cpu > 20`, a question
+        // one invocation must be able to ask.
+        let fixture = ProcFixture::new();
+        fixture.process(4419).stat(
+            "nginx",
+            StatFields {
+                utime: 30,
+                stime: 12,
+                starttime: 12_345 * USER_HZ,
+                ..StatFields::default()
+            },
+        );
+
+        let collected = drain(
+            provider(&fixture)
+                .snapshot(&Query::target("process"))
+                .expect("a snapshot"),
+        )
+        .await;
+
+        let (cpu, window) = share(&collected);
+        let lifetime = FIXTURE_UPTIME_SECONDS - 12_345;
+        assert_eq!(
+            window,
+            ono_value::Duration::from_nanoseconds(i128::from(lifetime) * 1_000_000_000),
+            "the window is the process's lifetime: uptime minus its start"
+        );
+        assert!(
+            (cpu - 0.084).abs() < 1e-9,
+            "42 ticks of 100 per second over {lifetime} seconds is 0.084% of one CPU: got {cpu}"
+        );
+    }

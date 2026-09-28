@@ -1,0 +1,54 @@
+id: c09-parser-cursor
+source:
+  file: crates/ono-parser/src/parser/state.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 44
+  end_line: 87
+  anchor: 'pub(super) fn bump(&mut self, mode: LexMode) -> Token {'
+  content_hash: sha256:af9a3266261761b73c53318cd275efcce2a2dd09ccb10c4f9f50b8fb16225cdb
+  code: |
+    impl Parser<'_> {
+        /// The next significant token, without consuming it. Comments are consumed on sight.
+        pub(super) fn peek(&mut self, mode: LexMode) -> Token {
+            loop {
+                let token = next_token(self.text(), self.pos, mode);
+                if token.kind == TokenKind::Comment {
+                    self.pos = token.span.end();
+                    if let Some(record) = &mut self.record {
+                        record.push(token);
+                    }
+                    continue;
+                }
+                return token;
+            }
+        }
+
+        /// The token after `token`, without consuming anything.
+        pub(super) fn peek_after(&self, mode: LexMode, token: Token) -> Token {
+            let mut at = token.span.end();
+            loop {
+                let next = next_token(self.text(), at, mode);
+                if next.kind == TokenKind::Comment {
+                    at = next.span.end();
+                    continue;
+                }
+                return next;
+            }
+        }
+
+        pub(super) fn bump(&mut self, mode: LexMode) -> Token {
+            let token = self.peek(mode);
+            if token.kind != TokenKind::Eof {
+                self.pos = token.span.end();
+                if let Some(record) = &mut self.record {
+                    record.push(token);
+                }
+            }
+            token
+        }
+
+        pub(super) fn eat(&mut self, mode: LexMode, kind: TokenKind) -> Option<Token> {
+            let token = self.peek(mode);
+            (token.kind == kind).then(|| self.bump(mode))
+        }

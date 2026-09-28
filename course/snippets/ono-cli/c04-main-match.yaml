@@ -1,0 +1,29 @@
+id: c04-main-match
+source:
+  file: crates/ono-cli/src/main.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 15
+  end_line: 33
+  anchor: let invocation = Invocation::from_args
+  content_hash: sha256:e05ab7df23375863362ce48879cef9fa994ad9556c24f7e445d6731b1b4095db
+  code: |
+    fn main() -> ExitCode {
+        let invocation = Invocation::from_args(std::env::args().skip(1));
+
+        let status = match invocation {
+            Invocation::Version => {
+                // The full build prints the one line it always has; the core build adds the profile
+                // and the tiers it leaves out on a second line (ADR-0911).
+                println!("{}", ono_cli::absent::version_text());
+                ExitStatus::SUCCESS
+            }
+            Invocation::Help => {
+                println!("{}", ono_cli::usage_text());
+                ExitStatus::SUCCESS
+            }
+            Invocation::Usage(message) => {
+                eprintln!("{}: {message}", ono_core::SHORT_NAME);
+                eprintln!("try `{} --help`", ono_core::SHORT_NAME);
+                ExitStatus::USAGE
+            }

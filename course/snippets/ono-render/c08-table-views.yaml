@@ -1,0 +1,66 @@
+id: c08-table-views
+source:
+  file: crates/ono-render/src/table.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 76
+  end_line: 84
+  anchor: pub struct Cell {
+  content_hash: sha256:1ffe884f3ae57cb1a03ded53359306548ac6329814b602411c9bbe5dbcfe75be
+  code: |
+    /// One value's presentation text.
+    ///
+    /// A cell holds the complete text. Shortening happens during layout and never here, so the full
+    /// value stays available for copy, export and serialization as spec §13.3 requires.
+    #[derive(Debug, Clone, Eq)]
+    pub struct Cell {
+        text: String,
+        token: Token,
+    }
+- start_line: 118
+  end_line: 122
+  anchor: pub fn text(&self) -> &str {
+  content_hash: sha256:92647fc69789ff8d968170e5b312d4bb7bbc2cf78d2ef51f45cb30d285cae37b
+  code: |2
+        /// The complete text, whatever a layout chose to show.
+        #[must_use]
+        pub fn text(&self) -> &str {
+            &self.text
+        }
+- start_line: 131
+  end_line: 136
+  anchor: pub struct Table {
+  content_hash: sha256:69a9a063c82792ef373ac7a337029b93f0b62d43b362c2910eece118b4ec270c
+  code: |
+    /// A collection of records to be presented, as columns and rows of cell text.
+    #[derive(Debug, Clone, Default)]
+    pub struct Table {
+        columns: Vec<Column>,
+        rows: Vec<Vec<Cell>>,
+    }
+- start_line: 164
+  end_line: 184
+  anchor: pub fn rows(&self) -> &[Vec<Cell>] {
+  content_hash: sha256:cc3b019f4d896cdbaa5e4a9966b44d68a4ff4fff0a83dc4696ba3eb96b77b414
+  code: |2
+        /// The table's columns.
+        #[must_use]
+        pub fn columns(&self) -> &[Column] {
+            &self.columns
+        }
+
+        /// The table's rows.
+        #[must_use]
+        pub fn rows(&self) -> &[Vec<Cell>] {
+            &self.rows
+        }
+
+        /// The cells of row `index`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if `index` is out of range, like any slice index.
+        #[must_use]
+        pub fn row(&self, index: usize) -> &[Cell] {
+            &self.rows[index]
+        }

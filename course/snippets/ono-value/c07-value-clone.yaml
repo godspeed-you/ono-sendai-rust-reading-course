@@ -1,0 +1,35 @@
+id: c07-value-clone
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 17
+  end_line: 21
+  anchor: cloning a value is a refcount bump
+  content_hash: sha256:edd0f19e2a75c43d30cbad80431cd5ebaa9a1635de182b42f6f90f484a80999c
+  code: |
+    /// A value flowing through a pipeline (spec §10.2, §25).
+    ///
+    /// Every compound case sits behind an `Arc`, so cloning a value is a refcount bump whatever it
+    /// holds: spec §34 budgets a pipeline stage in microseconds, and a value model that copies its
+    /// payload cannot meet that.
+- start_line: 38
+  end_line: 39
+  anchor: pub enum Value {
+  content_hash: sha256:b7fbb19c9a4bbacf684144bc1fb1ffc6eb27c558dadc1a64a3ea4c4b2139c8d6
+  code: |
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub enum Value {
+- start_line: 76
+  end_line: 83
+  anchor: Record(Arc<RecordValue>),
+  content_hash: sha256:b006b635d1ee8741d12780c1ab1ebc669a46d122612608dd017ed2450da705da
+  code: |2
+        List(Arc<[Value]>),
+        /// A map with string keys.
+        Map(Arc<MapValue>),
+        /// A schema-bound record.
+        Record(Arc<RecordValue>),
+        /// A structured error carried as data (spec §16.1).
+        Error(Arc<ErrorValue>),
+    }

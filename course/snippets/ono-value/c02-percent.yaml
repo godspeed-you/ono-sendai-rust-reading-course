@@ -1,0 +1,45 @@
+id: c02-percent
+source:
+  file: crates/ono-value/src/units.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 514
+  end_line: 538
+  anchor: pub struct Percent(f64);
+  content_hash: sha256:191c928b50b5f870e5c2ade4a3de9a211b333737b7f69f7f68c9116a7d931149
+  code: |
+    /// A percentage, where `Percent::new(24.8)` renders as `24.8%` (spec §13.2, §27.3).
+    #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+    pub struct Percent(f64);
+
+    impl Percent {
+        /// Zero percent.
+        pub const ZERO: Self = Self(0.0);
+
+        /// Creates a percentage from a number of percent, not from a fraction.
+        #[must_use]
+        pub const fn new(percent: f64) -> Self {
+            Self(percent)
+        }
+
+        /// The number of percent.
+        #[must_use]
+        pub const fn value(self) -> f64 {
+            self.0
+        }
+
+        /// The value as a fraction of one, so `Percent::new(50.0).as_fraction()` is `0.5`.
+        #[must_use]
+        pub fn as_fraction(self) -> f64 {
+            self.0 / 100.0
+        }
+- start_line: 557
+  end_line: 561
+  anchor: Self(self.0 + other.0)
+  content_hash: sha256:95956117fbb28cf8631ee4227728a65ec805c2a77d96acf3e6b49abe72b8e16c
+  code: |2
+        /// Adds two percentages.
+        #[must_use]
+        pub fn plus(self, other: Self) -> Self {
+            Self(self.0 + other.0)
+        }

@@ -1,0 +1,29 @@
+id: c06-record-builder-set
+source:
+  file: crates/ono-value/src/record.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 311
+  end_line: 329
+  anchor: let index = self.record.schema.position_of(name).ok_or_else(|| {
+  content_hash: sha256:33f5f2c9dc572a25c1b2b3c23523eb2021e145fbede7ab13a8dcef6182ade662
+  code: |
+    impl RecordBuilder {
+        /// Stores `value` in the declared field `name`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::TypeUnknownField`] if the schema does not declare `name`. A provider
+        /// with data the schema does not cover uses [`set_extra`](Self::set_extra) instead.
+        pub fn set(mut self, name: &str, value: Value) -> Result<Self, ErrorValue> {
+            let index = self.record.schema.position_of(name).ok_or_else(|| {
+                ErrorValue::new(
+                    ErrorCode::TypeUnknownField,
+                    format!("{} has no field `{name}`", self.record.schema.id()),
+                )
+            })?;
+            if let Some(slot) = self.record.fields.get_mut(index) {
+                *slot = value;
+            }
+            Ok(self)
+        }

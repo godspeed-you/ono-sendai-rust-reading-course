@@ -1,0 +1,57 @@
+id: c16-command-impl-async
+source:
+  file: crates/ono-command/src/invoke.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 420
+  end_line: 466
+  anchor: Box::pin(std::future::ready(self.invoke(ctx)))
+  content_hash: sha256:d84421098dabcddae7d7ab9d5c3233112c5043a84ae2882e58fa518dee4c5af3
+  code: |
+    /// The result of a command that had to await something, boxed so the trait stays object-safe.
+    pub type OutcomeFuture<'a> = Pin<Box<dyn Future<Output = Result<Outcome, ErrorValue>> + Send + 'a>>;
+
+    /// A native implementation of one registry command.
+    ///
+    /// Spec §27.2: native code registers an implementation against a stable command id. The contract
+    /// is data and lives in `docs/contracts/commands/`; this is the code behind it.
+    pub trait CommandImpl: Send + Sync {
+        /// The registry id this implements, such as `ono.process.get`.
+        fn id(&self) -> &str;
+
+        /// Runs the command.
+        ///
+        /// Most commands answer here. A producer hands back the provider's stream and a transform
+        /// hands back a stage over its input, so neither has to await anything: the awaiting happens
+        /// inside the stream, where backpressure and cancellation already live (ADR-0013).
+        ///
+        /// # Errors
+        ///
+        /// A structured error when the command cannot run at all. A per-object failure belongs in an
+        /// [`ActionOutcome`] or on the stream's error channel, so the objects that did work still
+        /// arrive (spec §16.5).
+        fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue>;
+
+        /// Runs the command, awaiting whatever it has to await.
+        ///
+        /// **This is the entry point a host should call**, through [`CommandTable::run`]. The default
+        /// answers with [`CommandImpl::invoke`], which is what every command that never awaits does.
+        ///
+        /// A mutation overrides it, because [`Provider::act`](ono_provider_api::Provider::act) and
+        /// [`Provider::resolve`](ono_provider_api::Provider::resolve) are asynchronous and a mutation
+        /// has to hold one [`ActionOutcome`] per target before it can answer (spec §11.5, §16.5). Its
+        /// synchronous `invoke` therefore reports that it must be awaited rather than guessing.
+        fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
+            Box::pin(std::future::ready(self.invoke(ctx)))
+        }
+    }
+
+    /// The error a command raises when it was run through the synchronous entry point but has to
+    /// reach a provider to answer.
+    pub fn must_be_awaited(spelling: &str) -> ErrorValue {
+        ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            format!("`{spelling}` reaches a provider, and reaching one is asynchronous"),
+        )
+        .with_help("run it through `CommandTable::run`, which awaits what has to be awaited")
+    }

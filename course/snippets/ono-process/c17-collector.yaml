@@ -1,0 +1,31 @@
+id: c17-collector
+source:
+  file: crates/ono-process/src/job.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 124
+  end_line: 144
+  anchor: pub(crate) struct Collector(JoinHandle<Vec<u8>>);
+  content_hash: sha256:e98259f89f7df0559d4f41b5b95e6fdbf174991fabec1776dcf596f7c03963cc
+  code: |
+    /// A thread draining one captured stream.
+    pub(crate) struct Collector(JoinHandle<Vec<u8>>);
+
+    impl Collector {
+        /// Starts a thread that reads `source` to end of file.
+        pub(crate) fn start(source: OwnedFd) -> Self {
+            Self(std::thread::spawn(move || {
+                let mut file = std::fs::File::from(source);
+                let mut collected = Vec::new();
+                // A capture that fails mid-stream keeps what it already read: losing the prefix
+                // would be worse than reporting a short read.
+                let _ = std::io::Read::read_to_end(&mut file, &mut collected);
+                collected
+            }))
+        }
+
+        /// Waits for the thread and returns the bytes.
+        pub(crate) fn finish(self) -> Vec<u8> {
+            self.0.join().unwrap_or_default()
+        }
+    }

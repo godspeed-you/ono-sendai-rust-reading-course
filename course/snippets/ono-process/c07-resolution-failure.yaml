@@ -1,0 +1,30 @@
+id: c07-resolution-failure
+source:
+  file: crates/ono-process/src/resolve.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 14
+  end_line: 33
+  anchor: Self::NotExecutable(error) => Some((ExitStatus::NOT_EXECUTABLE, error)),
+  content_hash: sha256:4756870d7a044c98bf80532461a91765da4e595c717e1d03bb4b543482174871
+  code: |
+    /// The outcome of looking a program name up.
+    pub(crate) enum Resolution {
+        /// The path to hand to `execve`.
+        Found(PathBuf),
+        /// Something with that name exists but cannot be executed: status 126.
+        NotExecutable(Error),
+        /// Nothing with that name exists: status 127.
+        NotFound(Error),
+    }
+
+    impl Resolution {
+        /// The status and structured error a failed resolution reports.
+        pub(crate) fn failure(self) -> Option<(ExitStatus, Error)> {
+            match self {
+                Self::Found(_) => None,
+                Self::NotExecutable(error) => Some((ExitStatus::NOT_EXECUTABLE, error)),
+                Self::NotFound(error) => Some((ExitStatus::NOT_FOUND, error)),
+            }
+        }
+    }

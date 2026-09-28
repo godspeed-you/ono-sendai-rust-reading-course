@@ -1,0 +1,37 @@
+id: c18-parse-stage-list
+source:
+  file: crates/ono-parser/src/parser/pipelines.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 6
+  anchor: fixed by its head word
+  content_hash: sha256:e82242e09d545c215f0541c8098e5aca188e34724fcac4bfe69bd9c3d488b169
+  code: |
+    //! Pipelines, stages, redirections and words-mode arguments.
+    //!
+    //! A stage's argument mode is fixed by its head word before anything knows whether the head
+    //! resolves to a native command or to a program of the same name (ADR-0009), so the words-mode
+    //! reader below and the expression reader in `expressions` are two ways of reading the same
+    //! region of source.
+- start_line: 76
+  end_line: 91
+  anchor: while self.eat(LexMode::Words, TokenKind::Pipe).is_some() {
+  content_hash: sha256:482ad5f19f6ddfd8e0807e462f24b5516b5bdb0da451d9af5ddfba7139be15bb
+  code: |2
+        pub(super) fn parse_stage_list(&mut self) -> StageList {
+            let first = self.parse_stage();
+            let start = first.span;
+            let mut end = first.span;
+            let mut stages = vec![first];
+            while self.eat(LexMode::Words, TokenKind::Pipe).is_some() {
+                self.skip_newlines(LexMode::Words);
+                let stage = self.parse_stage();
+                end = stage.span;
+                stages.push(stage);
+            }
+            StageList {
+                stages,
+                span: start.join(end),
+            }
+        }

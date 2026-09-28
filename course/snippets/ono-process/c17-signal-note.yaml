@@ -1,0 +1,27 @@
+id: c17-signal-note
+source:
+  file: crates/ono-process/src/signals.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 112
+  end_line: 128
+  anchor: INTERRUPTED.swap(false, Ordering::Relaxed)
+  content_hash: sha256:e5ac96a66a5673b7baebdb94561c246770f311ce0db2403d971e758b24c60946
+  code: |
+    /// Set by the shell's `SIGINT` handler; read and cleared by [`take_interrupt`].
+    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn note_interrupt(_signal: libc::c_int) {
+        INTERRUPTED.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether `SIGINT` arrived since the last call, clearing the note.
+    ///
+    /// A native pipeline runs *in* the shell, so the `SIGINT` a terminal sends for Ctrl-C is
+    /// delivered to the shell itself — there is no child for the kernel to interrupt. The shell's
+    /// disposition notes the signal instead of dying of it, and whatever is driving a native
+    /// pipeline polls this to cancel (spec §18.5).
+    #[must_use]
+    pub fn take_interrupt() -> bool {
+        INTERRUPTED.swap(false, Ordering::Relaxed)
+    }

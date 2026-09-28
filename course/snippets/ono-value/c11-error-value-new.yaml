@@ -1,0 +1,35 @@
+id: c11-error-value-new
+source:
+  file: crates/ono-value/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 103
+  end_line: 116
+  anchor: 'pub fn new(code: ErrorCode, message: impl Into<Arc<str>>) -> Self {'
+  content_hash: sha256:464d29484a19589f47fffc82f1c68fc564df5b18888620bd92a7cbe19f9cf2f3
+  code: |
+    impl ErrorValue {
+        /// Creates an error with a stable code and a human message.
+        #[must_use]
+        pub fn new(code: ErrorCode, message: impl Into<Arc<str>>) -> Self {
+            Self {
+                code,
+                message: message.into(),
+                target: None,
+                source: None,
+                help: None,
+                retryable: None,
+                metadata: MapValue::new(),
+            }
+        }
+- start_line: 132
+  end_line: 137
+  anchor: 'pub fn with_help(mut self, help: impl Into<Arc<str>>) -> Self {'
+  content_hash: sha256:94c2b458b69cb2094eff61ae052da7d369dab3245c89f79a1ba65e8e70bd5c09
+  code: |2
+        /// Adds the second line a user sees: what to do about it.
+        #[must_use]
+        pub fn with_help(mut self, help: impl Into<Arc<str>>) -> Self {
+            self.help = Some(help.into());
+            self
+        }

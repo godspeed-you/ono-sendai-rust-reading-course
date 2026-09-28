@@ -1,0 +1,910 @@
+id: borrowing
+number: 8
+title: Borrowing and references
+summary: |
+  Chapter 7 showed how a value moves from one owner to the next. Most Ono-Sendai code does not
+  move values around, though: it *looks at* them. A diagnostic points into the line you typed, a
+  renderer reads the cells of a table, a resolver checks a word against a registry. All of that is
+  done through **borrows**: references that let code use a value without owning it.
+
+  This chapter reads four places where borrowing shapes the code:
+
+  - `Span::of` and `Token::text`, where the parser hands out slices of the source line instead of
+    copies, and where the first explicit lifetime appears;
+  - `Table` and `Cell`, which own their text but give callers read-only views, and the parser's
+    `expect_ident`, which turns a borrowed name into an owned `String` at the point where the borrow
+    would otherwise have to outlive its source;
+  - `FieldStep<'a>` and `Parser<'a>`, structs that *hold* a borrow;
+  - `closest` and `CommandRegistry::resolve`, whose signatures say exactly which input a returned
+    reference comes from.
+
+  Throughout, read a lifetime such as `'a` as a statement about **where a borrow comes from**. A
+  lifetime never makes a value live longer; it only lets the compiler check that nobody uses a
+  reference after the value it points to is gone.
+
+  Mutable borrows (`&mut`) appear in passing here and are the subject of
+  [chapter 9](chapter:mutability).
+lessons:
+  - id: borrowing-01
+    title: "Borrowed text: `Span::of` and `Token::text`"
+    stage: assisted
+    summary: How the parser hands out slices of the source line instead of copies, and why `Token::text` needs a named lifetime.
+    prerequisites: [ownership-moves-01]
+    concepts: [borrowing, slices-strings, lifetimes]
+    ono_topics: [parsing, core-vocabulary]
+    objectives:
+      - Read `&str` as a borrowed view into text that someone else owns.
+      - State the two borrow rules and apply the second (no reference outlives its value) to a signature.
+      - Explain when a returned reference's lifetime can be elided and when it must be written.
+      - "Read `fn text<'a>(&self, source: &'a str) -> &'a str` as: the result borrows from `source`, not from the token."
+    sections:
+      - type: prose
+        kind: context
+        title: Pointing into the line you typed
+        body: |
+          When you type `get proces` in Ono-Sendai, the error message quotes the word it could not
+          resolve and underlines it. To do that, every token, AST node and diagnostic carries a
+          `Span`: a pair of byte offsets into the source line. The `Span` doc in `ono-core` says so
+          directly: "spans travel with tokens, AST nodes and diagnostics alike" (span.rs, line 7).
+
+          A span is only two numbers. It does not contain the text. To get the text back, a caller
+          asks the span (or the token that holds it) to cut the right piece out of the source line.
+          Both functions in this lesson do exactly that, and neither copies a single byte.
+      - type: code
+        snippet: c08-span-of
+        caption: |
+          `ono-core/src/span.rs`. `Span` derives `Copy` (line 16 of the file), so `self` here is a
+          copy of two `u32`s, not a reference.
+        annotations:
+          - lines: 85
+            token: "source: &str"
+            kind: ownership
+            body: |
+              A **shared reference** to a string slice. The caller keeps ownership of the text;
+              `of` may only read it, and only for the duration of the borrow.
+          - lines: 85
+            token: "-> &str"
+            kind: rust
+            body: |
+              The returned `&str` is also a borrow. No lifetime is written because there is only
+              one reference among the inputs (`self` is a `Copy` value, not a reference), so the
+              compiler infers that the result borrows from `source`. This inference is called
+              **lifetime elision**.
+          - lines: 91
+            token: "source.get(start..end)"
+            kind: rust
+            body: |
+              `get` returns `Option<&str>`: `None` if the range is out of bounds or does not fall on
+              character boundaries. The plain slicing syntax `&source[start..end]` would **panic**
+              in those cases instead.
+      - type: prose
+        kind: rust
+        title: What a borrow is
+        body: |
+          A reference `&T` is a pointer to a `T` that someone else owns, plus guarantees the compiler
+          checks before the program runs:
+
+          1. **At any moment, a value has either any number of shared references (`&T`) or exactly
+             one mutable reference (`&mut T`), never both.** While shared borrows exist, nobody can
+             change the value. ([Chapter 9](chapter:mutability) is about the `&mut` side.)
+          2. **A reference never outlives the value it points to.** Once the owner is dropped, every
+             borrow of it must already be finished.
+
+          So "a pointer" is only half the story: a Rust reference is a pointer the compiler has
+          proven valid for every use.
+
+          `&str` is the borrowed form of text: a pointer to UTF-8 bytes plus a length. The bytes
+          can belong to a `String`, to a string literal compiled into the binary, or to anything
+          else that stores text. Slicing (`get(start..end)`) produces a smaller view into the same
+          bytes. Nothing is copied.
+
+          Line 89 returns `""`. A string literal lives for the whole program. Its type is
+          `&'static str`, and it can stand in for a borrow of `source` because it lives at least as
+          long as `source` does.
+      - type: code
+        snippet: c08-token-text
+        caption: |
+          `ono-parser/src/lexer.rs`. A token is a kind plus a span, both `Copy`, so `Token` is
+          `Copy` as well.
+        annotations:
+          - lines: 162
+            token: "<'a>"
+            kind: rust
+            body: |
+              A **lifetime parameter**. `'a` names "the region of the program during which `source`
+              is borrowed". It appears on `source` and on the result and nowhere else, which says:
+              the text returned borrows from `source`.
+      - type: prose
+        kind: rust
+        title: Why `text` must write its lifetime
+        body: |
+          `text` has **two** reference inputs, `&self` and `source`. The elision rules for methods
+          say: when one of the inputs is `&self` or `&mut self`, an unannotated output reference
+          borrows from `self`. For `text` that would be wrong. The token holds no text; the text
+          lives in `source`. Without `'a`, the compiler would treat the returned `&str` as a borrow
+          of the token and refuse any use of it after the token is gone, even though the text is
+          still there.
+
+          Writing `'a` states the truth: the result is tied to `source` only. The `&self` borrow
+          ends when `text` returns.
+
+          A lifetime does not keep anything alive. If `source` is dropped, every `&'a str` taken
+          from it becomes unusable; the annotation only lets the compiler check that nobody tries.
+          We return to struct lifetimes in [the next lessons](lesson:borrowing-03).
+      - type: diagram
+        kind: ownership
+        title: Who owns the text of `get process`?
+        art: |2
+          caller's stack frame
+          ┌─────────────────────────────────────────────┐
+          │ line: String  ──owns──►  "get process"       │
+          │                            ▲        ▲        │
+          │                            │ &str   │ &str   │
+          │ token: Token {             │        │        │
+          │   kind: Word,              │        │        │
+          │   span: 4..11  (two u32s, no text)  │        │
+          │ }                          │        │        │
+          │ let all = &line[..] ───────┘        │        │
+          │ let word = token.text(all) ─────────┘        │
+          │            (borrows from `all`, i.e. from    │
+          │             `line`, not from `token`)        │
+          └─────────────────────────────────────────────┘
+        description: |
+          The caller owns a `String` holding `get process`. `all` is a shared borrow of the whole
+          string. The token owns only a kind and the byte range 4..11; it contains no characters.
+          `token.text(all)` returns a second shared borrow that points at bytes 4 to 11 of the same
+          string, the word `process`. Because `Token::text` ties its result to `source` with `'a`,
+          `word` depends on `line` staying alive, not on `token`. Nothing is copied: the string's
+          bytes exist exactly once.
+      - type: prose
+        kind: ono
+        title: Why Ono-Sendai hands out slices
+        body: |
+          Two documented decisions meet here.
+
+          - The lexer "never buffers a stream it would have to re-lex when the mode changes"
+            (lexer.rs, lines 6–7). The same characters can lex differently in words mode and in
+            expression mode (ADR-0009), so the parser asks for the next token at a byte offset.
+            A token that stored its own copy of the text would duplicate what the source line
+            already holds; a span plus a borrowed source line is enough.
+          - "Rendering a diagnostic must never panic, however wrong the span it was handed is"
+            (span.rs, line 83). That is why `of` uses the checked `get` and falls back to `""`
+            instead of slicing directly.
+      - type: exercise
+        id: borrowing-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Answer before you look at the hints. A caller writes `let word = token.text(line);`.
+          Where do the bytes that `word` points at live?
+        choices:
+          - text: "In `line`'s text: `word` is a slice of the borrowed source."
+            correct: true
+            feedback: |
+              Right. `text` returns `self.span.of(source)`, and `Span::of` returns
+              `source.get(start..end)`, a view into the same bytes. The signature's `'a` says so:
+              the result has the lifetime of `source`.
+          - text: "In the token: `Token` stores its text next to its span."
+            feedback: |
+              `Token` has exactly two fields, `kind` and `span` (lines 152–157). Neither is text. A
+              token could not return a borrow of text it does not hold.
+          - text: "In a new `String` that `text` allocates."
+            feedback: |
+              Nothing in `text` or `of` allocates. Their return type is `&str`, a borrow; a function
+              that created new text would return an owned `String` instead.
+          - text: "In the program binary: `text` returns a `&'static str`."
+            feedback: |
+              Only the fallback `""` in `Span::of` is a static literal. In the normal case the
+              result points into `source`, and its lifetime is `'a`, not `'static`.
+        hints:
+          - level: 1
+            body: Look at the two fields of `Token`, then at what `text` calls.
+          - level: 2
+            body: Follow the lifetime name `'a` in the signature of `text`. Which parameter carries it?
+      - type: exercise
+        id: borrowing-01-q2
+        exercise_type: predict
+        prompt: |
+          Here is an illustration, not Ono-Sendai code. Imagine `Token::text` had been written
+          without a lifetime, as `pub fn text(&self, source: &str) -> &str`. Predict what the
+          compiler says about this helper, and why. Then predict what it says with the real
+          signature.
+
+          ```rust
+          fn first_word(source: &str) -> &str {
+              let token = Token { kind: TokenKind::Word, span: Span::new(0, 3) };
+              token.text(source)
+          }
+          ```
+        hints:
+          - level: 1
+            body: Which reference does the elision rule for methods tie an unannotated output to?
+          - level: 2
+            body: |
+              `token` is a local variable. It is dropped when `first_word` returns. What would the
+              returned `&str` be borrowing at that point?
+        solution: |
+          **Without the lifetime** the method elision rule applies: because `text` takes `&self`,
+          the returned `&str` is assumed to borrow from `self`, the token. `token` is a local of
+          `first_word` and is dropped when the function returns, so returning a borrow of it is
+          rejected ("returns a value referencing data owned by the current function"). The error is
+          spurious in a sense (the text really lives in `source`), but the compiler can only check
+          what the signature claims.
+
+          **With the real signature** `text<'a>(&self, source: &'a str) -> &'a str` the result is
+          tied to `source` only. `first_word`'s own signature has one reference input, so its output
+          is elided to borrow from `source` too. The two agree, the borrow of `token` ends inside
+          `text`, and the helper compiles.
+
+          This is the point of explicit lifetimes: they let a signature tell the truth about where
+          a borrow comes from when the default guess would be wrong.
+      - type: exercise
+        id: borrowing-01-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain lines 88–91 of `Span::of`. Why does the function check the range itself **and**
+          use `get` instead of `&source[start..end]`? Write your answer first.
+        snippets: [c08-span-of]
+        hints:
+          - level: 1
+            body: Think about a span that was computed against a different, shorter line.
+          - level: 2
+            body: |
+              `&source[a..b]` panics in two situations: an out-of-range index, and an index that
+              falls inside a multi-byte UTF-8 character. Which of the two does the `if` cover?
+        solution: |
+          The `if` on line 88 returns `""` when the range is inverted or its end lies past the end
+          of `source` (for example a span from an earlier, longer line). `get(start..end)` on line
+          91 covers the remaining failure: a range that is in bounds but splits a multi-byte UTF-8
+          character. `get` returns `None` in every such case, and `unwrap_or("")` turns that into
+          the empty string.
+
+          Indexing with `&source[start..end]` would panic in both situations. The doc comment on
+          line 83 states the requirement: "Rendering a diagnostic must never panic, however wrong
+          the span it was handed is." The result is still a borrow of `source` (or the static
+          `""`), so the check costs no allocation.
+
+  - id: borrowing-02
+    title: "Owned storage, borrowed views: `Table`, `Cell` and the parser's names"
+    stage: assisted
+    summary: "`String` versus `&str` and `Vec<T>` versus `&[T]`: who keeps the data, who only looks, and where Ono-Sendai converts one into the other."
+    prerequisites: [borrowing-01]
+    concepts: [slices-strings, borrowing, ownership]
+    ono_topics: [rendering, parsing]
+    objectives:
+      - Distinguish an owning type (`String`, `Vec<T>`) from its borrowed view (`&str`, `&[T]`).
+      - Recognise deref coercion when `&String` becomes `&str` and `&Vec<T>` becomes `&[T]`.
+      - Explain why `expect_ident` calls `to_owned()` on borrowed token text.
+    sections:
+      - type: prose
+        kind: context
+        title: A table that keeps everything
+        body: |
+          `ono-render` is where Ono-Sendai turns values into tables and text (see
+          [rendering](topic:rendering)). A `Table` is columns plus rows of `Cell`s, and a `Cell` is
+          the text of one value. The doc comment on `Cell` makes a promise that shapes the types:
+          "A cell holds the complete text. Shortening happens during layout and never here, so the
+          full value stays available for copy, export and serialization as spec §13.3 requires."
+
+          The table therefore **owns** its data, and everyone else gets read-only views of it.
+      - type: code
+        snippet: c08-table-views
+        caption: |
+          `ono-render/src/table.rs`, shortened. The struct definitions own; the accessor methods
+          lend.
+        annotations:
+          - lines: 82
+            token: "text: String"
+            kind: ownership
+            body: |
+              `String` is **owned**, growable text on the heap. When the `Cell` is dropped, its text
+              is freed with it.
+          - lines: 120-121
+            token: "-> &str"
+            kind: rust
+            body: |
+              `&self.text` has type `&String`. Rust converts it to `&str` automatically
+              (**deref coercion**), because the return type asks for `&str` and `String` can be
+              viewed as `str`. The caller gets a view of the bytes, not the `String` itself.
+          - lines: 172-173
+            token: "&[Vec<Cell>]"
+            kind: type
+            body: |
+              A **slice**: a borrowed view of a run of elements. `&self.rows` is a `&Vec<Vec<Cell>>`
+              coerced to `&[Vec<Cell>]`, in the same way as the `String` above.
+          - lines: 182-183
+            kind: flow
+            body: |
+              Indexing a `Vec` with `[index]` panics when the index is out of range. The doc says
+              so under `# Panics`, so a caller knows to check the index first.
+      - type: prose
+        kind: rust
+        title: Owners and views
+        body: |
+          | owns the data | borrowed view | what the view can do |
+          |---|---|---|
+          | `String` | `&str` | read the text, slice it further |
+          | `Vec<T>` | `&[T]` | read elements, iterate, take sub-slices |
+
+          A view is cheap to create (a pointer and a length) and cannot outlive its owner (the
+          second borrow rule from [the previous lesson](lesson:borrowing-01)). A shared view
+          cannot change the data: `rows()` gives no way to push a row, and `text()` no way to edit
+          a cell.
+
+          Returning `&str` instead of `&String` (or `&[Cell]` instead of `&Vec<Cell>`) is the usual
+          Rust style. The caller needs only the view, and the struct stays free to store its data
+          differently later.
+      - type: prose
+        kind: ono
+        title: Why the table lends instead of giving
+        body: |
+          Returning references lets many readers (the layout code, an exporter, a test) inspect the
+          same table without copying it and without being able to change it. That supports the
+          promise quoted above: whatever a layout does, the full text of each cell is still in the
+          table. Shortening is computed from `text()` during layout; the stored `String` is never
+          shortened.
+      - type: code
+        snippet: c08-expect-ident
+        caption: |
+          `ono-parser/src/parser/diagnostics.rs`. `self.source` is the `&str` the parser borrows
+          (you will see the parser's struct in [lesson 3](lesson:borrowing-03)). `peek` and `bump`
+          take `&mut self`; for now read them as "look at" and "consume" the next token.
+        annotations:
+          - lines: 41
+            token: ".to_owned()"
+            kind: ownership
+            body: |
+              `token.text(self.source)` is a `&str` borrowed from the source line. `to_owned()`
+              copies those bytes into a new, owned `String`. From here on the name no longer
+              depends on the source line.
+          - lines: 45
+            token: "String::new()"
+            kind: ono
+            body: |
+              When the identifier is missing, the parser still returns *a* name: an empty one, with
+              a zero-width span. It has already reported the problem and keeps parsing, which is
+              how `parse` "always returns a tree".
+      - type: prose
+        kind: rust
+        title: When a borrow has to become an owner
+        body: |
+          `expect_ident` returns `(String, Span)`, not `(&str, Span)`. Its caller
+          (`parse_let`, statements.rs line 76) stores the name in `LetStmt { name: String, … }`, and
+          the finished tree is returned from `pub fn parse(source: &str) -> Parsed`. `Parsed` has
+          no lifetime parameter, so it cannot hold references into `source`: the tree must own
+          every string in it. `to_owned()` is the point where the borrowed text is copied into the
+          tree.
+
+          `describe` (lines 29–35) shows the other two ways of producing an owned `String`: calling
+          `.to_owned()` on a literal and building one with `format!`.
+      - type: diagram
+        kind: data-flow
+        title: From the typed line to the syntax tree
+        art: |2
+          source: &str  "let hot = …"          (owned by the caller of parse)
+                  │
+                  │ token.text(self.source)    &str   borrowed view, no copy
+                  ▼
+                "hot"  ── .to_owned() ──►  String "hot"   (new allocation)
+                                              │ moved into
+                                              ▼
+                                  LetStmt { name: String, … }
+                                              │
+                                              ▼
+                                  Program ─► Parsed   (no lifetime: owns everything)
+        description: |
+          The parser reads the name `hot` as a `&str` view into the source line. That view cannot
+          be stored in the tree, because the tree (`Parsed`) has no lifetime and must be usable
+          after the source line is gone. `to_owned()` copies the three bytes into a new `String`,
+          which is then moved into the `LetStmt`, which ends up in the `Program` inside `Parsed`.
+          Only this copy crosses from the borrowed world into the owned one.
+      - type: exercise
+        id: borrowing-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A renderer holds `let cells: &[Cell] = table.row(0);`. Which of the following can it do
+          with `cells`? Choose before reading the feedback.
+        choices:
+          - text: Read `cells[1].text()` and compare it with another string.
+            correct: true
+            feedback: |
+              Correct. A shared slice allows reading its elements, and `text()` only needs
+              `&self`, so it returns another borrowed view.
+          - text: "Append a cell with `cells.push(Cell::new(\"x\"))`."
+            feedback: |
+              A slice has no `push`: it is a fixed view, not the `Vec` itself. Even with the `Vec`,
+              a shared reference would not allow a change. Adding rows goes through `push_row` on
+              `&mut Table` ([chapter 9](lesson:mutability-01)).
+          - text: Keep `cells` in a struct after `table` has been dropped.
+            feedback: |
+              That breaks the second borrow rule: the slice points into the table's rows, and the
+              compiler rejects any use of it after the owner is gone.
+          - text: Take ownership of the first cell with `let first = cells[0];`.
+            feedback: |
+              `Cell` is not `Copy` (it derives only `Clone`), and you cannot move a value out of
+              something you merely borrow. `cells[0].clone()` would make an owned copy.
+        hints:
+          - level: 1
+            body: What does the `&` in `&[Cell]` allow and forbid?
+          - level: 2
+            body: Is `Cell` `Copy`? Check its derive list on line 80.
+      - type: exercise
+        id: borrowing-02-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          `Cell::text` returns `&str`. The authors could instead have written `pub fn text(&self)
+          -> String { self.text.clone() }`, or made the field `pub`. Explain what each alternative
+          would change for callers, and why `&str` fits the promise in the `Cell` doc comment.
+        hints:
+          - level: 1
+            body: Count allocations, and ask who could modify the text in each version.
+          - level: 2
+            body: |
+              A `pub` field can be assigned by anyone holding `&mut Cell`. A cloned `String` is a
+              fresh allocation per call. A `&str` is neither.
+        solution: |
+          - **Returning `String` via `clone()`**: every call would allocate and copy the text. The
+            layout code calls `text()` and `width()` for every cell of every row; copying each time
+            would be wasted work, and callers would get a copy that can drift from the cell.
+          - **A `pub` field**: callers could read the `String` directly, but anyone with a
+            `&mut Cell` could also overwrite or shorten it. The type would no longer enforce "a
+            cell holds the complete text", and `Cell`'s internal representation would become part
+            of its public API.
+          - **`&str`** gives read access to the full text with no copy and no way to modify it. It
+            also hides the fact that the storage is a `String`. That matches the doc comment:
+            shortening happens during layout, which reads `text()` and computes a shorter version
+            for display; the stored text stays complete for "copy, export and serialization".
+      - type: exercise
+        id: borrowing-02-q3
+        exercise_type: trace-value
+        prompt: |
+          Trace the name `hot` in `let hot = get process` from the source line to the finished
+          `Parsed` value. At each step, say whether it is borrowed, copied or moved, and name the
+          type. Use `expect_ident` above and the fact that `parse_let` does
+          `let (name, name_span) = self.expect_ident("a name for the binding");` and later builds
+          `LetStmt { name, name_span, … }`.
+        hints:
+          - level: 1
+            body: Start from `token.text(self.source)` on line 41. What type does it produce?
+          - level: 2
+            body: |
+              There is exactly one copy of the bytes. After that, the `String` travels by move:
+              out of `expect_ident` in a tuple, into a local, into a struct field.
+        solution: |
+          1. The caller of `parse(source: &str)` owns the line. The parser holds a shared borrow,
+             `self.source: &str`.
+          2. `token.text(self.source)` produces a `&str` view of the three bytes `hot`: borrowed,
+             no copy.
+          3. `.to_owned()` copies them into a new `String`: this is the only copy.
+          4. The tuple `(String, Span)` is returned, which **moves** the `String` out of
+             `expect_ident`. `Span` is `Copy`, so it is copied.
+          5. `let (name, name_span) = …` destructures the tuple and moves the `String` into `name`.
+          6. `LetStmt { name, … }` moves it into the struct field, and the statement is later
+             moved into the `Program`, which is moved into `Parsed`.
+
+          From step 3 on, the name no longer depends on the source line. That is required because
+          `Parsed` has no lifetime parameter and must stay valid after the caller drops the line.
+
+  - id: borrowing-03
+    title: "Structs that hold a borrow: `FieldStep<'a>` and `Parser<'a>`"
+    stage: assisted
+    summary: How to read a lifetime parameter on a struct, and why a getter can return `&'a str` rather than a borrow of itself.
+    prerequisites: [borrowing-01]
+    concepts: [lifetimes, borrowing, structs]
+    ono_topics: [value-model, parsing]
+    objectives:
+      - "Read `struct S<'a> { field: &'a str }` as \"an `S` must not outlive the text it borrows\"."
+      - Distinguish `fn name(&self) -> &'a str` from `fn name(&self) -> &str`.
+      - Read `'_` and `impl Parser<'_>` as "some lifetime that does not matter here".
+      - Predict when a borrowing struct would outlive its source and fail to compile.
+    sections:
+      - type: prose
+        kind: context
+        title: Paths through records, and a parser that reads one line
+        body: |
+          `where local.port > 1024` reads the field `port` inside the field `local` of each record.
+          Ono-Sendai represents such a path as a list of `FieldStep`s and walks it with
+          `Value::follow(&self, steps: &[FieldStep<'_>])` (value.rs line 149). `?.` instead of `.`
+          makes a step optional: "an absent field, or a null receiver, yields null".
+
+          The parser, in turn, is a struct that keeps a borrow of the line it is parsing. Both types
+          have a lifetime parameter because both *contain* a reference.
+      - type: code
+        snippet: c08-field-step
+        caption: "`ono-value/src/record.rs`. `const fn` means the function may also run at compile time; you can ignore it when reading."
+        annotations:
+          - lines: 86-87
+            token: "<'a>"
+            kind: rust
+            body: |
+              A struct that holds a reference must name the reference's lifetime. `FieldStep<'a>`
+              reads: "a field step whose `name` borrows text for `'a`". A `FieldStep` value can
+              never be used after that text is gone.
+          - lines: 112
+            token: "-> &'a str"
+            kind: ownership
+            body: |
+              The getter returns the **original** borrow, with lifetime `'a`, not a new borrow of
+              the step. The caller may keep the name after the `FieldStep` itself has been
+              dropped, as long as the underlying text is still alive.
+          - lines: 85
+            token: Copy
+            kind: rust
+            body: |
+              A shared reference is `Copy`, so a struct of a `&str` and a `bool` can be `Copy` too.
+              Copying a `FieldStep` copies the reference, never the text.
+      - type: code
+        snippet: c08-field-step-caller
+        caption: |
+          `ono-command/src/expr.rs`. `FieldAccess` here is the **parser's** AST node for `a.b` or
+          `a?.b` (with `field: String`). It is not the `FieldAccess` enum of `ono-value` you met in
+          [chapter 5](chapter:option).
+        annotations:
+          - lines: 610
+            token: "FieldStep<'_>"
+            kind: rust
+            body: |
+              `'_` is the **elided lifetime** written explicitly: "the lifetime the elision rules
+              pick". With one reference input, the step borrows from `access`, in practice from the
+              `String` in `access.field`. `&access.field` is a `&String` coerced to `&str`.
+      - type: code
+        snippet: c08-parser-state
+        caption: "`ono-parser/src/parser/state.rs`. The fields are `pub(super)`: visible to the sibling modules of the parser, nowhere else."
+        annotations:
+          - lines: 16-17
+            token: "Parser<'a>"
+            kind: ownership
+            body: |
+              The parser owns its diagnostics, its token record and its counters, but only
+              **borrows** the source line. It cannot outlive the line it is parsing.
+          - lines: 39-40
+            token: "-> &'a str"
+            kind: rust
+            body: |
+              Same pattern as `FieldStep::name`: the returned text borrows from the source line,
+              not from the parser. `limit` lets the parser treat a prefix as the whole input;
+              `get(..self.limit)` fails safely back to the full source if `limit` is not a valid
+              cut.
+      - type: prose
+        kind: rust
+        title: Reading lifetimes on structs and impls
+        body: |
+          - `struct Parser<'a> { source: &'a str, … }` declares a lifetime parameter and uses it in
+            a field. Every concrete `Parser` has some specific lifetime for `'a`: the one of the
+            line it was created from in `Parser::new(source)`.
+          - `impl<'a> Parser<'a> { … }` introduces the name `'a` so the methods can mention it
+            (`text` returns `&'a str`).
+          - `impl Parser<'_> { … }` is used when the methods never need to name it. You will find
+            this form at the top of every other parser file (`statements.rs`, `diagnostics.rs`, …).
+
+          The difference between `-> &'a str` and a plain `-> &str` on a `&self` method matters in
+          practice. A plain `&str` would borrow from the parser itself, and while it was in use no
+          method taking `&mut self` could be called. The same idea shows in `diagnostics.rs`, which
+          does `let opener = open.text(self.source);` and then calls `self.report(…)`, which takes
+          `&mut self`. `self.source` is a `&'a str` (references are `Copy`, so reading the field
+          copies the reference), and text taken from it borrows the line, not the parser.
+      - type: diagram
+        kind: ownership
+        title: What borrows what
+        art: |2
+          caller of parse()                    evaluator
+          ┌──────────────────────┐             ┌───────────────────────────────┐
+          │ line: String          │             │ access: parser FieldAccess    │
+          │   ▲                   │             │   field: String "port" ◄────┐ │
+          │   │ &'a str           │             │                             │ │
+          │ Parser<'a> {          │             │ step: FieldStep<'_> {       │ │
+          │   source ─────────────┘             │   name ─────────────────────┘ │
+          │   pos, diagnostics,   │ (owned)     │   optional: false             │
+          │   record, …           │             │ }                             │
+          │ }                     │             │ step.name() -> &'a str        │
+          └──────────────────────┘             └───────────────────────────────┘
+        description: |
+          Left: the caller of `parse` owns the source line as a `String` (or any other text). The
+          `Parser` holds a shared borrow of it in `source` and owns everything else (position,
+          diagnostics, the optional token record). The parser must be finished before the line is
+          dropped. Right: the parser's AST node for a field access owns the field name as a
+          `String`. `field_step` builds a `FieldStep` whose `name` borrows that `String`. The step
+          owns only the `optional` flag. `step.name()` hands back the same borrow of the AST
+          string, not a borrow of the step.
+      - type: prose
+        kind: ono
+        title: Why these types borrow instead of owning
+        body: |
+          The code shows what borrowing buys here, without claiming a performance motive the
+          source does not state. A `FieldStep` is built from a name that already exists (in the
+          AST, or in the path string `a.b.c` split at the dots in `ono-value`'s `to_text`), used
+          once to walk a value, and discarded. Borrowing lets the caller build a whole
+          `Vec<FieldStep<'_>>` from existing text without allocating a `String` per step.
+
+          The parser borrows the line because its caller already owns it and the parser only
+          reads it. What the parser produces (the tree, the diagnostics) is owned, so the result
+          outlives the borrow, as you saw in [lesson 2](lesson:borrowing-02).
+      - type: exercise
+        id: borrowing-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `step` is a `FieldStep<'a>` built from `access.field`. A caller writes
+          `let name = step.name();` and then drops `step`. Can the caller still use `name`?
+        choices:
+          - text: "Yes, as long as `access` (and so `access.field`) is still alive."
+            correct: true
+            feedback: |
+              Correct. `name` has type `&'a str`, which borrows from the text the step was built
+              from. Dropping the step ends nothing that `name` depends on.
+          - text: "No: `name` borrows from `step`, so dropping `step` invalidates it."
+            feedback: |
+              That would be true if `name` returned a plain `&str` (elided to the lifetime of
+              `&self`). The explicit `&'a str` on line 112 is exactly what prevents this.
+          - text: "Yes, always: `name()` returns a copy of the text."
+            feedback: |
+              No copy is made: the return type is a reference. If `access.field` is dropped, `name`
+              becomes unusable too.
+        hints:
+          - level: 1
+            body: Compare the lifetime on the result of `name` with the lifetime of `&self`.
+          - level: 2
+            body: "`&self` has an anonymous, shorter lifetime; the result has `'a`. Which one does the text depend on?"
+      - type: exercise
+        id: borrowing-03-q2
+        exercise_type: predict
+        prompt: |
+          An illustration, not Ono-Sendai code. Predict whether this compiles. If not, say which
+          borrow rule it breaks and what a lifetime annotation could or could not do about it.
+
+          ```rust
+          let steps: Vec<FieldStep<'_>> = {
+              let path = String::from("local.port");
+              path.split('.').map(FieldStep::required).collect()
+          };
+          println!("{}", steps[0].name());
+          ```
+        hints:
+          - level: 1
+            body: Where is `path` dropped?
+          - level: 2
+            body: |
+              Each step holds a `&str` into `path`. `steps` is used after the block ends. Can any
+              annotation make `path` live past its block?
+        solution: |
+          It does not compile: `path` "does not live long enough". `path` is a `String` owned by the
+          inner block and is dropped at its closing brace. Every `FieldStep` in `steps` borrows a
+          piece of it (`split` yields `&str` views into `path`), and `steps` is used after the
+          block. That breaks the rule that a reference may not outlive the value it points to.
+
+          No lifetime annotation can fix this. Lifetimes describe where a borrow comes from; they
+          never extend a value's life. The fix is to move ownership outward: declare `path` before
+          the block, so it lives as long as `steps`. Ono-Sendai's `to_text` (text.rs line 96) is
+          shaped that way: `path` is borrowed from the function's `field` parameter, which outlives
+          the steps built and used inside the loop body.
+      - type: exercise
+        id: borrowing-03-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain `impl Parser<'_> {` (the first line of every parser file other than
+          `state.rs`). Why is there no `<'a>` after `impl`, and what would change if the methods in
+          that block needed to return text from the source?
+        hints:
+          - level: 1
+            body: Look at `impl<'a> Parser<'a>` in `state.rs`. Which method there mentions `'a`?
+          - level: 2
+            body: A name only has to be introduced if something inside the block refers to it.
+        solution: |
+          `Parser` has a lifetime parameter, so an `impl` for it must say something about that
+          parameter. `Parser<'_>` means "for a parser with any lifetime; I will not refer to it by
+          name". That is enough for methods such as `peek`, `bump` or `report`, whose signatures
+          only use `&self` or `&mut self`, `Token`s and owned values.
+
+          `state.rs` uses `impl<'a> Parser<'a>` because `text(&self) -> &'a str` has to name the
+          source's lifetime in its return type. A block whose methods returned source text would
+          need the same form (or would have to route through `self.source`, whose type already
+          carries `'a`, as `expect_ident` does with `token.text(self.source)`).
+
+  - id: borrowing-04
+    title: "Where does the result come from? `closest` and `CommandRegistry::resolve`"
+    stage: assisted
+    summary: Reading signatures whose lifetimes say which input a returned reference borrows from, including a struct with two independent lifetimes.
+    prerequisites: [borrowing-03]
+    concepts: [lifetimes, borrowing, slices-strings]
+    ono_topics: [command-registry]
+    objectives:
+      - Use lifetime names to decide which argument a returned reference borrows from.
+      - Read a struct with two lifetime parameters, `Resolved<'r, 'a>`.
+      - Explain why `&arguments[1..]` keeps the lifetime of `arguments`.
+      - Recognise an edition-2024 let chain (`if let … && let …`).
+    sections:
+      - type: prose
+        kind: context
+        title: Resolving a command head
+        body: |
+          ADR-0011 fixes the order in which a head word such as `get` is resolved: keywords, user
+          functions, aliases, then **native commands from the command registry**, then executables
+          on `PATH`. `CommandRegistry::resolve` is that fourth step. The registry is loaded once
+          from contract files embedded in the binary; `CommandRegistry::embedded()` returns a
+          `&'static CommandRegistry` (registry.rs line 89).
+
+          When nothing matches, the error suggests a near miss: "did you mean `get process`?". That
+          comes from `closest`, whose module doc notes "The search runs only on the failure path, so
+          a name that exists costs nothing."
+      - type: code
+        snippet: c08-closest
+        caption: "`ono-command/src/suggest.rs`. The body is an iterator chain; [chapter 12](chapter:iterators-closures) teaches it. Here, read only the signature."
+        annotations:
+          - lines: 14
+            token: "typed: &str"
+            kind: ownership
+            body: |
+              `typed` has its own, unnamed lifetime. It is only inspected; the result never points
+              into it.
+          - lines: 14
+            token: "Option<&'a str>"
+            kind: rust
+            body: |
+              `'a` appears on the candidates' items and on the result, and nowhere else: the
+              returned name is one of the candidates.
+      - type: prose
+        kind: black-box
+        title: "`impl IntoIterator<Item = &'a str>`"
+        body: |
+          Read `candidates: impl IntoIterator<Item = &'a str>` as "anything that can hand out
+          `&'a str` values one by one": an array like `["state", "started"]`, a `Vec<&str>`, or an
+          iterator over a registry's names. [Chapter 11](lesson:generics-01) explains `impl Trait`
+          in argument position.
+      - type: code
+        snippet: c08-resolved
+        caption: "`ono-command/src/registry.rs`, shortened. The error path after line 459 builds the \"did you mean\" message with `closest`."
+        annotations:
+          - lines: 51
+            token: "<'r, 'a>"
+            kind: rust
+            body: |
+              Two **independent** lifetime parameters: `'r` for data borrowed from the registry,
+              `'a` for data borrowed from the stage's arguments.
+          - lines: 52-53
+            kind: ono
+            body: |
+              The doc states the reason: the contract "borrows the registry, not the stage, so a
+              caller holding a `&'static CommandRegistry` keeps a `&'static CommandContract`".
+          - lines: 447
+            token: "&& let Some(contract)"
+            kind: rust
+            body: |
+              A **let chain** (edition 2024): both patterns must match for the block to run, and
+              `word` from the first is usable in the second. Read it as nested `if let`s.
+          - lines: 451
+            token: "&arguments[1..]"
+            kind: ownership
+            body: |
+              A sub-slice of a slice: everything after the target word. It points into the same
+              `Argument`s, so it keeps the lifetime `'a`. Nothing is copied.
+      - type: prose
+        kind: rust
+        title: Why two lifetimes instead of one
+        body: |
+          With a single lifetime, as in `fn resolve<'x>(&'x self, head: &str, arguments: &'x
+          [Argument]) -> Result<Resolved<'x>, …>`, the compiler would have to pick one region that
+          both borrows satisfy, in practice the shorter one. The contract would then be treated as
+          if it could only live as long as the stage's arguments, even though it really lives in
+          the registry.
+
+          With `'r` and `'a`, each field keeps the lifetime of the value it actually came from.
+          `Resolved` is `Copy` (it holds only two references), so a caller can copy
+          `resolved.contract` out, drop the stage, and keep using the contract for as long as the
+          registry lives: for the `'static` embedded registry, for the rest of the program.
+
+          `head: &str` gets no name: like `typed` in `closest`, it is only read.
+      - type: diagram
+        kind: ownership
+        title: The two sources of a `Resolved`
+        art: |2
+          static CommandRegistry (embedded, lives for the whole program)
+            └─ commands: [ …, CommandContract "ono.process.get", … ]
+                                     ▲
+                                     │ &'r CommandContract
+                          Resolved { contract, arguments }
+                                                  │ &'a [Argument]
+                                                  ▼
+          stage.arguments: Vec<Argument>   [ Word "process", Word "--all" ]
+                                                            └── [1..] ──┘
+        description: |
+          A `Resolved` holds two borrows from two different owners. `contract` points into the
+          registry, which for the embedded registry is static and outlives everything. `arguments`
+          points into the stage's argument vector, which belongs to the parsed program. When the
+          head is `get` and the first word `process` names a target, `arguments` is the sub-slice
+          after `process`. The two lifetimes `'r` and `'a` let the compiler track the two owners
+          separately, so the contract borrow is not cut short by the shorter-lived arguments.
+      - type: prose
+        kind: ono
+        title: Why resolution borrows
+        body: |
+          Resolution runs whenever a stage head is looked up in the registry. It answers a question about
+          existing data ("which contract does this head name, and which arguments remain?"), so it
+          returns references into the registry and into the parsed arguments. The only values it
+          creates are on the failure path: an `ErrorValue` with a message and a suggestion. That
+          matches the module doc of `suggest.rs`: work is done only when a name did not resolve.
+      - type: exercise
+        id: borrowing-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A caller has `let registry = CommandRegistry::embedded()?;` (a `&'static
+          CommandRegistry`), calls `registry.resolve(head, &stage.arguments)` and then drops the
+          parsed program that owns `stage`. Which part of the `Resolved` value may it still use?
+        choices:
+          - text: "`contract`, if it was copied out before the drop; `arguments` is no longer usable."
+            correct: true
+            feedback: |
+              Right. `contract: &'r CommandContract` borrows the registry, which here is
+              `'static`. `arguments: &'a [Argument]` borrows the stage and ends with it.
+          - text: Neither; the whole `Resolved` ends when the stage is dropped.
+            feedback: |
+              With a single lifetime that would be the case. The two independent parameters exist
+              precisely so the contract's borrow does not depend on the stage.
+          - text: Both, because `Resolved` derives `Copy`.
+            feedback: |
+              `Copy` copies the references, not what they point to. A copied `&'a [Argument]`
+              still points into the dropped stage and cannot be used.
+          - text: "`arguments`, because `&arguments[1..]` made a copy of the slice."
+            feedback: |
+              A sub-slice is a new view (pointer and length) into the same elements. No
+              `Argument` is copied.
+        hints:
+          - level: 1
+            body: Which lifetime does each field of `Resolved` carry?
+          - level: 2
+            body: Read the doc comment on `contract` (lines 52–53).
+      - type: exercise
+        id: borrowing-04-q2
+        exercise_type: read-function
+        prompt: |
+          Read `resolve` (lines 440–459, plus what the caption says about the rest) and describe:
+          which paths return `Ok`, what each `Resolved` contains, and where every reference in the
+          result comes from. Write your answer before revealing the solution.
+        hints:
+          - level: 1
+            body: There are two `return Ok(…)` sites. What distinguishes them?
+          - level: 2
+            body: |
+              The first tries the head *with* the first word as a target and slices the arguments;
+              the second tries the head alone and keeps all arguments.
+        solution:
+          summary: |
+            `resolve` first tries "verb + target" (the head plus the first argument word), then the
+            head alone. On a match it returns a `Resolved` that borrows the contract from the
+            registry and the remaining arguments from the stage. Otherwise it returns a
+            `resolve.target_not_found` or `resolve.command_not_found` error with a suggestion.
+          analysis:
+            - aspect: inputs
+              body: |
+                `&'r self` (the registry), `head: &str` (only read), `arguments: &'a [Argument]`
+                (the stage's arguments, borrowed).
+            - aspect: control-flow
+              body: |
+                Lines 446–453: a let chain. If the first argument is a word **and** `find(head,
+                Some(word))` finds a contract, return it with `&arguments[1..]` (the target word
+                is consumed). Lines 454–458: otherwise, if `find(head, None)` finds a contract,
+                return it with all arguments. After that, only error paths remain.
+            - aspect: ownership
+              body: |
+                Nothing is moved or cloned on the success paths. `contract` is a `&'r
+                CommandContract` returned by `find` (a borrow of `self.commands`); `arguments` is
+                either the original slice or a sub-slice of it, both with lifetime `'a`.
+                `first_word` is an `Option<&'a str>` into the first argument.
+            - aspect: errors
+              body: |
+                Two distinct codes: a known verb with an unknown target versus no command at all.
+                Both are built with `ErrorValue::new(...).with_help(...)` and include a near miss
+                from `closest` when one exists.
+          guarantees: |
+            The doc comment guarantees that the target word is consumed only "when the command takes
+            one", and that a head naming no native command is reported rather than guessed at. The
+            `Resolved` doc guarantees that the contract borrows the registry, not the stage.
+          semantics: |
+            Because `Resolved<'r, 'a>` carries two lifetime parameters, the compiler checks each
+            field against its own owner: the contract stays valid as long as the registry, the
+            arguments as long as the stage. Slicing (`&arguments[1..]`) and returning `find`'s
+            reference create views; no data is copied. The let chain only runs its block when both
+            patterns match.
+          interpretation: |
+            Interpretation: resolution is a lookup over data the shell already holds, so it returns
+            views rather than copies, and only the failure path allocates (an error and a
+            suggestion). Returning an error instead of `None` lets the caller (the evaluator) go on
+            to step 5 of ADR-0011, searching `PATH`, while still holding a precise explanation of
+            why the native lookup failed.

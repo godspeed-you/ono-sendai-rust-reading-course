@@ -1,0 +1,20 @@
+id: c04-redirect-target
+source:
+  file: crates/ono-process/src/command.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 140
+  end_line: 149
+  anchor: '| Self::Duplicate { fd, .. } => *fd,'
+  content_hash: sha256:5407909016b1ffd0b58d39a899f921d8f9985c05a7fb73c07ec7e7ebc486e564
+  code: |2
+        /// The descriptor this redirection changes.
+        #[must_use]
+        pub const fn target(&self) -> Fd {
+            match self {
+                Self::Read { fd, .. }
+                | Self::Write { fd, .. }
+                | Self::Append { fd, .. }
+                | Self::Duplicate { fd, .. } => *fd,
+            }
+        }

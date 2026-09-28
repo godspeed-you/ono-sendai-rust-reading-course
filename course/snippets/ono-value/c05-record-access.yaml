@@ -1,0 +1,35 @@
+id: c05-record-access
+source:
+  file: crates/ono-value/src/record.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 177
+  end_line: 201
+  anchor: Some(Value::Null) => FieldAccess::Unknown,
+  content_hash: sha256:c5443e76d8257edd463a5676eac2a91aa722dadcc9b8968a96d4dc41346a3598
+  code: |2
+        /// The value stored under `name`, whether it is a declared field or an extension.
+        #[must_use]
+        pub fn get(&self, name: &str) -> Option<&Value> {
+            match self.schema.position_of(name) {
+                Some(index) => self.fields.get(index),
+                None => self.extra.get(name),
+            }
+        }
+
+        /// Reads a field, keeping the three outcomes of spec §10.5 apart.
+        ///
+        /// An error stored in a field the schema declares `error` is that field's *value* — spec
+        /// §11.5 declares `ActionResult.error` exactly so — and is reported `Known`. An error in a
+        /// field of any other type is the failure to read it (ADR-0215).
+        #[must_use]
+        pub fn access(&self, name: &str) -> FieldAccess {
+            match self.get(name) {
+                None => FieldAccess::Absent,
+                Some(Value::Null) => FieldAccess::Unknown,
+                Some(Value::Error(error)) if !self.declares_error(name) => {
+                    FieldAccess::Failed(Arc::clone(error))
+                }
+                Some(value) => FieldAccess::Known(value.clone()),
+            }
+        }

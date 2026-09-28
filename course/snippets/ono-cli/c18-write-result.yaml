@@ -1,0 +1,76 @@
+id: c18-write-result
+source:
+  file: crates/ono-cli/src/eval/native/result.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 166
+  end_line: 231
+  anchor: let mut sink = Sink::for_stdout(&borrowed).with_theme(session.theme());
+  content_hash: sha256:dfceb66e23eed58cd5b4608d0d5f7cf7a78b04bf1c2faf8fba450356825f3b9a
+  code: |
+    /// Writes the last segment's result where the stage's redirections say it goes.
+    pub(super) fn write_result(
+        session: &mut Session,
+        stage: &Stage,
+        values: &[Value],
+        serialised: bool,
+        source: &str,
+    ) -> Eval<()> {
+        let destination = crate::eval::output_destination(session, stage, source)?;
+        // A pipeline run for its value hands on what it would have shown instead of showing it
+        // (spec §19.2, ADR-0069; ADR-0072 §4): the values themselves, or the one document a
+        // serializer made of them. Nothing is rendered and nothing is retained for `@-1`, because
+        // nothing was shown. A redirection still means the file.
+        if destination.is_none() && session.capturing() {
+            if serialised {
+                session.capture(&[crate::eval::captured_text(&bytes_of(values))])?;
+            } else {
+                session.capture(values)?;
+            }
+            return Ok(());
+        }
+        // What is about to be shown is what `@-1` and `@N` reuse (spec §20.2). Serialised output is
+        // not retained: its values are one rendered document, and reusing the objects it was made
+        // from is what the retention of the *previous* result is for.
+        if !serialised {
+            crate::report::retention_notice(session.retain(values));
+        }
+        match destination {
+            Some(mut file) => {
+                let bytes = if serialised {
+                    bytes_of(values)
+                } else {
+                    rendered_bytes(values, table_row_limit(session))
+                };
+                file.write_all(&bytes).map_err(write_failed)?;
+                file.flush().map_err(write_failed)
+            }
+            None if serialised => {
+                let mut out = std::io::stdout().lock();
+                out.write_all(&bytes_of(values)).map_err(write_failed)?;
+                out.flush().map_err(write_failed)
+            }
+            None => {
+                let environment: Vec<(String, String)> = session
+                    .env()
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.to_string_lossy().into_owned(),
+                            value.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect();
+                let borrowed: Vec<(&str, &str)> = environment
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str()))
+                    .collect();
+                let mut sink = Sink::for_stdout(&borrowed).with_theme(session.theme());
+                if let Some(limit) = table_row_limit(session) {
+                    sink = sink.with_max_rows(limit);
+                }
+                sink.write(values);
+                Ok(())
+            }
+        }
+    }

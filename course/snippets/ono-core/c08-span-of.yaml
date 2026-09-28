@@ -1,0 +1,22 @@
+id: c08-span-of
+source:
+  file: crates/ono-core/src/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 81
+  end_line: 92
+  anchor: source.get(start..end).unwrap_or("")
+  content_hash: sha256:812202fa82c4bebee97728b4bcfe72808bcf29100541799c05387577e8790a1c
+  code: |2
+        /// The text this span points at, or `""` if it points outside `source`.
+        ///
+        /// Rendering a diagnostic must never panic, however wrong the span it was handed is.
+        #[must_use]
+        pub fn of(self, source: &str) -> &str {
+            let start = self.start as usize;
+            let end = self.end as usize;
+            if start > end || end > source.len() {
+                return "";
+            }
+            source.get(start..end).unwrap_or("")
+        }

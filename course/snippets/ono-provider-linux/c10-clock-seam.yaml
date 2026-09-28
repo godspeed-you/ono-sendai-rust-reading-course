@@ -1,0 +1,23 @@
+id: c10-clock-seam
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 249
+  end_line: 254
+  anchor: 'pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {'
+  content_hash: sha256:dbbfb249cf124d4e27df46712047ec0eb7b72a65652401f283b0ab487f46c685
+  code: |2
+        /// Measures the CPU sampling interval against `clock`.
+        #[must_use]
+        pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+            self.reader.clock = clock;
+            self
+        }
+- start_line: 430
+  end_line: 431
+  anchor: let now = self.clock.now_nanos();
+  content_hash: sha256:b807e67610c5b49b71bf8180c3b1134655ca8f53c9871b37f6dd4ca6abec1272
+  code: |2
+        fn cpu(&self, pid: i64, stat: &procfs::ProcStat) -> Option<(f64, ono_value::Duration)> {
+            let now = self.clock.now_nanos();

@@ -1,0 +1,27 @@
+id: c05-inspected-fields
+source:
+  file: crates/ono-command/src/impls/meta.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 473
+  end_line: 489
+  anchor: let (access, held) = match record.access(field.name()) {
+  content_hash: sha256:d51c4730ea44498481ff447fdb92a22f0684b779b46ce1728e267b115e31df99
+  code: |
+    fn inspected_fields(record: &RecordValue) -> Value {
+        Value::list(record.schema().fields().iter().map(|field| {
+            let mut described = MapValue::new();
+            described.insert("name".into(), Value::string(field.name()));
+            described.insert("type".into(), Value::string(&field.ty().name()));
+            // The three absences of spec §10.5, reported as three different words rather than as one
+            // empty cell.
+            let (access, held) = match record.access(field.name()) {
+                FieldAccess::Known(value) => ("known", value),
+                FieldAccess::Unknown => ("unknown", Value::Null),
+                FieldAccess::Absent => ("absent", Value::Null),
+                FieldAccess::Failed(error) => ("failed", Value::Error(error)),
+            };
+            described.insert("access".into(), Value::string(access));
+            described.insert("value".into(), held);
+            Value::Map(Arc::new(described))
+        }))

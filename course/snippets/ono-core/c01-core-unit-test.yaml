@@ -1,0 +1,30 @@
+id: c01-core-unit-test
+source:
+  file: crates/ono-core/src/lib.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 32
+  end_line: 51
+  anchor: '#[cfg(test)]'
+  content_hash: sha256:0d46e9872a5c6d9768a321d05dd37a499a63c9bd864475e03f9da2071ac425f6
+  code: |
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn should_report_a_semver_version_when_asked() {
+            let parts: Vec<&str> = VERSION.split('.').collect();
+            assert_eq!(
+                parts.len(),
+                3,
+                "the shell must report a three-part semantic version, got {VERSION:?}"
+            );
+            for part in parts {
+                assert!(
+                    part.chars().all(|c| c.is_ascii_digit()),
+                    "every version component must be numeric, got {VERSION:?}"
+                );
+            }
+        }
+    }

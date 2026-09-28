@@ -1,0 +1,61 @@
+id: c19-process-provider-meta
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 937
+  end_line: 987
+  anchor: impl Provider for ProcessProvider {
+  content_hash: sha256:e7a18003ccc45263a8e4098bec399fef85d385cb74ec923950e43f59eeb4190f
+  code: |
+    #[async_trait::async_trait]
+    impl Provider for ProcessProvider {
+        fn id(&self) -> &str {
+            PROVIDER_ID
+        }
+
+        fn targets(&self) -> &[&str] {
+            // `signal` is the target of `send signal`, whose objects are the processes that arrive
+            // through the pipeline (ADR-0092 §2); nothing enumerates it.
+            &["process", "signal"]
+        }
+
+        fn schemas(&self) -> Vec<Arc<Schema>> {
+            [schemas::process_id(), schemas::process_detail_id()]
+                .iter()
+                .filter_map(|id| schemas::require(id).ok())
+                .collect()
+        }
+
+        fn capabilities(&self) -> Vec<Capability> {
+            vec![
+                Capability::new("process.list", Risk::Read),
+                Capability::new("process.inspect", Risk::Read),
+                Capability::new("process.signal", Risk::Mutate),
+                Capability::new("process.set", Risk::Mutate),
+            ]
+        }
+
+        fn availability(&self) -> Availability {
+            if self.reader.proc_root.is_dir() {
+                Availability::Available
+            } else {
+                Availability::unavailable(format!(
+                    "{} is not a mounted proc filesystem",
+                    self.reader.proc_root.display()
+                ))
+            }
+        }
+
+        fn temporal(&self) -> TemporalCapabilities {
+            // v0.5 §22.1: "`procfs` is primarily a snapshot source. The reference provider MUST NOT
+            // claim native historical process coverage." A process that ended left nothing in `/proc`
+            // to read, so appearance and disappearance are the recorder's to derive from two
+            // snapshots — with provenance saying `snapshot_diff` — and never this provider's to
+            // claim as events it saw.
+            TemporalCapabilities {
+                current_snapshot: true,
+                checkpointable: true,
+                ..TemporalCapabilities::none()
+            }
+        }

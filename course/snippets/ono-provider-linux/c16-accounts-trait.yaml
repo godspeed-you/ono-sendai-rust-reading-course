@@ -1,0 +1,43 @@
+id: c16-accounts-trait
+source:
+  file: crates/ono-provider-linux/src/accounts.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 67
+  end_line: 99
+  anchor: 'pub trait Accounts: Send + Sync + std::fmt::Debug {'
+  content_hash: sha256:e0642c5df43007dc75afd9ad10566596d2a3eca943945ad173da7de6d523f6ac
+  code: |
+    /// Where a provider gets accounts from.
+    ///
+    /// A provider takes one of these rather than calling NSS itself, so a test can state exactly
+    /// which accounts exist — and so a lookup that never returns can be exercised without a
+    /// directory server.
+    #[async_trait::async_trait]
+    pub trait Accounts: Send + Sync + std::fmt::Debug {
+        /// The account owning `uid`, or `None` when nothing resolves it.
+        async fn user(&self, uid: u32) -> Option<UserAccount>;
+
+        /// The account named `name`, or `None` when nothing resolves it.
+        async fn user_named(&self, name: &str) -> Option<UserAccount>;
+
+        /// The group owning `gid`, or `None` when nothing resolves it.
+        async fn group(&self, gid: u32) -> Option<GroupAccount>;
+
+        /// The group named `name`, or `None` when nothing resolves it.
+        async fn group_named(&self, name: &str) -> Option<GroupAccount>;
+
+        /// Every account the enumeration source declares.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error when the source cannot be read at all.
+        fn users(&self) -> Result<Vec<UserAccount>, ErrorValue>;
+
+        /// Every group the enumeration source declares.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error when the source cannot be read at all.
+        fn groups(&self) -> Result<Vec<GroupAccount>, ErrorValue>;
+    }

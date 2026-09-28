@@ -1,0 +1,27 @@
+id: c13-string-of
+source:
+  file: crates/ono-cli/src/eval/expression.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 18
+  end_line: 34
+  anchor: Ok(text_of(&value)?)
+  content_hash: sha256:130afb626d328f28a5fd0210a5449924b027e81dda939f8d3e16416225076f91
+  code: |
+    pub(super) fn text_of(value: &Value) -> Result<String, ErrorValue> {
+        if matches!(value, Value::Null) {
+            return Ok(String::new());
+        }
+        ono_value::canonical_text(value)
+    }
+
+    pub(super) fn string_of(session: &mut Session, expression: &Expr, source: &str) -> Eval<String> {
+        let value = eval_expr(session, expression, source)?;
+        Ok(text_of(&value)?)
+    }
+
+    /// Evaluates an expression to a value.
+    pub fn eval_expr(session: &mut Session, expression: &Expr, source: &str) -> Eval<Value> {
+        match expression {
+            Expr::Number(literal) => Ok(number_value(literal.value)),
+            Expr::Unit(literal) => Ok(unit_value(literal.value, literal.unit)?),

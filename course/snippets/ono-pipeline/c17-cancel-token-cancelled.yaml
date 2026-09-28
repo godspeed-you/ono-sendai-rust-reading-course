@@ -1,0 +1,45 @@
+id: c17-cancel-token-cancelled
+source:
+  file: crates/ono-pipeline/src/cancel.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 39
+  end_line: 73
+  anchor: wait.as_mut().enable();
+  content_hash: sha256:6a08bca9aa39392defcac95304afdb41e3f9b7e65c6202b8749f9a4a5a6190b1
+  code: |
+    impl CancelToken {
+        /// A fresh, uncancelled scope.
+        #[must_use]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Cancels the scope. Idempotent: cancelling twice is cancelling once.
+        pub fn cancel(&self) {
+            self.inner.cancelled.store(true, Ordering::SeqCst);
+            self.inner.wake.notify_waiters();
+        }
+
+        /// Whether the scope has been cancelled.
+        #[must_use]
+        pub fn is_cancelled(&self) -> bool {
+            self.inner.cancelled.load(Ordering::SeqCst)
+        }
+
+        /// Resolves as soon as the scope is cancelled, and never otherwise.
+        ///
+        /// Safe to `select!` on repeatedly: the waiter registers before it re-checks the flag, so a
+        /// cancellation racing with the registration cannot be missed.
+        pub async fn cancelled(&self) {
+            if self.is_cancelled() {
+                return;
+            }
+            let wait = self.inner.wake.notified();
+            tokio::pin!(wait);
+            wait.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            wait.await;
+        }

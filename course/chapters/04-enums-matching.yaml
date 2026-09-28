@@ -1,0 +1,896 @@
+id: enums-matching
+number: 4
+title: Enums and pattern matching
+summary: |
+  An **enum** is a type whose value is exactly one of a fixed list of variants, and each variant
+  may carry data of its own. Together with `match`, which the compiler checks for completeness,
+  enums are how Ono-Sendai says "one of these things" everywhere: error kinds, runtime values,
+  statements of the shell language, redirections, and the ways `ono` can be started. This chapter
+  reads those five enums and the `match` expressions over them — unit variants, tuple variants,
+  struct-like variants, wildcards, or-patterns that bind, `..`, `matches!`, and
+  `let … else`.
+lessons:
+  - id: enums-matching-01
+    title: "A closed list of names: ErrorKind"
+    stage: guided
+    summary: "An enum with thirteen unit variants and an exhaustive `match` that maps each one to its name."
+    prerequisites: [functions-types-02]
+    concepts: [enums, pattern-matching]
+    ono_topics: [error-flow, core-vocabulary]
+    objectives:
+      - Read an enum of unit variants and name one of its values
+      - "Read a `match` that produces a value for every variant"
+      - "Explain what exhaustiveness means and what the compiler does when a variant is added"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          Every error in Ono-Sendai has a precise **code** (such as `parse.syntax`) and a broad
+          **kind** (such as `parse`). The module doc of `crates/ono-core/src/error.rs` explains
+          the split: codes are "payload-free so that every layer of the shell can name one
+          without depending on the value model", and "the taxonomy is closed and additive
+          (ADR-0006): a code is never renumbered, removed or re-pointed at a different meaning".
+          The kinds come first in the file.
+      - type: code
+        snippet: c04-error-kind-enum
+        annotations:
+          - lines: 14-15
+            kind: ono
+            body: |
+              "Scripts branch on the kind; the `ErrorCode` carries the precise identity." A script
+              can catch every permission problem without listing every permission-related code.
+              ADR-0006 added `Safety` and `Stream` to the list the spec started with.
+          - lines: 16
+            token: "Copy"
+            kind: rust
+            body: |
+              An enum can derive the same abilities as a struct. An `ErrorKind` is a small tag,
+              so it is `Copy`, comparable and sortable.
+          - lines: 17
+            token: "pub enum ErrorKind {"
+            kind: rust
+            body: |
+              `enum` declares a type whose value is **exactly one** of the variants listed between
+              the braces. A value of type `ErrorKind` is `Resolution`, or `Permission`, or … — never
+              two at once, never something else.
+          - lines: 19
+            token: "Resolution,"
+            kind: type
+            body: |
+              A **unit variant**: just a name, carrying no data. Outside the enum it is written
+              with the type's name, `ErrorKind::Resolution`. Unlike an enum in C, it is not
+              interchangeable with an integer: no number silently becomes an `ErrorKind`, so a
+              value of this type is always one of the listed kinds.
+      - type: code
+        snippet: c04-error-kind-as-str
+        caption: |
+          From the `impl ErrorKind` block in the same file.
+        annotations:
+          - lines: 66
+            token: "&'static str"
+            kind: type
+            body: |
+              The result is text that lives for the whole run of the program — string literals such
+              as `"resolution"` are stored in the binary, and `'static` says so. Chapter 8 explains
+              the `'static` notation; read it as "a fixed piece of text".
+          - lines: 67
+            token: "match self {"
+            kind: flow
+            body: |
+              `self` is an `ErrorKind` (a copy — the type is `Copy`). The `match` picks the arm
+              whose pattern equals it and produces that arm's value. The `match` is the last
+              expression, so its value is returned.
+          - lines: 68
+            token: "ErrorKind::Resolution => \"resolution\","
+            kind: rust
+            body: |
+              One arm: pattern `ErrorKind::Resolution`, then `=>`, then the value. The spelling
+              follows spec §16.1, as the doc comment on line 64 says.
+          - lines: 80-81
+            kind: flow
+            body: |
+              There is no catch-all `_ =>` arm. Every one of the thirteen variants has its own arm,
+              so the `match` is **exhaustive**, and the compiler verifies that. If a fourteenth
+              variant is added to the enum, this function stops compiling until it gets an arm —
+              the compiler finds every place that must learn the new kind.
+      - type: prose
+        kind: rust
+        title: Exhaustiveness is a check, not a style
+        body: |
+          A `match` must cover every possible value of what it matches. For an enum, that means
+          every variant, either with its own arm or with a wildcard `_` that matches "anything
+          else". Leaving a variant out is a compile error ("non-exhaustive patterns"), not a
+          runtime surprise.
+
+          So a `match` without `_` is a promise: *each* case was considered. `as_str` makes that
+          promise, which is why adding a kind is safe — every exhaustive `match` over
+          `ErrorKind` in the workspace will point at itself until it is updated.
+      - type: prose
+        kind: black-box
+        title: The ErrorCode enum below
+        body: |
+          Right after `ErrorKind`, the file defines `ErrorCode`, with more than a hundred
+          variants — but you will not find them written out as an `enum` block. A macro
+          (`macro_rules! error_codes`) generates the enum and its `match` expressions from one
+          list, "so the three can never drift apart". Read `ErrorCode` as an ordinary enum of
+          unit variants with methods `code()`, `name()` and `kind()`. Chapter 14 reads the macro.
+      - type: exercise
+        id: enums-matching-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A developer adds a variant `Quota,` to `ErrorKind` (and to `ALL`), but forgets to touch
+          `as_str`. What happens?
+        snippets: [c04-error-kind-as-str]
+        choices:
+          - text: "The crate no longer compiles: the `match` in `as_str` is not exhaustive"
+            correct: true
+            feedback: |
+              Right. The `match` has no `_` arm, so the compiler requires an arm for every
+              variant and reports the missing `ErrorKind::Quota`.
+          - text: "`ErrorKind::Quota.as_str()` returns an empty string"
+            feedback: |
+              Rust has no implicit fallback value for a `match`. The code would not compile, so
+              this call could never run.
+          - text: "The program panics when `as_str` is called on `Quota`"
+            feedback: |
+              The gap is found at compile time. A `match` that compiles covers every value, so
+              there is no "no arm matched" failure at run time.
+          - text: "`Quota` is treated like the last arm, `Resource`"
+            feedback: |
+              Arms are chosen by their patterns, never by position. `ErrorKind::Resource`
+              matches only `Resource`.
+      - type: exercise
+        id: enums-matching-01-q2
+        exercise_type: predict
+        prompt: |
+          Predict `ErrorKind::Timeout.as_str()` and `ErrorKind::Io.as_str()`. Then predict what
+          `ErrorKind::Io.to_string()` returns, given that the same file implements printing for
+          `ErrorKind` as `f.write_str(self.as_str())`.
+        snippets: [c04-error-kind-as-str]
+        hints:
+          - level: 1
+            body: |
+              Find the two arms for `Timeout` and `Io`.
+          - level: 2
+            body: |
+              `to_string()` produces the text a type prints as.
+        solution: |
+          `ErrorKind::Timeout.as_str()` is `"timeout"`; `ErrorKind::Io.as_str()` is `"io"`. Since
+          printing an `ErrorKind` writes exactly `self.as_str()`, `ErrorKind::Io.to_string()` is
+          the owned `String` `"io"`. The names are lowercase, as spec §16.1 spells them — they are
+          what a script matches on.
+      - type: exercise
+        id: enums-matching-01-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          The kinds could have been plain strings (`"permission"`, `"timeout"`, …) or numbers.
+          What does an enum give Ono-Sendai instead? Name at least two things visible in these two
+          snippets.
+        hints:
+          - level: 1
+            body: |
+              Compare what can go wrong with a string such as `"permision"` and with
+              `ErrorKind::Permision`.
+          - level: 2
+            body: |
+              Think about what the compiler knows about the full list of kinds.
+        solution: |
+          - **A closed set.** A value of type `ErrorKind` can only be one of the thirteen
+            variants. A misspelled kind is a compile error, not a silently different string.
+          - **Exhaustive handling.** Because the compiler knows the full list, a `match` without
+            `_` (like `as_str`) is checked to handle every kind, and adding a kind forces every
+            such `match` to be revisited. That fits the doc's "closed and additive" taxonomy.
+          - **One stable spelling.** The text form lives in one function, `as_str`, instead of
+            being repeated wherever a kind is mentioned.
+          - **Cheap values.** The enum is `Copy` and carries no data, so passing kinds around
+            costs nothing.
+
+  - id: enums-matching-02
+    title: "The central enum: Value"
+    stage: guided
+    summary: "Twenty-one variants that carry data, a `match` that ignores the data with `_`, and `matches!` as a yes/no pattern test."
+    prerequisites: [enums-matching-01]
+    concepts: [enums, pattern-matching, derives]
+    ono_topics: [value-model]
+    objectives:
+      - "Read tuple variants that carry a payload, such as `Int(i128)`"
+      - "Read `Value::Bool(_)` as \"the `Bool` variant, whatever it holds\""
+      - "Read `matches!(value, pattern)` as a boolean"
+      - Explain what structural equality means for two values of different variants
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          `Value` in `crates/ono-value/src/value.rs` is the type everything else in the course
+          builds on. Its doc comment calls it "a value flowing through a pipeline". When you type
+          `get process | where cpu > 20`, every field of every process record is a `Value`, and
+          so is the comparison's result. `ono-value`'s crate doc says this crate "is what makes
+          Ono an object shell rather than a text shell".
+      - type: code
+        snippet: c04-value-enum
+        caption: |
+          Part of the doc comment (lines 22–37) and the variants `Timestamp` through `Ip`
+          (lines 57–71) are omitted.
+        annotations:
+          - lines: 19-21
+            kind: ono
+            body: |
+              "Every compound case sits behind an `Arc`, so cloning a value is a refcount bump
+              whatever it holds." The reason follows in the same comment: spec §34 budgets a
+              pipeline stage in microseconds, "and a value model that copies its payload cannot
+              meet that". `Arc` is chapter 15 — for now, read `Arc<X>` as "a shared X".
+          - lines: 38
+            token: "Default"
+            kind: rust
+            body: |
+              Deriving `Default` for an enum requires marking one variant as the default, which
+              line 41 does.
+          - lines: 39
+            token: "pub enum Value {"
+            kind: type
+            body: |
+              Twenty-one variants in total. A `Value` is exactly one of them at a time.
+          - lines: 41-42
+            token: "#[default]"
+            kind: rust
+            body: |
+              `#[default]` makes `Null` the default, so `Value::default()` is `Value::Null`. The
+              doc comment on line 40 defines `Null` precisely: "a value that is known to be
+              unknown".
+          - lines: 44
+            token: "Bool(bool),"
+            kind: rust
+            body: |
+              A **tuple variant**: the variant `Bool` carries one `bool`. A value is built as
+              `Value::Bool(true)`. Unlike `ErrorKind`, each variant here can hold data of its own
+              type.
+          - lines: 46
+            token: "Int(i128),"
+            kind: type
+            body: |
+              Integers are `i128`: signed 128-bit. `Float` holds an `f64`, and there is a separate
+              exact `Decimal`.
+          - lines: 52
+            token: "String(Arc<str>),"
+            kind: type
+            body: |
+              Text is shared, immutable text (`Arc<str>`), so cloning a string value never copies
+              the characters. The variant is called `String` but holds an `Arc<str>` — the variant
+              name and Rust's `String` type are unrelated.
+          - lines: 74
+            token: "Port(u16),"
+            kind: type
+            body: |
+              Semantic types get their own variants: a port is not just an integer, it is a `u16`
+              with its own meaning. `Duration`, `ByteSize` and `Percent` (lines 60–64, chapter 2's
+              unit types) work the same way.
+          - lines: 76
+            token: "List(Arc<[Value]>),"
+            kind: type
+            body: |
+              A `Value` can contain other `Value`s: a list, a map, a record. The enum refers to
+              itself through `Arc`, which is a pointer to data stored elsewhere; a variant that
+              contained a `Value` directly would make the type infinitely large, and the compiler
+              would reject it.
+          - lines: 82
+            token: "Error(Arc<ErrorValue>),"
+            kind: ono
+            body: |
+              "A structured error carried as data." Errors are values too, so a failure can travel
+              down a pipeline like any other value. Chapter 6 follows that path.
+      - type: code
+        snippet: c04-value-methods
+        caption: |
+          The start of `impl Value`. Most arms of `type_name` (lines 97–107) are omitted; they
+          follow the same pattern.
+        annotations:
+          - lines: 88
+            token: "type_name(&self)"
+            kind: ownership
+            body: |
+              `&self`: asking for the type name only reads the value.
+          - lines: 89
+            token: "match self {"
+            kind: rust
+            body: |
+              `self` here is a *reference* to a `Value`, yet the patterns are written as plain
+              `Value::...` patterns. Rust looks through the reference when matching; you do not
+              write `&` in each pattern.
+          - lines: 91
+            token: "Value::Bool(_) => \"bool\","
+            kind: rust
+            body: |
+              `_` in a pattern means "anything, and I do not need it". `Value::Bool(_)` matches a
+              `Bool` variant whatever `bool` it holds. The name of the type does not depend on
+              the payload, so every data-carrying arm ignores it.
+          - lines: 117
+            token: "matches!(self, Value::Null)"
+            kind: rust
+            body: |
+              `matches!(expression, pattern)` is a macro that is `true` if the expression fits the
+              pattern and `false` otherwise. It is shorthand for a two-armed `match`:
+              `match self { Value::Null => true, _ => false }`.
+          - lines: 123
+            token: "matches!(self, Value::Error(_))"
+            kind: rust
+            body: |
+              The same test with a payload pattern: any `Error`, whatever error it carries.
+      - type: prose
+        kind: ono
+        title: What is, and is not, a value
+        body: |
+          Two parts of the doc comment (lines 22–29 of the file, partly omitted above) are
+          design decisions worth knowing:
+
+          - "Streams are deliberately not a variant." A stream of values belongs to the execution
+            layer (`ono-pipeline`), because "a clonable value whose second clone yields nothing"
+            would be a trap.
+          - "Equality is structural: `Value::Int(1)` and `Value::Float(1.0)` are different values
+            even though they compare equal numerically." The derived `PartialEq` compares variant
+            and payload. The shell language's `==` operator uses a separate function,
+            `compare_to`, that knows about numbers.
+      - type: exercise
+        id: enums-matching-02-q1
+        exercise_type: predict
+        prompt: |
+          Predict `Value::Int(42).type_name()`, `Value::Port(22).type_name()`,
+          `Value::default().type_name()` and `Value::Bool(false).is_null()`.
+        snippets: [c04-value-methods]
+        hints:
+          - level: 1
+            body: |
+              For `default()`, look at the attribute on the enum from the first snippet.
+          - level: 2
+            body: |
+              `is_null` is true only for one variant, whatever other variants hold.
+        solution: |
+          - `Value::Int(42).type_name()` → `"int"`: the arm `Value::Int(_)` matches and ignores
+            the 42.
+          - `Value::Port(22).type_name()` → `"port"` (one of the omitted arms, line 106, follows
+            the same pattern).
+          - `Value::default()` is `Value::Null` because of `#[default]`, so `type_name()` →
+            `"null"`.
+          - `Value::Bool(false).is_null()` → `false`: `matches!(self, Value::Null)` is true only
+            for `Null`. A `false` boolean is a known value, not the unknown.
+      - type: exercise
+        id: enums-matching-02-q2
+        exercise_type: multiple-choice
+        prompt: |
+          `Value` derives `PartialEq`. What is `Value::Int(1) == Value::Float(1.0)`?
+        snippets: [c04-value-enum]
+        choices:
+          - text: "`false`"
+            correct: true
+            feedback: |
+              Right. Derived equality is structural: two enum values are equal only if they are
+              the same variant with equal payloads. `Int` and `Float` are different variants.
+              The doc comment says this explicitly.
+          - text: "`true`, because 1 and 1.0 are the same number"
+            feedback: |
+              Numerically they are, and the language's own comparison (`compare_to`) treats them
+              that way. But `==` on the Rust type uses the derived `PartialEq`, which compares
+              variant and payload.
+          - text: "It does not compile, because the payloads have different types"
+            feedback: |
+              Both sides have type `Value`, so the comparison compiles. The payload types differ
+              only inside the variants.
+          - text: "It panics, because an integer cannot be compared with a float"
+            feedback: |
+              Derived equality never panics. It simply sees two different variants and answers
+              `false`.
+      - type: exercise
+        id: enums-matching-02-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 117, `matches!(self, Value::Null)`, and rewrite it in your head as an
+          ordinary `match`. Why does `is_null` not need `_` inside the pattern while `is_error`
+          on line 123 does?
+        snippets: [c04-value-methods]
+        hints:
+          - level: 1
+            body: |
+              Compare the declarations of `Null` and `Error` in the enum.
+          - level: 2
+            body: |
+              A pattern must have the same shape as the variant: a variant with a payload needs a
+              pattern for the payload.
+        solution: |
+          `matches!(self, Value::Null)` evaluates to `true` if `self` is the `Null` variant and to
+          `false` for every other variant. It is equivalent to
+
+          `match self { Value::Null => true, _ => false }`
+
+          and, being the last expression, it is `is_null`'s return value. `Null` is a unit
+          variant — it carries nothing — so its pattern is just the name. `Error` is a tuple
+          variant carrying an `Arc<ErrorValue>`, so its pattern must say something about the
+          payload; `_` says "any payload". Writing `Value::Error` without `(_)` would not match
+          the variant's shape.
+
+  - id: enums-matching-03
+    title: "Patterns that bind: Statement"
+    stage: guided
+    summary: "Variants that carry whole structs, a `match` that binds each payload, an or-pattern that binds the same name in three variants, `_ => None`, and `let … else` in a test."
+    prerequisites: [enums-matching-02]
+    concepts: [enums, pattern-matching, destructuring, testing]
+    ono_topics: [parsing, tests-as-docs]
+    objectives:
+      - "Read a pattern that binds a variable, such as `Statement::Let(node)`"
+      - "Read an or-pattern `A(x) | B(x)` that binds the same name in each alternative"
+      - "Explain `*span` after matching on a reference"
+      - "Read `let PATTERN = value else { … };`"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          The parser from chapter 3 produces a syntax tree. At its top is a list of statements, and
+          each statement is one `Statement` — an enum in `crates/ono-parser/src/ast.rs`. The
+          module doc of `ast.rs` explains an important property: "The tree is total: a construct
+          the parser could not read becomes an explicit error node rather than a missing branch,
+          which is what lets a half-typed line still be highlighted."
+      - type: code
+        snippet: c04-statement-enum
+        caption: |
+          Lines 96–109 (the variants `Fn`, `Alias`, `If`, `For`, `While`, `Match` and `Try`, each
+          carrying its own node struct) are omitted.
+        annotations:
+          - lines: 93
+            token: "Pipeline(Pipeline),"
+            kind: type
+            body: |
+              The variant `Pipeline` carries a value of the struct type `Pipeline`. The same name
+              is used for both; that is allowed, because variants live inside the enum
+              (`Statement::Pipeline`) and the struct is a separate type (`Pipeline`).
+          - lines: 95
+            token: "Let(LetStmt),"
+            kind: type
+            body: |
+              `let name = pipeline` is represented by a `LetStmt` struct with fields such as
+              `name`, `ty` (the declared type, if any) and `value`, and a `span`. Most variants
+              carry a struct like this.
+          - lines: 113
+            token: "Break(Span),"
+            kind: type
+            body: |
+              `break` and `continue` need nothing but their position, so they carry only a
+              `Span`.
+          - lines: 118-119
+            token: "///"
+            kind: ono
+            body: |
+              "A statement the parser could not read; a diagnostic describes why." This variant
+              is the "explicit error node" of the module doc: bad input still produces a
+              statement, with a span pointing at the bad text.
+      - type: code
+        snippet: c04-statement-span
+        annotations:
+          - lines: 125
+            token: "pub fn span(&self) -> Span {"
+            kind: ownership
+            body: |
+              Borrow the statement, return its `Span` by value — spans are `Copy`.
+          - lines: 127
+            token: "Statement::Pipeline(node) => node.span,"
+            kind: rust
+            body: |
+              A pattern with a **name** in the payload position **binds** a variable: if the
+              statement is a `Pipeline`, `node` refers to the `Pipeline` struct inside it, and
+              the arm reads its `span` field. Because the `match` is on a reference (`&self`),
+              `node` is a reference too (`&Pipeline`), not a copy of the whole pipeline.
+          - lines: 136
+            token: "Statement::Break(span) | Statement::Continue(span) | Statement::Error(span)"
+            kind: rust
+            body: |
+              An **or-pattern**: `|` joins three alternatives that share one arm. Each alternative
+              binds the same name, `span`, with the same type — a rule the compiler enforces — so
+              the arm can use `span` whichever variant matched.
+          - lines: 136
+            token: "*span"
+            kind: ownership
+            body: |
+              As on line 127, the binding is a reference: `span` has type `&Span`. `*` follows the
+              reference to the `Span` itself, and because `Span` is `Copy`, the value is copied out
+              and returned. (On line 127, `node.span` needs no `*`: the dot operator follows the
+              reference automatically.)
+          - lines: 144
+            token: "Option<&Pipeline>"
+            kind: type
+            body: |
+              Black box for now: `Option<&Pipeline>` means "maybe a reference to a `Pipeline`".
+              `Some(pipeline)` is the "yes, here it is" case, `None` the "no" case. Chapter 5 is
+              entirely about `Option`.
+          - lines: 147
+            token: "_ => None,"
+            kind: flow
+            body: |
+              The **wildcard** arm covers all thirteen other variants at once. This `match` is
+              still exhaustive — `_` is what makes it so.
+      - type: prose
+        kind: rust
+        title: Binding by reference
+        body: |
+          When a `match` looks at a value it only borrows (`match self` where `self: &Statement`),
+          the names bound in its patterns are references into that value. Nothing is copied or
+          taken out: `node` in line 127 points at the pipeline inside the statement. This is why
+          `span()` and `as_pipeline()` can use `&self`. You will see the other case — matching a
+          value you own, which lets the pattern take its parts — in the test below and, in depth,
+          in chapter 7.
+      - type: prose
+        kind: context
+        title: The same enum, seen from a test
+        body: |
+          `crates/ono-parser/tests/parse_statements.rs` checks the statement grammar from the
+          outside. Its two helpers parse a source and return its statements; the tests then take
+          the result apart with a pattern.
+      - type: code
+        snippet: c04-let-else-test
+        annotations:
+          - lines: 22
+            token: "fn only(source: &str) -> Statement {"
+            kind: rust
+            body: |
+              A helper, not a test (no `#[test]`): parse `source`, insist that it contains exactly
+              one statement, and return that statement — an owned `Statement`.
+          - lines: 23
+            token: "let mut statements = statements(source);"
+            kind: rust
+            body: |
+              `statements(source)` calls the helper function defined just above (line 12, not
+              shown), which returns a `Vec<Statement>`. The local variable gets the same name; from
+              here on, `statements` in this function means the variable. It is `mut` because line
+              25 takes an element out of it.
+          - lines: 25
+            token: "statements.remove(0)"
+            kind: ownership
+            body: |
+              `Vec::remove(0)` takes the first element out of the list and returns it. The caller
+              receives the statement itself, not a reference.
+          - lines: 30
+            token: "let Statement::Let(binding) = only("
+            kind: rust
+            body: |
+              **`let … else`**: a `let` whose left side is a pattern that might not match. If the
+              value is a `Statement::Let`, its `LetStmt` payload is bound to `binding` and the
+              function continues. Otherwise the `else` block runs. Because `only` returned an
+              owned `Statement`, `binding` is the `LetStmt` itself, not a reference.
+          - lines: 31
+            token: "panic!"
+            kind: flow
+            body: |
+              The `else` block of a `let … else` must not continue normally — it has to leave
+              (with `return`, `break`, or, as here, a panic). In a test, `panic!` fails the test
+              with this message. The file's `#![allow(clippy::panic, …)]` header permits it,
+              "because a failed precondition in a test should abort the test loudly".
+          - lines: 33-35
+            kind: rust
+            body: |
+              With the pattern matched, the test reads the struct's fields: the bound name is
+              `"hot"`, no type was declared (`ty.is_none()`, an `Option` question), and the bound
+              pipeline has two stages, `get process` and `where cpu > 50`.
+      - type: exercise
+        id: enums-matching-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In the arm on line 136 of `ast.rs`, what is the type of the binding `span`?
+        snippets: [c04-statement-span]
+        choices:
+          - text: "`&Span`"
+            correct: true
+            feedback: |
+              Right. The `match` is on `self`, a `&Statement`. Matching through a reference binds
+              the payload by reference, so `span` is a `&Span` — which is why the arm writes
+              `*span` to get the `Span` value out.
+          - text: "`Span`"
+            feedback: |
+              The *result* of the arm is a `Span`, but only after `*span` dereferences the
+              binding. The binding itself is a reference, because the match looks at a borrowed
+              statement.
+          - text: "`&Statement`"
+            feedback: |
+              That is the type of `self`. The pattern `Statement::Break(span)` goes one level
+              deeper and binds the variant's payload.
+          - text: "It depends on which of the three variants matched"
+            feedback: |
+              An or-pattern requires every alternative to bind the same names with the same
+              types. All three variants carry a `Span`, so `span` is `&Span` in every case.
+      - type: exercise
+        id: enums-matching-03-q2
+        exercise_type: predict
+        prompt: |
+          Suppose the first test were changed to `only("get process | where cpu > 50")` — the same
+          line without `let hot =`. Predict exactly what happens when the test runs.
+        snippets: [c04-let-else-test]
+        hints:
+          - level: 1
+            body: |
+              First decide which `Statement` variant `only` returns for a line that is just a
+              pipeline.
+          - level: 2
+            body: |
+              Then ask whether the pattern on line 30 matches that variant, and what runs if it
+              does not.
+        solution: |
+          The source is a plain pipeline, so the parser produces one statement,
+          `Statement::Pipeline(...)`. `only` checks there are no diagnostics and exactly one
+          statement, and returns it. On line 30 the pattern `Statement::Let(binding)` does not
+          match a `Pipeline`, so `binding` is never bound and the `else` block runs:
+          `panic!("expected a let statement")`. The test fails with that message; lines 33–35
+          never run. That is the purpose of `let … else` here: continue only with the shape the
+          test expects, and fail loudly otherwise.
+      - type: exercise
+        id: enums-matching-03-q3
+        exercise_type: trace-control-flow
+        prompt: |
+          A statement `s` holds `Statement::Break(Span::new(10, 15))`. Trace `s.span()` and
+          `s.as_pipeline()`: which arm runs in each `match`, and what is returned?
+        snippets: [c04-statement-span]
+        hints:
+          - level: 1
+            body: |
+              Arms are tried from top to bottom; the first whose pattern fits runs.
+          - level: 2
+            body: |
+              In `as_pipeline`, only one arm names a specific variant.
+        solution: |
+          `s.span()`: the arms on lines 127–135 name other variants and do not fit. Line 136's
+          or-pattern has `Statement::Break(span)` as its first alternative, which fits, binding
+          `span` to a reference to the stored `Span`. The arm returns `*span`, a copy: the span
+          `[10, 15)`.
+
+          `s.as_pipeline()`: line 146's pattern `Statement::Pipeline(pipeline)` does not fit a
+          `Break`. The wildcard on line 147 fits anything, so it runs and returns `None` — "this
+          statement is not a pipeline".
+
+  - id: enums-matching-04
+    title: "Named fields, `..`, and a match that decides the exit status"
+    stage: guided
+    summary: "Struct-like variants in `Redirect`, patterns that take them apart or skip fields with `..`, and the `match` in `ono`'s `main` that turns the way the shell was started into an exit status."
+    prerequisites: [enums-matching-03, structs-methods-03]
+    concepts: [enums, destructuring, pattern-matching, expressions]
+    ono_topics: [process-execution, evaluation]
+    objectives:
+      - "Read struct-like variants such as `Read { fd: Fd, path: PathBuf }`"
+      - "Read `Self::Read { fd, .. }` and explain what `..` skips"
+      - "Read a `match` used as an expression whose arms are blocks"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          Back in `ono-process`, where [chapter 3](lesson:structs-methods-03) introduced `Fd`. A
+          redirection such as `> out.log` or `2>&1` says where a descriptor of an external program
+          should point. The doc comment of `Redirect` in `crates/ono-process/src/command.rs` adds
+          the rule users know from other shells: "Redirections are applied left to right, and each
+          one sees the state the earlier ones left behind — so `> file 2>&1` sends both streams to
+          the file, while `2>&1 > file` does not."
+      - type: code
+        snippet: c04-redirect-enum
+        caption: |
+          The `Write` and `Append` variants (lines 72–78) are omitted; they have the same shape as
+          `Read`.
+        annotations:
+          - lines: 59
+            token: "Read {"
+            kind: rust
+            body: |
+              A **struct-like variant**: the variant carries named fields, written like a
+              struct's. A value is built as `Redirect::Read { fd: Fd::STDIN, path: ... }`.
+          - lines: 61
+            token: "fd: Fd,"
+            kind: type
+            body: |
+              The `Fd` newtype from chapter 3: which descriptor is being redirected.
+          - lines: 63
+            token: "path: PathBuf,"
+            kind: type
+            body: |
+              `PathBuf` is an owned filesystem path — to paths what `String` is to text.
+          - lines: 58
+            kind: ono
+            body: |
+              Each variant's doc comment gives its shell syntax: `N< path`, `N> path`,
+              `N>> path`, `N>&M`. The enum is exactly the list of redirection forms the shell
+              supports.
+          - lines: 80
+            token: "Duplicate {"
+            kind: rust
+            body: |
+              `2>&1` involves no file at all: two descriptors, `fd` becomes a copy of `from`.
+              Different variants carry different fields; an enum lets each case have exactly the
+              data it needs.
+      - type: code
+        snippet: c04-redirect-target
+        annotations:
+          - lines: 142
+            token: "pub const fn target(&self) -> Fd {"
+            kind: ownership
+            body: |
+              Borrow the redirection, return the affected descriptor by value (`Fd` is `Copy`).
+          - lines: 144
+            token: "Self::Read { fd, .. }"
+            kind: rust
+            body: |
+              A pattern for a struct-like variant names the fields it wants: `fd` binds the field
+              `fd` (shorthand for `fd: fd`). `..` means "and the remaining fields, which I do not
+              need" — here `path`, or `from` for `Duplicate`.
+          - lines: 145-147
+            kind: rust
+            body: |
+              The or-pattern continues over four lines, one alternative per variant. Every variant
+              has a field named `fd` of type `Fd`, so all four alternatives bind `fd` with the same
+              type. `*fd` copies the descriptor out of the reference.
+      - type: prose
+        kind: rust
+        title: Taking every field
+        body: |
+          The `Display` code for a whole `Command` (which renders it back as a shell line) needs
+          *all* fields of each redirection, so there each arm names every field and uses them:
+
+          `Redirect::Duplicate { fd, from } => write!(f, " {fd}>&{from}")?,`
+
+          You will read that `match` in the first exercise. As in chapter 2, read `write!(f, …)?`
+          as "append this text to the output".
+      - type: prose
+        kind: context
+        title: The first match the shell runs
+        body: |
+          One last enum, from the very top of the program. `crates/ono-cli/src/invocation.rs`
+          describes "how `ono` was started (ADR-0010)"; its module doc says "argument handling
+          happens before any I/O, so that `--help` and `--version` cost nothing".
+      - type: code
+        snippet: c04-invocation-enum
+        caption: |
+          Lines 19–26 (the remote-agent variants `Agent` and `PrintPeerKey`) are omitted.
+        annotations:
+          - lines: 12
+            token: "Interactive(Options),"
+            kind: type
+            body: |
+              Tuple variants with different numbers of fields: `Interactive` carries the startup
+              options, `Source` a source string plus options, `Script` a path, the script's
+              arguments (`Vec<String>`) and options. `Options` is a struct defined in the same
+              file.
+          - lines: 28
+            token: "Version,"
+            kind: type
+            body: |
+              Unit variants for the flags that need no data.
+          - lines: 32
+            token: "Usage(String),"
+            kind: ono
+            body: |
+              A command line that could not be understood is not a crash; it is one more variant,
+              carrying the message to show.
+      - type: code
+        snippet: c04-main-match
+        caption: |
+          The beginning of `main` in `crates/ono-cli/src/main.rs`. The `match` continues after
+          line 33 with arms for scripts, sources, standard input and the interactive prompt (and,
+          depending on build features, the remote agent); after it, line 163 returns
+          `ExitCode::from(status)`.
+        annotations:
+          - lines: 15
+            token: "fn main() -> ExitCode {"
+            kind: rust
+            body: |
+              `main` is where every Rust program starts. Returning a `std::process::ExitCode`
+              sets the status the process reports to whatever started it.
+          - lines: 16
+            token: "Invocation::from_args(std::env::args().skip(1))"
+            kind: rust
+            body: |
+              `std::env::args()` yields the command-line arguments; `.skip(1)` drops the first
+              one, the program's own name. Treat `from_args` as a named step: it walks the
+              arguments and returns one `Invocation`.
+          - lines: 18
+            token: "let status = match invocation {"
+            kind: flow
+            body: |
+              The `match` is an **expression**: its value — whichever arm runs — is bound to
+              `status`. Every arm must produce the same type, here `ExitStatus`.
+          - lines: 19
+            token: "Invocation::Version => {"
+            kind: flow
+            body: |
+              An arm can be a block. The block runs its statements, and its last expression —
+              `ExitStatus::SUCCESS` on line 23, with no semicolon — is the arm's value.
+          - lines: 22
+            token: "println!"
+            kind: rust
+            body: |
+              `println!` prints a line to standard output; `{}` is replaced by the next argument.
+          - lines: 29
+            token: "Invocation::Usage(message) => {"
+            kind: ownership
+            body: |
+              The pattern binds the variant's `String` to `message`. Here the `match` is on
+              `invocation` itself, not on a reference, so `message` is the `String` itself, taken
+              out of `invocation`, which is not used again.
+          - lines: 30
+            token: "eprintln!"
+            kind: rust
+            body: |
+              `eprintln!` prints to standard **error**. `{message}` inserts the bound variable.
+              `ono_core::SHORT_NAME` is the constant `"ono"` from chapter 1.
+          - lines: 32
+            token: "ExitStatus::USAGE"
+            kind: ono
+            body: |
+              Status 2, "the command line could not be understood" — the Bourne-family value from
+              chapter 2, so scripts calling `ono` can tell a usage error from a failure.
+      - type: exercise
+        id: enums-matching-04-q1
+        exercise_type: predict
+        prompt: |
+          This `match` renders each redirection of a command back as shell text. The constructor
+          `Redirect::append_to(Fd::STDERR, "log")` builds `Redirect::Append { fd: Fd::STDERR, path:
+          "log" }`, and printing an `Fd` prints its number. Predict the text appended for that
+          redirection, and for `Redirect::duplicate(Fd::STDERR, Fd::STDOUT)`, which builds
+          `Redirect::Duplicate { fd: Fd::STDERR, from: Fd::STDOUT }`.
+        snippets: [c04-command-display-redirects]
+        hints:
+          - level: 1
+            body: |
+              Find the arm whose pattern names each variant, and look at the text template in
+              `write!`.
+          - level: 2
+            body: |
+              `{fd}` inserts the bound `fd`, `{from}` the bound `from`, and `{}` the next argument
+              — `path.display()`, the path as text.
+        solution: |
+          For `Append { fd: STDERR, path: "log" }`, line 345 matches and binds `fd` and `path`;
+          the template `" {fd}>>{}"` produces **` 2>>log`** (with a leading space, separating it
+          from what came before). For `Duplicate { fd: STDERR, from: STDOUT }`, line 346 binds
+          both descriptors and produces **` 2>&1`**. The test in the same file confirms the style:
+          a command `cmd` with `Redirect::write("out")` then the duplicate renders as
+          `cmd 1>out 2>&1` — the default descriptor 1 is always written out, and the order is the
+          order in which the redirections apply.
+      - type: exercise
+        id: enums-matching-04-q2
+        exercise_type: multiple-choice
+        prompt: |
+          The user runs `ono --bogus`. `from_args` treats an unknown flag by returning
+          `Invocation::Usage("unrecognised arguments: --bogus".to_owned())`. Which exit status does
+          `ono` report?
+        snippets: [c04-main-match]
+        choices:
+          - text: "2"
+            correct: true
+            feedback: |
+              Right. The `Usage(message)` arm (lines 29–33) prints the message and a hint to
+              standard error and produces `ExitStatus::USAGE`, which is 2. That value becomes
+              `status`, and `main` returns it as the process's exit code.
+          - text: "0"
+            feedback: |
+              0 is `ExitStatus::SUCCESS`, produced by the `Version` and `Help` arms. An unknown
+              flag lands in the `Usage` arm.
+          - text: "1"
+            feedback: |
+              1 is `FAILURE`, for a command that ran and failed. The Bourne-family convention
+              uses 2 for "the command line could not be understood", and so does the `Usage` arm.
+          - text: "127"
+            feedback: |
+              127 is `NOT_FOUND`, for a command that could not be resolved. Here `ono` itself was
+              found; its arguments were wrong.
+      - type: exercise
+        id: enums-matching-04-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 144 of `command.rs`, `Self::Read { fd, .. }`, and the `*fd` on line 147.
+          What would go wrong if `..` were removed?
+        snippets: [c04-redirect-target]
+        hints:
+          - level: 1
+            body: |
+              Which fields does the `Read` variant have? Which of them does this pattern mention?
+          - level: 2
+            body: |
+              A struct pattern must account for every field — by naming it, or with `..`.
+        solution: |
+          `Self::Read { fd, .. }` matches a `Redirect::Read` (`Self` is `Redirect` inside its
+          `impl`). `fd` binds the variant's field `fd`; since `target` takes `&self`, the binding
+          is a reference, `&Fd`. `..` tells the compiler to ignore the remaining field, `path`.
+          On line 147, `*fd` dereferences the binding and, because `Fd` is `Copy`, returns a copy
+          of the descriptor.
+
+          Without `..`, the pattern `Self::Read { fd }` would be a compile error: a struct pattern
+          must mention every field or say `..`. The fix would be to write `path: _` — which is
+          exactly what `..` abbreviates, for all remaining fields at once.

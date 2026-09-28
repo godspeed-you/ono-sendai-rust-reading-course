@@ -1,0 +1,31 @@
+id: c08-closest
+source:
+  file: crates/ono-command/src/suggest.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 5
+  end_line: 25
+  anchor: pub fn closest<'a>
+  content_hash: sha256:668dfe9fd513296605bdf171fc30b6672ceae7f3ec83b4e2067cc6a82a72b13d
+  code: |
+    /// The candidate closest to `typed`, when one is close enough to be worth offering.
+    ///
+    /// "Close enough" is a third of the typed length, rounded up and never less than one, which keeps
+    /// `prcoess` → `process` while refusing to pair two unrelated short words.
+    ///
+    /// ```
+    /// assert_eq!(ono_command::closest("stat", ["state", "started"]), Some("state"));
+    /// assert_eq!(ono_command::closest("telepathy", ["state", "pid"]), None);
+    /// ```
+    pub fn closest<'a>(typed: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+        if typed.is_empty() {
+            return None;
+        }
+        let budget = typed.chars().count().div_ceil(3).max(1);
+        candidates
+            .into_iter()
+            .map(|candidate| (distance(typed, candidate), candidate))
+            .filter(|(distance, _)| *distance <= budget)
+            .min_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(right.1)))
+            .map(|(_, candidate)| candidate)
+    }

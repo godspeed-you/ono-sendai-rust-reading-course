@@ -1,0 +1,850 @@
+id: reading-rust
+number: 1
+title: How to read a Rust file
+summary: |
+  Before any syntax: how this course works, what Ono-Sendai is, and how its source is laid out.
+  You then open four real files — the root of the `ono-core` crate, the root of the parser crate,
+  the header of a module file and a test file — and learn the order in which to read a Rust
+  file: documentation first, then attributes, then the list of modules, then what the crate
+  exposes, and only then the code. You will not understand every line yet, and you do not need
+  to: every construct you see is either explained here or explicitly marked as a black box that a
+  later chapter opens.
+lessons:
+  - id: reading-rust-01
+    title: How this course works, and a crate's front door
+    stage: guided
+    summary: Orientation in the course and in Ono-Sendai, then a line-by-line reading of the smallest crate root in the workspace.
+    prerequisites: []
+    concepts: [reading-files, modules, use-imports, doc-comments, attributes]
+    ono_topics: [crate-map, core-vocabulary]
+    objectives:
+      - Know how a lesson is built and what annotations, hints, solutions and stages are for
+      - Describe Ono-Sendai in one sentence and name its bottom layers
+      - "Read a crate root in order: `//!` documentation, inner attributes, `mod` declarations, `pub use` re-exports, items"
+      - "Tell a private `mod` from a public name made available with `pub use`"
+    sections:
+      - type: prose
+        kind: context
+        title: What this course is for
+        body: |
+          This course teaches you to **read** Rust, not to write it. You already know at least one
+          programming language; you do not need to know any Rust. The textbook is the real source
+          code of one program, **Ono-Sendai**, pinned to version v0.6.2. Every code block you see
+          is copied, byte for byte, from that version, with its real file name and line numbers.
+
+          Nothing in the course asks you to install Rust or run a compiler. You read, you predict,
+          you explain to yourself, and you compare your reasoning with a worked answer.
+      - type: prose
+        kind: note
+        title: How a lesson works
+        body: |
+          Each lesson follows the same rhythm:
+
+          - **Where we are** sections say which part of Ono-Sendai the code belongs to and what
+            that part is for.
+          - **Code** blocks show real source. Lines that carry an **annotation** are marked; open
+            an annotation to read what a line or a single token means. Annotations are labelled by
+            what they explain: *Rust* (syntax and semantics), *Types*, *Ownership*, *Control flow*,
+            *Ono-Sendai* (why the project does this) and *External crate* (a library Ono-Sendai
+            uses).
+          - **What does this Rust mean?** and **Why does Ono-Sendai do this?** are kept apart on
+            purpose. The first is about the language, the second about the design of the program.
+          - **Black box for now** marks a construct you may see but do not need to understand
+            yet. It tells you how to read it for the moment and which chapter opens it.
+          - **Exercises** come last. Some are multiple choice, with feedback for every choice.
+            The others ask you to predict or explain something in your own words; the text box is
+            a private scratchpad — nothing is graded or sent anywhere. Try first, then open
+            **Hint 1** (where to look), then **Hint 2** (a structural clue), then the full
+            **solution**.
+
+          The course has five **stages**. Chapters 1–6 are *guided reading*: short code, many
+          annotations, full solutions. Support then shrinks step by step — larger snippets, fewer
+          annotations, fewer hints — until the final chapter gives you code the course never
+          explained, with no solution at all. That is the goal: by then you read Ono-Sendai on
+          your own.
+      - type: prose
+        kind: context
+        title: What Ono-Sendai is
+        body: |
+          Ono-Sendai is, in the words of its README, "a typed, structured Unix shell". The command
+          is `ono`. Where a traditional shell pipes **text** from one program to the next, Ono-Sendai
+          pipes **typed values**:
+
+          ```text
+          local://~ > get process | sort memory desc | take 3 | select pid name memory
+          ```
+
+          The README explains that what flows through that pipe is a stream of process records, and
+          that `memory` is "a quantity with a unit, not the string `3.21 GiB`". The table you see
+          at the end is only a *rendering*. Ordinary Unix programs still run as usual
+          (`git log --oneline | grep fix`).
+
+          That one idea explains most of the code you will read: there is a **value model** (what a
+          value is), a **parser** (the shell language), a **pipeline engine** (streams of values),
+          **providers** (where values about processes, files or services come from), a
+          **renderer** (turning values into tables) and a **process layer** (running ordinary Unix
+          programs).
+      - type: diagram
+        kind: architecture
+        title: The crate map (bottom layers)
+        art: |
+          ono-cli ............. the `ono` binary: evaluator, REPL, wiring
+             │  depends on almost every crate below
+             ▼
+          ono-command ......... command registry        ono-provider-linux, -net, … providers
+             │                                              │
+             ▼                                              ▼
+          ono-render .......... tables and text         ono-provider-api .. the provider contract
+             │                                              │
+             ▼                                              ▼
+          ono-pipeline ........ streams of values ◄─────────┘
+             │
+             ▼
+          ono-value ........... Value, records,      ono-parser ... lexer,     ono-process ... Unix
+                                schemas, units                      AST, parser                programs
+             │                                          │                         │
+             ▼                                          ▼                         ▼
+          ono-core ............ spans, error codes, exit statuses — no dependencies at all
+        description: |
+          Ono-Sendai is a Cargo *workspace*: one repository holding 48 *crates* (Rust's unit of
+          compilation, roughly "a library or a program") under `crates/`. ADR-0005, the
+          architecture decision record that fixed the layout, arranges them in layers, and every
+          arrow in the diagram points from a crate to a crate it depends on.
+
+          - At the bottom, `ono-core` depends on nothing.
+          - `ono-value` (the value model), `ono-parser` (the shell language) and `ono-process`
+            (running Unix programs) each depend only on `ono-core`.
+          - `ono-pipeline` (streams of values) sits on `ono-value`.
+          - `ono-render` (presentation) depends on `ono-value` and `ono-core`.
+          - `ono-provider-api` (the contract every provider implements) depends on `ono-value` and
+            `ono-pipeline`, and the concrete providers such as `ono-provider-linux` depend on it.
+          - `ono-command` (the command registry) uses the parser, the pipeline, the renderer and
+            the provider contract.
+          - At the top, `ono-cli` builds the `ono` binary and depends on almost everything.
+
+          Later versions added further families of crates — `ono-spatial-*`, `ono-temporal-*`,
+          `ono-change-*`, `ono-kuang-*` — built on the same bottom layers. This course stays mostly
+          in the layers shown here.
+      - type: prose
+        kind: rust
+        title: How to read a crate root
+        body: |
+          Every library crate has a **crate root**, the file `src/lib.rs`; a program has
+          `src/main.rs`. The crate root is the front door, and it is almost always the right first
+          file to open. Read it in this order:
+
+          1. **Documentation** at the top: lines starting with `//!` describe the whole crate.
+          2. **Inner attributes** such as `#![forbid(unsafe_code)]`: instructions to the compiler
+             that apply to the whole crate.
+          3. **`mod` declarations**: the list of the crate's *modules*, each normally a file of its
+             own. This is the table of contents.
+          4. **`pub use` lines**: which names the crate offers to the outside world, and in which
+             module each one really lives.
+          5. **Items** defined in the root itself (constants, functions) and, often at the very
+             end, tests.
+
+          Here is the root of `ono-core`, the crate at the bottom of the map.
+      - type: code
+        snippet: c01-core-crate-root
+        caption: |
+          The whole public face of `ono-core`: 30 lines, most of them documentation.
+        annotations:
+          - lines: 1
+            token: "//!"
+            kind: rust
+            body: |
+              `//!` starts an **inner doc comment**: documentation for the thing that *contains*
+              it — here the whole crate. Rust's documentation tool turns these lines into the
+              crate's front page. Ordinary comments start with `//` and are ignored by that tool.
+          - lines: 3-5
+            kind: ono
+            body: |
+              The crate states its own reason to exist: it is "deliberately dependency-free
+              (ADR-0005)" so that the parser, the value model and the process layer can all be
+              built on it at the same time. Code comments in Ono-Sendai cite **ADRs**
+              (architecture decision records, in `docs/adr/` of the repository) and **spec**
+              sections (in `docs/specs/`). Treat those citations as links to the *why*.
+          - lines: 7
+            token: "[`Span`]"
+            kind: rust
+            body: |
+              Square brackets around a name in a doc comment make an **intra-doc link**: the
+              documentation tool turns it into a link to that item. The list in lines 7–10 is a
+              map of what the crate offers.
+          - lines: 12
+            token: "#![forbid(unsafe_code)]"
+            kind: rust
+            body: |
+              An **attribute** is an instruction to the compiler written as `#[...]`. The `!` in
+              `#![...]` makes it an *inner* attribute that applies to the enclosing item — here,
+              the whole crate. `forbid(unsafe_code)` turns any use of `unsafe` (code that opts
+              out of some compiler checks) into a hard error that nothing further down can switch
+              back on. The whole workspace already *denies* `unsafe` in its `Cargo.toml`; `forbid`
+              is the stronger, non-overridable form that this crate adds on top.
+          - lines: 14-17
+            token: "mod diagnostic;"
+            kind: rust
+            body: |
+              `mod name;` declares a **module** and tells the compiler to read its contents from
+              the file `src/name.rs` (or `src/name/mod.rs`). Without the `mod` line the file would
+              not be compiled at all. These four modules have no `pub` in front, so they are
+              **private**: another crate cannot write `ono_core::exit::...`.
+          - lines: 19
+            token: "pub use"
+            kind: rust
+            body: |
+              `use` brings a name into scope. `pub use` also **re-exports** it: the name becomes
+              part of this crate's public interface. `error::{ErrorCode, ErrorKind}` means "the
+              items `ErrorCode` and `ErrorKind` from the module `error`". Another crate therefore
+              writes `ono_core::ErrorCode`, even though the type is defined in the private file
+              `src/error.rs`.
+          - lines: 20-21
+            kind: crate
+            body: |
+              To find where `ono_core::ExitStatus` is really defined, follow the re-export: the
+              module `exit`, so the file `crates/ono-core/src/exit.rs`. Crate names use hyphens
+              in `Cargo.toml` (`ono-core`) and underscores in code (`ono_core`).
+          - lines: 23-24
+            kind: type
+            body: |
+              `///` is an **outer doc comment**: it documents the item that *follows* it.
+              `pub const VERSION: &str = ...;` declares a public **constant** named `VERSION` of
+              type `&str` — read `&str` for now as "a piece of text". Constants are written in
+              `SCREAMING_SNAKE_CASE`.
+          - lines: 24
+            token: env!("CARGO_PKG_VERSION")
+            kind: rust
+            body: |
+              A name followed by `!` is a **macro** call. `env!` reads a variable at *compile
+              time*; Cargo sets `CARGO_PKG_VERSION` to the version in the manifest (`0.6.2` here).
+              The text is baked into the binary — nothing is looked up when `ono` runs.
+          - lines: 27-30
+            kind: ono
+            body: |
+              The product name and the binary name live here too, because every crate may need
+              them and `ono-core` is the one crate every other crate can depend on.
+      - type: prose
+        kind: ono
+        title: Why does the shell have a crate this small?
+        body: |
+          Look at what `ono-core` holds: spans (positions in a line of source), error codes, error
+          kinds and exit statuses. The doc comment says it holds "only what all of them need and
+          nothing that any of them owns". ADR-0005 explains the consequence: `ono-parser`,
+          `ono-value` and `ono-process` depend only on `ono-core`, not on each other, so none of
+          them can accidentally start depending on the internals of another. A parse error and a
+          failed process can still use the *same* error codes, because both come from here.
+      - type: prose
+        kind: black-box
+        title: The diagnostic! macro
+        body: |
+          Line 10 mentions ``[`diagnostic!`]``, a macro defined in the private module
+          `diagnostic`. You do not need it in this course's early chapters; read it as "a way to
+          print a line of commentary to standard error". Chapter 14 reads macros properly.
+      - type: exercise
+        id: reading-rust-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          The crate `ono-cli` wants to use the exit-status type. Which path works from *outside*
+          `ono-core`?
+        snippets: [c01-core-crate-root]
+        choices:
+          - text: "`ono_core::ExitStatus`"
+            correct: true
+            feedback: |
+              Correct. Line 20, `pub use exit::ExitStatus;`, re-exports the type at the crate
+              root, so the public path is `ono_core::ExitStatus`.
+          - text: "`ono_core::exit::ExitStatus`"
+            feedback: |
+              This is where the type is *defined*, but line 16 declares `mod exit;` without `pub`.
+              The module is private, so outside code cannot name anything through it. The type
+              is only reachable through the re-export on line 20.
+          - text: "`crate::exit::ExitStatus`"
+            feedback: |
+              `crate::` means "the root of the crate *this code is in*". Inside `ono-core` this
+              path works; written in `ono-cli`, `crate::` would mean the root of `ono-cli`, which
+              has no module `exit`.
+          - text: "`ono_core::span::ExitStatus`"
+            feedback: |
+              The module `span` holds `Span`, not `ExitStatus` (lines 17 and 21), and it is
+              private anyway.
+      - type: exercise
+        id: reading-rust-01-q2
+        exercise_type: predict
+        prompt: |
+          Suppose a developer adds a new file `crates/ono-core/src/budget.rs` containing a
+          `pub struct Budget`, and changes nothing else. Predict: can `ono-cli` use `Budget`? What
+          is the minimum change to `lib.rs` that makes `ono_core::Budget` work?
+        hints:
+          - level: 1
+            body: |
+              Look at how the existing files `span.rs`, `exit.rs`, `error.rs` and
+              `diagnostic.rs` become part of the crate.
+          - level: 2
+            body: |
+              Two separate steps are visible in lines 14–21: one line makes a file part of the
+              crate, another makes a name public at the crate root.
+        solution: |
+          No. A file under `src/` is not compiled just because it exists; the crate root must
+          declare it with `mod budget;` (compare lines 14–17). Even then the module is private, so
+          `Budget` would still be invisible outside. The minimum change is two lines in `lib.rs`:
+
+          - `mod budget;` — make the file part of the crate;
+          - `pub use budget::Budget;` — re-export the type, as lines 19–21 do for the others.
+
+          (Writing `pub mod budget;` instead would also work, but then the public path would be
+          `ono_core::budget::Budget`. You will see that style in the next lesson.)
+      - type: exercise
+        id: reading-rust-01-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 24 in your own words: what is `VERSION`, what is its type, where does its
+          value come from, and when is that value decided?
+        snippets: [c01-core-crate-root]
+        hints:
+          - level: 1
+            body: |
+              Split the line at `=`: the left side declares a name and a type, the right side
+              produces the value.
+          - level: 2
+            body: |
+              A name followed by `!` is a macro, and the doc comment on line 23 says when the
+              value is taken.
+        solution: |
+          `pub const VERSION: &str = env!("CARGO_PKG_VERSION");` declares a public constant named
+          `VERSION` whose type is `&str`, a piece of text. Its value is produced by the macro
+          `env!`, which reads the environment variable `CARGO_PKG_VERSION` **at compile time**.
+          Cargo sets that variable to the package version from the manifest — `0.6.2` for the
+          pinned revision — so the version string is fixed inside the compiled binary. Because it
+          is `pub` and sits at the crate root, every crate can read it as `ono_core::VERSION`.
+
+  - id: reading-rust-02
+    title: "Public modules and re-exports: the parser's front door"
+    stage: guided
+    summary: The root of ono-parser mixes a public module with private modules whose contents are re-exported selectively.
+    prerequisites: [reading-rust-01]
+    concepts: [modules, visibility, use-imports, code-navigation]
+    ono_topics: [parsing, crate-map]
+    objectives:
+      - "Distinguish `pub mod` from `mod` followed by `pub use`"
+      - Read a grouped `use` list and find the file that defines a re-exported name
+      - Use a crate's doc comment as a summary of what the crate promises
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          `ono-parser` turns a line of Ono source text into a syntax tree. Its crate doc (lines
+          1–48 of the same file, not shown) makes two promises worth remembering. First, how a
+          stage's arguments are read depends on its head word: after `ls`, `>` is a redirection;
+          after `where`, `>` compares. Second: "[`parse`] never panics and always returns a
+          tree. Input that is unfinished is reported as `parse.incomplete`, input that is wrong as
+          `parse.syntax`, and that difference is what lets an editor tell 'still typing' from
+          'broken'." Keep that in mind; chapter 3 reads the function that keeps this promise.
+
+          Below the documentation, the crate's table of contents looks slightly different from
+          `ono-core`'s.
+      - type: code
+        snippet: c01-parser-crate-root
+        annotations:
+          - lines: 50
+            kind: rust
+            body: |
+              The same crate-wide ban on `unsafe` as in `ono-core`. You will see this line at the
+              top of many (not all) crate roots in the workspace.
+          - lines: 52
+            token: "pub mod ast;"
+            kind: rust
+            body: |
+              `pub mod` declares a **public module**. Everything public inside `src/ast.rs` can be
+              named from outside as `ono_parser::ast::...`. The module itself is part of the
+              crate's interface.
+          - lines: 53-55
+            kind: rust
+            body: |
+              Three **private** modules: `diagnostic`, `lexer` and `parser`. Outside code cannot
+              write `ono_parser::lexer::...`. Whatever the crate wants to share from them is
+              re-exported one name at a time in lines 66–68.
+          - lines: 57
+            token: "pub use ast::{"
+            kind: rust
+            body: |
+              A **grouped import**: `ast::{A, B, C}` is shorthand for `ast::A`, `ast::B`,
+              `ast::C`. Because `ast` is already public, these re-exports add *shorter* paths:
+              `ono_parser::Statement` and `ono_parser::ast::Statement` name the same type.
+          - lines: 66
+            token: "pub use diagnostic::Diagnostic;"
+            kind: crate
+            body: |
+              `Diagnostic` lives in the private module `diagnostic`, so `ono_parser::Diagnostic`
+              is its *only* public path.
+          - lines: 68
+            token: "parse"
+            kind: rust
+            body: |
+              Re-exports are not limited to types. `parse`, `tokens` and `words_arguments` are
+              **functions** defined in the private `parser` module; this line makes
+              `ono_parser::parse(...)` callable from other crates.
+      - type: prose
+        kind: rust
+        title: Following a name back to its file
+        body: |
+          When you meet `ono_parser::Parsed` somewhere in `ono-cli`, the crate root tells you
+          where to look: line 68 says `pub use parser::{Parsed, ...}`, so `Parsed` is defined in
+          the module `parser`. A module named `parser` declared in `src/lib.rs` lives in
+          `src/parser.rs` **or** in `src/parser/mod.rs`; the second form is used when the module
+          has sub-modules of its own. Here it is `crates/ono-parser/src/parser/mod.rs`, which you
+          will read in [chapter 3](lesson:structs-methods-04).
+
+          Editors can jump to a definition for you, but this manual route always works — even in
+          a web page or on paper — and it teaches you the shape of the crate.
+      - type: prose
+        kind: ono
+        title: What this split achieves
+        body: |
+          The code does not state a reason for choosing `pub mod` for `ast` and private modules
+          for the rest, so here is only what follows from it. The syntax tree types are meant to be
+          used by other crates — the command layer and the evaluator in `ono-cli` walk the tree —
+          and the whole `ast` module is public. The lexer and the parser machinery stay private:
+          other crates get exactly `parse`, `tokens`, `words_arguments`, `Parsed`, `Token`,
+          `TokenKind` and `Diagnostic`, and nothing else from those modules. Everything else
+          inside them can change without any other crate noticing.
+      - type: exercise
+        id: reading-rust-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Which of these paths does **not** compile when written in another crate?
+        snippets: [c01-parser-crate-root]
+        choices:
+          - text: "`ono_parser::Statement`"
+            feedback: |
+              This compiles: line 63 re-exports `Statement` at the crate root.
+          - text: "`ono_parser::ast::Statement`"
+            feedback: |
+              This compiles: `ast` is a public module (line 52), and `Statement` is public inside
+              it — otherwise the re-export on line 57 could not make it public either.
+          - text: "`ono_parser::lexer::Token`"
+            correct: true
+            feedback: |
+              Right. `lexer` is declared with plain `mod` on line 54, so it is private. `Token` is
+              reachable only through the re-export on line 67, as `ono_parser::Token`.
+          - text: "`ono_parser::Token`"
+            feedback: |
+              This compiles: line 67, `pub use lexer::{Token, TokenKind};`, re-exports it.
+      - type: exercise
+        id: reading-rust-02-q2
+        exercise_type: predict
+        prompt: |
+          You are reading `ono-cli` and meet `ono_parser::words_arguments`. Using only the crate
+          root above, predict which file of the repository defines it, and describe the steps you
+          used.
+        hints:
+          - level: 1
+            body: |
+              Find `words_arguments` in the snippet. Which line mentions it, and which module name
+              comes before the braces?
+          - level: 2
+            body: |
+              A module `m` declared in `src/lib.rs` lives in `src/m.rs` or in `src/m/mod.rs`.
+        solution: |
+          1. Line 68, `pub use parser::{Parsed, parse, tokens, words_arguments};`, re-exports
+             `words_arguments` from the module `parser`.
+          2. Line 55, `mod parser;`, declares that module in the crate root `src/lib.rs`.
+          3. So its code is in `crates/ono-parser/src/parser.rs` or
+             `crates/ono-parser/src/parser/mod.rs`. In Ono-Sendai it is the directory form,
+             `src/parser/mod.rs`, because `parser` has sub-modules of its own.
+
+          The definition could also sit in one of those sub-modules and be re-exported again in
+          `mod.rs`; if you do not find it in `mod.rs`, repeat the same steps there. This
+          "follow the `use` chain" routine is how you navigate any Rust crate.
+      - type: exercise
+        id: reading-rust-02-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain the difference between line 52 and line 55 for a user of the crate. What can
+          outside code write because of line 52 that it cannot write because of line 55?
+        snippets: [c01-parser-crate-root]
+        hints:
+          - level: 1
+            body: |
+              One of the two lines has one extra word.
+          - level: 2
+            body: |
+              Ask, for each module, whether its *name* can appear in a path written in another
+              crate.
+        solution: |
+          Line 52, `pub mod ast;`, makes the module public: another crate can write
+          `ono_parser::ast::Pipeline`, `ono_parser::ast::Statement` and so on for every public
+          item in `src/ast.rs`. Line 55, `mod parser;`, makes the module private: its name can
+          only be used inside `ono-parser`. Outside code reaches its contents solely through the
+          re-exports on line 68 (`ono_parser::parse`, `ono_parser::Parsed`, …); anything
+          `parser` does not re-export is invisible to other crates.
+
+  - id: reading-rust-03
+    title: "Inside a module file: the header of span.rs"
+    stage: guided
+    summary: "The first twenty lines of a module file: module docs, a `use` import, documentation that cites the spec and contains a runnable example, a derive list and a struct."
+    prerequisites: [reading-rust-01]
+    concepts: [reading-files, doc-comments, use-imports, attributes, structs]
+    ono_topics: [core-vocabulary, parsing]
+    objectives:
+      - Read the header of a module file in order
+      - Recognise a doctest as an example the build checks
+      - "Read a `#[derive(...)]` list as a set of abilities the type gets automatically"
+      - Know that struct fields without `pub` are private
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          You followed `pub use span::Span` in the last lesson; this is where it leads:
+          `crates/ono-core/src/span.rs`. A **span** is a pair of positions in a line of source
+          text. When the parser reports "unexpected `)`", the span says *where*. Every token,
+          every node of the syntax tree and every diagnostic carries one.
+      - type: code
+        snippet: c01-span-module-header
+        annotations:
+          - lines: 1
+            token: "//!"
+            kind: rust
+            body: |
+              A module file starts the same way as a crate root: an inner doc comment `//!`
+              describing the module as a whole.
+          - lines: 3
+            token: "use std::fmt;"
+            kind: rust
+            body: |
+              `use std::fmt;` brings the module `fmt` from `std`, the standard library, into
+              scope, so that later code can write `fmt::Display` instead of
+              `std::fmt::Display`. It is used further down the file (line 112, not shown), where
+              `Span` learns how to print itself. `use` lines only create short names; they never
+              run anything.
+          - lines: 5
+            token: "[start, end)"
+            kind: type
+            body: |
+              A **half-open** range: `start` is included, `end` is not. The span `[4, 11)` covers
+              bytes 4 to 10. The length is simply `end - start`.
+          - lines: 7-9
+            kind: ono
+            body: |
+              Here the doc comment gives the *reason* for the design. "Spec §16.3" is the
+              section "Parse errors" of Ono-Sendai's specification (`docs/specs/` in the
+              repository), which requires errors to point at the relevant text. Offsets are
+              **bytes**, not characters, because slicing Rust text works with byte positions —
+              a detail that matters for text such as `日本`, where one character takes three
+              bytes.
+          - lines: 11-15
+            kind: rust
+            body: |
+              A fenced block inside a doc comment is a **doctest**: when the project runs its
+              tests, this example is compiled and executed. `assert_eq!(a, b)` stops the test
+              with an error if `a` and `b` differ. So this is documentation that cannot silently
+              go out of date: `Span::new(4, 11).of(source)` really returns `"process"`.
+          - lines: 16
+            token: "#[derive("
+            kind: rust
+            body: |
+              An **outer attribute** (no `!`) applying to the item below it. `derive` asks the
+              compiler to write standard behaviour for the type automatically:
+              `Debug` (printable for debugging), `Clone` and `Copy` (a span can be duplicated by
+              simply copying its bits), `PartialEq`/`Eq` (`==` works), `PartialOrd`/`Ord` (`<`
+              works and spans can be sorted), `Hash` (usable as a key in a hash map) and
+              `Default` (there is a default span, zero to zero). Chapter 14 opens derives
+              properly; for now, read the list as "things you may do with a `Span`".
+          - lines: 17
+            token: "pub struct Span"
+            kind: rust
+            body: |
+              A **struct** groups named fields into one type. The struct is `pub`, so other
+              crates can use the type — through the re-export you saw in `lib.rs`.
+          - lines: 18-19
+            token: "start: u32"
+            kind: type
+            body: |
+              Two fields, `start` and `end`, both of type `u32` (an unsigned 32-bit integer).
+              Neither has `pub`, so they are **private**: code outside this module cannot read or
+              set them directly. It must go through the functions the module provides, such as
+              `Span::new` and `span.start()`. Chapter 3 shows why that matters.
+      - type: prose
+        kind: rust
+        title: A reading order for module files
+        body: |
+          The header of `span.rs` shows the usual shape of a module file:
+
+          1. `//!` — what this module is for;
+          2. `use` lines — which other names it relies on (a quick hint of its dependencies);
+          3. then items, each introduced by `///` documentation and often by attributes.
+
+          For each item, read the doc comment before the code. In Ono-Sendai the doc comments
+          frequently state the *reason* for a decision and cite the spec or an ADR; the workspace
+          even warns when a public item has no documentation (`missing_docs = "warn"` in the root
+          `Cargo.toml`).
+      - type: exercise
+        id: reading-rust-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Code in `ono-parser` holds a `Span` called `span`. Which expression can it use to get the
+          start offset?
+        snippets: [c01-span-module-header]
+        choices:
+          - text: "`span.start` — the field"
+            feedback: |
+              The field `start` has no `pub` (line 18), so it is private to the module `span`
+              in `ono-core`. Code in another crate — or even another module of `ono-core` —
+              cannot read it directly.
+          - text: "`span.start()` — a method of the same name"
+            correct: true
+            feedback: |
+              Right. The type offers a public method `start()` (you will see it in chapter 2)
+              that returns the private field's value. Outside code reads the data only through
+              such functions.
+          - text: "Neither: private data can never be read from outside"
+            feedback: |
+              Private fields cannot be *named* from outside, but the module can offer public
+              functions that return their values. That is exactly what it does.
+      - type: exercise
+        id: reading-rust-03-q2
+        exercise_type: predict
+        prompt: |
+          The doctest says `Span::new(4, 11).of("get process")` is `"process"`. Predict what
+          `Span::new(0, 3).of("get process")` returns, and explain it using the half-open rule
+          from line 5.
+        hints:
+          - level: 1
+            body: |
+              Number the bytes of `"get process"` from 0.
+          - level: 2
+            body: |
+              `[0, 3)` includes byte 0 and excludes byte 3.
+        solution: |
+          It returns `"get"`. The bytes are `g`=0, `e`=1, `t`=2, space=3, `p`=4 … `s`=10. The
+          span `[0, 3)` includes bytes 0, 1 and 2 and stops before byte 3 (the space). By the same
+          rule `[4, 11)` covers bytes 4 to 10, which is `"process"`; the string has 11 bytes, so
+          `end = 11` is exactly one past the last byte. Every character here is ASCII, so bytes
+          and characters coincide; for non-ASCII text they would not.
+      - type: exercise
+        id: reading-rust-03-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 16 to a colleague who has never seen Rust: what does it change about the
+          type `Span`, and why is it written above the struct rather than inside it?
+        snippets: [c01-span-module-header]
+        hints:
+          - level: 1
+            body: |
+              `#[...]` is an attribute. Which item does an attribute without `!` apply to?
+          - level: 2
+            body: |
+              Each name in the list is a standard ability: comparing, copying, printing, sorting,
+              hashing, a default value.
+        solution: |
+          `#[derive(...)]` is an outer attribute: it applies to the item directly below it, the
+          struct `Span`. It asks the compiler to generate standard implementations of each listed
+          trait (a *trait* is a named set of behaviour; chapter 10 introduces them). As a result,
+          a `Span` can be printed for debugging (`Debug`), duplicated by a plain copy (`Clone`,
+          `Copy`), compared with `==` (`PartialEq`, `Eq`), ordered and sorted (`PartialOrd`,
+          `Ord`), used as a hash-map key (`Hash`) and created as a default value (`Default`, which
+          gives the span from 0 to 0). Nobody wrote that code by hand; the attribute saves
+          writing it, and the generated behaviour simply works field by field.
+
+  - id: reading-rust-04
+    title: A test file is a Rust file too
+    stage: guided
+    summary: "Integration tests in `tests/` and a unit-test module inside the crate: how to read them, and what they tell you about the code they test."
+    prerequisites: [reading-rust-01, reading-rust-03]
+    concepts: [testing, reading-files, attributes, conditional-compilation]
+    ono_topics: [tests-as-docs, core-vocabulary]
+    objectives:
+      - Recognise integration tests (`tests/`) and unit tests (`#[cfg(test)] mod tests`)
+      - "Read `#[test]`, `assert_eq!` and `assert!`"
+      - Use a test's name and assertions to learn what code does before reading it
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          Ono-Sendai has two kinds of tests, and you will read both throughout the course.
+          **Integration tests** live in a crate's `tests/` directory; each file there is compiled
+          as a separate little program that uses the crate from the outside, exactly like any
+          other crate would. **Unit tests** live inside the source files themselves, usually at
+          the bottom, in a module called `tests`.
+
+          Tests are worth reading early: they say, in executable form, what the code is supposed
+          to do. This file's doc comment says so directly — span arithmetic "is a contract of its
+          own".
+      - type: code
+        snippet: c01-span-integration-test
+        caption: |
+          The first 13 lines of `crates/ono-core/tests/span.rs`, an integration test.
+        annotations:
+          - lines: 1-2
+            kind: ono
+            body: |
+              The tests exist because diagnostics (spec §16.3) point at spans; if span arithmetic
+              were wrong, every error message would underline the wrong text.
+          - lines: 4
+            token: "use ono_core::Span;"
+            kind: crate
+            body: |
+              An integration test imports the crate by its name, like an outside user. It can
+              only use the **public** interface — the private fields `start` and `end` are out of
+              reach here.
+          - lines: 6
+            token: "#[test]"
+            kind: rust
+            body: |
+              `#[test]` marks the next function as a test. The test runner calls it; if it
+              finishes, the test passes, and if an assertion fails, the test fails.
+          - lines: 7
+            token: "fn should_describe_a_half_open_byte_range_when_constructed()"
+            kind: rust
+            body: |
+              `fn` declares a function. This one takes no parameters (`()`) and returns nothing.
+              Ono-Sendai names its tests `should_<behaviour>_when_<situation>`, so the name alone
+              is a sentence about the code under test.
+          - lines: 8
+            token: "let span"
+            kind: rust
+            body: |
+              `let` introduces a variable (Rust says a **binding**). `Span::new(3, 7)` calls the
+              function `new` that belongs to the type `Span` — chapter 3 explains the `::`.
+          - lines: 9
+            token: "assert_eq!"
+            kind: rust
+            body: |
+              `assert_eq!(left, right)` fails the test if the two values differ. `span.start()`
+              calls the public method you met in the last lesson's exercise.
+          - lines: 12
+            token: "assert!(!span.is_empty());"
+            kind: rust
+            body: |
+              `assert!(condition)` fails the test if the condition is false. The inner `!` is
+              boolean "not": the span `[3, 7)` must *not* be empty.
+      - type: prose
+        kind: rust
+        title: Unit tests inside the crate
+        body: |
+          The other kind of test sits at the bottom of `crates/ono-core/src/lib.rs`, the file
+          whose top half you read in the first lesson.
+      - type: code
+        snippet: c01-core-unit-test
+        annotations:
+          - lines: 32
+            token: "#[cfg(test)]"
+            kind: rust
+            body: |
+              `cfg` means **conditional compilation**: the item below is compiled only when the
+              condition holds. `test` is true only while building the tests, so this module does
+              not exist in the real `ono` binary at all.
+          - lines: 33
+            token: "mod tests {"
+            kind: rust
+            body: |
+              A module can also be written **inline** with braces instead of in its own file. It
+              is a child module of the crate root.
+          - lines: 34
+            token: "use super::*;"
+            kind: rust
+            body: |
+              `super` is the parent module — here the crate root. `*` imports every name from it,
+              **including private ones**: a child module may see its parent's private items. That
+              is the main difference from an integration test in `tests/`.
+          - lines: 38
+            token: "let parts: Vec<&str> = VERSION.split('.').collect();"
+            kind: type
+            body: |
+              `let parts: Vec<&str>` writes the type explicitly: a `Vec` (a growable list) of
+              `&str` pieces of text. The right side splits `"0.6.2"` at each `.` and collects the
+              pieces into that list. How `split` and `collect` work is chapter 12; read the line as
+              "the version, cut at the dots".
+          - lines: 39-43
+            kind: rust
+            body: |
+              `assert_eq!` can take a third argument: a message, with `{VERSION:?}` inserting the
+              value in debug form. It is shown only if the assertion fails.
+          - lines: 44
+            token: "for part in parts"
+            kind: flow
+            body: |
+              A `for` loop runs its body once for each element of `parts`, binding it to `part`.
+          - lines: 46
+            token: "|c| c.is_ascii_digit()"
+            kind: rust
+            body: |
+              Black box for now: `|c| c.is_ascii_digit()` is a **closure**, a small inline
+              function, and `.chars().all(...)` asks "is this true for every character?". Read the
+              line as "every character of `part` is a digit". Closures are chapter 12.
+      - type: prose
+        kind: ono
+        title: What the two tests guard
+        body: |
+          The integration test pins down span arithmetic that every diagnostic depends on. The
+          unit test pins down that `ono` reports a three-part numeric version, as its message
+          says: "the shell must report a three-part semantic version". Both are behaviour other
+          programs and people rely on, which is why they are written as tests rather than only
+          described in comments.
+      - type: exercise
+        id: reading-rust-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `ono-core` has a private module `diagnostic` (you saw `mod diagnostic;` in `lib.rs`).
+          Which of the two tests could call a function that is private to the crate root?
+        choices:
+          - text: "Only the unit test in `src/lib.rs`"
+            correct: true
+            feedback: |
+              Right. The unit-test module is a child of the crate root and imports everything
+              from it with `use super::*;`, private items included. A file in `tests/` is a
+              separate program that sees only what `ono_core` makes public.
+          - text: "Only the integration test in `tests/span.rs`"
+            feedback: |
+              It is the other way round. `tests/span.rs` imports the crate by name
+              (`use ono_core::Span;`) and can reach only its public interface.
+          - text: "Both, because they are in the same crate directory"
+            feedback: |
+              Sitting in the same directory on disk does not matter; visibility follows the
+              module tree. Files under `tests/` are compiled as separate crates.
+          - text: "Neither: private items can never be tested"
+            feedback: |
+              Unit tests exist precisely to test from inside. A child module sees its parent's
+              private items.
+      - type: exercise
+        id: reading-rust-04-q2
+        exercise_type: predict
+        prompt: |
+          Here is another integration test from `ono-core`. You have not yet seen the code of
+          `ExitStatus`. Using only the test, predict: what does `ExitStatus::NOT_FOUND.code()`
+          return, and what does `ExitStatus::from_signal(9).code()` return? What rule connects a
+          signal number to a status?
+        snippets: [c01-exit-status-test]
+        hints:
+          - level: 1
+            body: |
+              Read the test names first; they are sentences.
+          - level: 2
+            body: |
+              Compare the three `from_signal` lines: 2 → 130, 9 → ?, 15 → 143.
+        solution: |
+          `ExitStatus::NOT_FOUND.code()` returns `127` (line 12). `from_signal(9).code()` returns
+          `137` (line 19). The rule is in the second test's name: "report a signalled process as
+          128 plus the signal" — 128 + 2 = 130, 128 + 9 = 137, 128 + 15 = 143. The file's doc
+          comment adds the reason the values are asserted *as numbers*: surrounding scripts depend
+          on them. You now know the contract of `ExitStatus` before reading a line of its code,
+          which is exactly what [chapter 2](lesson:functions-types-01) does next.
+      - type: exercise
+        id: reading-rust-04-q3
+        exercise_type: explain-line
+        prompt: |
+          In `tests/span.rs`, explain line 12, `assert!(!span.is_empty());`. What exactly would
+          make this test fail?
+        snippets: [c01-span-integration-test]
+        hints:
+          - level: 1
+            body: |
+              There are two `!` characters on that line. They mean different things.
+          - level: 2
+            body: |
+              One `!` belongs to a macro name; the other is an operator on a `bool`.
+        solution: |
+          `span.is_empty()` asks the span whether it covers no bytes and returns a `bool`. The
+          `!` in front of it is boolean negation, so `!span.is_empty()` is `true` when the span is
+          **not** empty. `assert!(...)` (the `!` here is part of the macro name) fails the test
+          when its condition is false. So the test fails if `Span::new(3, 7)` claimed to be empty
+          — which, for a span from 3 to 7 with length 4, would be a bug.

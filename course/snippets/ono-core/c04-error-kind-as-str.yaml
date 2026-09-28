@@ -1,0 +1,29 @@
+id: c04-error-kind-as-str
+source:
+  file: crates/ono-core/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 64
+  end_line: 82
+  anchor: ErrorKind::Resolution => "resolution",
+  content_hash: sha256:9d43605022829ae0cceb935439875e5498cb9d3dd0e68f3bfc6ca9c730e4aa5d
+  code: |2
+        /// The kind's name, spelled as spec §16.1 spells it.
+        #[must_use]
+        pub const fn as_str(self) -> &'static str {
+            match self {
+                ErrorKind::Resolution => "resolution",
+                ErrorKind::Permission => "permission",
+                ErrorKind::Io => "io",
+                ErrorKind::Parse => "parse",
+                ErrorKind::Type => "type",
+                ErrorKind::Provider => "provider",
+                ErrorKind::External => "external",
+                ErrorKind::Conflict => "conflict",
+                ErrorKind::Timeout => "timeout",
+                ErrorKind::Cancelled => "cancelled",
+                ErrorKind::Safety => "safety",
+                ErrorKind::Stream => "stream",
+                ErrorKind::Resource => "resource",
+            }
+        }

@@ -1,0 +1,73 @@
+id: c10-provider-registry
+source:
+  file: crates/ono-provider-api/src/registry.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 14
+  end_line: 23
+  anchor: 'providers: Vec<Arc<dyn Provider>>,'
+  content_hash: sha256:7e77aa0f286a7415f93abc9ac5c15583a61755b2c420762c4e5e6a4609dcaa55
+  code: |
+    /// The providers this shell knows about.
+    ///
+    /// Registration is explicit and ordered: the first provider claiming a target answers for it, and
+    /// a later one claiming the same target extends rather than replaces — which is what lets a
+    /// KUANG/11 package add a container runtime without displacing the one already there
+    /// (spec §31.23).
+    #[derive(Clone, Debug, Default)]
+    pub struct ProviderRegistry {
+        providers: Vec<Arc<dyn Provider>>,
+    }
+- start_line: 34
+  end_line: 37
+  anchor: 'pub fn register(&mut self, provider: Arc<dyn Provider>) {'
+  content_hash: sha256:249118370dba377137ca6363f886395b8ca4190cc5705d42899ea20ddc253ad5
+  code: |2
+        /// Adds a provider.
+        pub fn register(&mut self, provider: Arc<dyn Provider>) {
+            self.providers.push(provider);
+        }
+- start_line: 70
+  end_line: 100
+  anchor: Availability::Available => return Ok(provider),
+  content_hash: sha256:1bd750f838cab46a6f8b48f5e3ea5f6b6a8561f0ea50c126d00a6d9965d99cbf
+  code: |2
+        pub fn provider_for(&self, target: &str) -> Result<&Arc<dyn Provider>, ErrorValue> {
+            let claiming = self.for_target(target);
+            if claiming.is_empty() {
+                return Err(ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("no provider answers `{target}`"),
+                )
+                .with_help("`help targets` lists what this shell can be asked about"));
+            }
+
+            let mut reasons = Vec::new();
+            for provider in &claiming {
+                match provider.availability() {
+                    Availability::Available => return Ok(provider),
+                    Availability::Unavailable(reason) => {
+                        reasons.push(format!("{}: {reason}", provider.id()));
+                    }
+                }
+            }
+            Err(ErrorValue::new(
+                ErrorCode::ProviderUnavailable,
+                format!(
+                    "`{target}` cannot be answered here — {}",
+                    reasons.join("; ")
+                ),
+            )
+            .with_help(
+                "the provider exists but the system it reads is not present. This is not the same as \
+                 there being none of the thing you asked for.",
+            ))
+        }
+- start_line: 107
+  end_line: 109
+  anchor: self.provider_for(query.target_name())?.snapshot(query)
+  content_hash: sha256:628cc99e8b42ed09c3a2f1f00641b0a635c44dce9f0cc3f48506946dc3d38bc9
+  code: |2
+        pub fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+            self.provider_for(query.target_name())?.snapshot(query)
+        }

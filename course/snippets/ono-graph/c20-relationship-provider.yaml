@@ -1,0 +1,67 @@
+id: c20-relationship-provider
+source:
+  file: crates/ono-graph/src/provider.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 86
+  end_line: 100
+  anchor: pub struct Relationships {
+  content_hash: sha256:e557ddc70d486bdbcfffc5016b6c328110093b8969cd6de62357b40264edf131
+  code: |2
+        pub(crate) fn into_parts(self) -> (Edge, Node) {
+            (self.edge, self.target)
+        }
+    }
+
+    /// What a provider found about one object, and what it could not read.
+    ///
+    /// The two are separate because they answer different questions: an empty list of relationships
+    /// means the object has none, while a failure means nobody knows whether it has any (spec §10.5,
+    /// §16.5).
+    #[derive(Debug, Clone, Default)]
+    pub struct Relationships {
+        found: Vec<Relationship>,
+        failures: Vec<ErrorValue>,
+    }
+- start_line: 140
+  end_line: 176
+  anchor: pub trait RelationshipProvider
+  content_hash: sha256:7b97a06059c48d4fc26cc35d0d6b004ddc11739d1c8f534821d100a3156affb2
+  code: |2
+        pub(crate) fn into_parts(self) -> (Vec<Relationship>, Vec<ErrorValue>) {
+            (self.found, self.failures)
+        }
+    }
+
+    /// A source of relationships between objects (spec §22.2).
+    #[async_trait::async_trait]
+    pub trait RelationshipProvider: Send + Sync + std::fmt::Debug {
+        /// The provider's stable id, such as `linux.process-tree`. It appears on every edge it
+        /// asserts, so a questionable relationship can be traced back to whoever claimed it.
+        fn id(&self) -> &str;
+
+        /// The schema ids of the objects it can expand, such as `ono.process/1`.
+        fn subjects(&self) -> &[&str];
+
+        /// The relation names it can contribute, such as `owns` or `listens`.
+        ///
+        /// A trace restricted to some relations consults only the providers that offer them, so this
+        /// is metadata a walk plans with rather than documentation.
+        fn relations(&self) -> &[&str];
+
+        /// What it must be allowed to do.
+        fn capabilities(&self) -> Vec<Capability> {
+            Vec::new()
+        }
+
+        /// Whether it can answer on this machine, and why not when it cannot.
+        fn availability(&self) -> Availability {
+            Availability::Available
+        }
+
+        /// The relationships of one object, as they are now.
+        ///
+        /// A provider that cannot read what it needs returns the failure rather than an empty
+        /// result: a relationship this user may not see is not a relationship that does not exist.
+        async fn relationships(&self, subject: &Node) -> Relationships;
+    }

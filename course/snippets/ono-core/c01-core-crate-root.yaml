@@ -1,0 +1,40 @@
+id: c01-core-crate-root
+source:
+  file: crates/ono-core/src/lib.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 30
+  anchor: '#![forbid(unsafe_code)]'
+  content_hash: sha256:4230346457b39f95ca089c2234e566083a49d313ab21d2107c56c64d3848bec1
+  code: |
+    //! Vocabulary shared by every crate in the Ono-Sendai workspace.
+    //!
+    //! `ono-core` is deliberately dependency-free (ADR-0005): the parser, the value model and the
+    //! process layer are developed against it in parallel, so it holds only what all of them need
+    //! and nothing that any of them owns.
+    //!
+    //! - [`Span`] — byte ranges into a source line, carried by every diagnostic (spec §16.3);
+    //! - [`ErrorCode`] and [`ErrorKind`] — the stable error taxonomy of spec §43 and §16.1;
+    //! - [`ExitStatus`] — the exit-status contract of ADR-0008;
+    //! - [`diagnostic!`] — a line of commentary on standard error that cannot kill the writer.
+
+    #![forbid(unsafe_code)]
+
+    mod diagnostic;
+    mod error;
+    mod exit;
+    mod span;
+
+    pub use error::{ErrorCode, ErrorKind};
+    pub use exit::ExitStatus;
+    pub use span::Span;
+
+    /// Version of the running shell, taken from the workspace manifest at compile time.
+    pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+    /// Product name in its full form.
+    pub const PRODUCT_NAME: &str = "Ono-Sendai";
+
+    /// Short name, and the name of the binary.
+    pub const SHORT_NAME: &str = "ono";

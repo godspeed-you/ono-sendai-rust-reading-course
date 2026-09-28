@@ -1,0 +1,52 @@
+id: c02-shorten
+source:
+  file: crates/ono-render/src/table.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 11
+  end_line: 15
+  anchor: const TRUNCATION_MARKER
+  content_hash: sha256:327a71d53b1d922c500076d166f373e9513c146d0763268d7c68c3782e29b3ec
+  code: |
+    /// The marker that tells a reader a value was shortened.
+    ///
+    /// Spec §13.3 requires truncation to be visible and favours ASCII-safe output, so the marker is
+    /// three full stops rather than a single-character ellipsis.
+    const TRUNCATION_MARKER: &str = "...";
+- start_line: 711
+  end_line: 742
+  anchor: let mut used = 0;
+  content_hash: sha256:a70faf6342a08cbc8f79df40b73042d3b945c1264273be3dbe0486353ddb0215
+  code: |
+    /// Shortens `text` to at most `width` terminal cells, marking that it was cut.
+    ///
+    /// Never splits a character, and never returns something wider than asked for — a line that
+    /// escapes the terminal wraps and destroys the alignment of everything below it.
+    pub(crate) fn shorten(text: &str, width: usize) -> String {
+        if text.width() <= width {
+            return text.to_owned();
+        }
+        if width <= TRUNCATION_MARKER.len() {
+            return take_cells(text, width);
+        }
+        let kept = take_cells(text, width - TRUNCATION_MARKER.len());
+        format!("{kept}{TRUNCATION_MARKER}")
+    }
+
+    /// The longest prefix of `text` that fits in `width` terminal cells.
+    ///
+    /// A wide character that would straddle the limit is dropped rather than half-printed, so the
+    /// result is always at most `width` cells and always valid UTF-8.
+    fn take_cells(text: &str, width: usize) -> String {
+        let mut used = 0;
+        let mut kept = String::new();
+        for character in text.chars() {
+            let cells = character.width().unwrap_or(0);
+            if used + cells > width {
+                break;
+            }
+            used += cells;
+            kept.push(character);
+        }
+        kept
+    }

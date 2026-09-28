@@ -1,0 +1,43 @@
+id: c03-column
+source:
+  file: crates/ono-render/src/table.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 39
+  end_line: 54
+  anchor: pub struct Column {
+  content_hash: sha256:ac89f6836a91a700b453d0fc725fcca89474a45b3032c11483e67902f3f57975
+  code: |
+    /// A column of a table: a stable header and how its values are aligned.
+    #[derive(Debug, Clone)]
+    pub struct Column {
+        header: String,
+        align: Align,
+    }
+
+    impl Column {
+        /// A left-aligned column with the given header.
+        #[must_use]
+        pub fn new(header: impl Into<String>) -> Self {
+            Self {
+                header: header.into(),
+                align: Align::Left,
+            }
+        }
+- start_line: 63
+  end_line: 74
+  anchor: pub fn header(&self) -> &str {
+  content_hash: sha256:2bc2c4650056cd71cb566837a4987441ad797ff3457cf2d3f232ba7b7054bc74
+  code: |2
+        /// The column's header.
+        #[must_use]
+        pub fn header(&self) -> &str {
+            &self.header
+        }
+
+        /// How the column's values are aligned.
+        #[must_use]
+        pub fn alignment(&self) -> Align {
+            self.align
+        }
+    }

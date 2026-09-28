@@ -1,0 +1,38 @@
+id: c04-statement-span
+source:
+  file: crates/ono-parser/src/ast.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 122
+  end_line: 149
+  anchor: Statement::Break(span) | Statement::Continue(span) | Statement::Error(span) => *span,
+  content_hash: sha256:f333d2d8dc20f52e5edd5ef5daa43701c64a69241e1903f0a72816ac4675029e
+  code: |
+    impl Statement {
+        /// The source range this statement covers.
+        #[must_use]
+        pub fn span(&self) -> Span {
+            match self {
+                Statement::Pipeline(node) => node.span,
+                Statement::Let(node) => node.span,
+                Statement::Fn(node) => node.span,
+                Statement::If(node) => node.span,
+                Statement::For(node) => node.span,
+                Statement::While(node) => node.span,
+                Statement::Match(node) => node.span,
+                Statement::Try(node) => node.span,
+                Statement::Return(node) => node.span,
+                Statement::Break(span) | Statement::Continue(span) | Statement::Error(span) => *span,
+                Statement::Use(node) => node.span,
+                Statement::Alias(node) => node.span,
+            }
+        }
+
+        /// The pipeline this statement runs, if it is a pipeline statement.
+        #[must_use]
+        pub fn as_pipeline(&self) -> Option<&Pipeline> {
+            match self {
+                Statement::Pipeline(pipeline) => Some(pipeline),
+                _ => None,
+            }
+        }

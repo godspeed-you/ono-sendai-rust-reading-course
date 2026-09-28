@@ -1,0 +1,77 @@
+id: c15-value-arcs
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 17
+  end_line: 83
+  anchor: Every compound case sits behind an `Arc`
+  content_hash: sha256:015f906da4de78c079fe6d73bf1e28093c7a734614a3bbb19550f14ecc0b9bcf
+  code: |
+    /// A value flowing through a pipeline (spec §10.2, §25).
+    ///
+    /// Every compound case sits behind an `Arc`, so cloning a value is a refcount bump whatever it
+    /// holds: spec §34 budgets a pipeline stage in microseconds, and a value model that copies its
+    /// payload cannot meet that.
+    ///
+    /// Streams are deliberately not a variant. Spec §25 asks for them to be execution-layer objects
+    /// unless their consumption semantics are extremely clear, and a clonable value whose second
+    /// clone yields nothing is not that.
+    ///
+    /// Equality is structural: `Value::Int(1)` and `Value::Float(1.0)` are different values even
+    /// though they compare equal numerically. Use [`compare_to`](Self::compare_to) for the ordering
+    /// the language's `==` and `<` operators need.
+    ///
+    /// ```
+    /// use ono_value::{ByteSize, Value};
+    /// let size = Value::ByteSize(ByteSize::parse("512MiB")?);
+    /// assert_eq!(size.type_name(), "bytesize");
+    /// assert!(size.compare_to(&Value::ByteSize(ByteSize::parse("1GiB")?))?.is_lt());
+    /// # Ok::<(), ono_value::ErrorValue>(())
+    /// ```
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub enum Value {
+        /// A value that is known to be unknown (spec §10.5).
+        #[default]
+        Null,
+        /// A boolean.
+        Bool(bool),
+        /// A signed integer.
+        Int(i128),
+        /// A binary floating-point number.
+        Float(f64),
+        /// An exact decimal number.
+        Decimal(Decimal),
+        /// Text.
+        String(Arc<str>),
+        /// Raw bytes, which may not be valid text (spec §12.2).
+        Bytes(Bytes),
+        /// A filesystem path.
+        Path(Arc<Path>),
+        /// An instant in time.
+        Timestamp(Timestamp),
+        /// A signed span of time.
+        Duration(Duration),
+        /// A quantity of information.
+        ByteSize(ByteSize),
+        /// A percentage.
+        Percent(Percent),
+        /// A regular expression.
+        Regex(Arc<RegexValue>),
+        /// A universally unique identifier.
+        Uuid(Uuid),
+        /// An IP address.
+        Ip(IpAddr),
+        /// An IP address with a prefix length.
+        IpNetwork(IpNetwork),
+        /// A TCP or UDP port number.
+        Port(u16),
+        /// An ordered list of values.
+        List(Arc<[Value]>),
+        /// A map with string keys.
+        Map(Arc<MapValue>),
+        /// A schema-bound record.
+        Record(Arc<RecordValue>),
+        /// A structured error carried as data (spec §16.1).
+        Error(Arc<ErrorValue>),
+    }

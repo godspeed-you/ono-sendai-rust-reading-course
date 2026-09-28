@@ -1,0 +1,73 @@
+id: c10-command-impl
+source:
+  file: crates/ono-command/src/invoke.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 420
+  end_line: 429
+  anchor: 'pub trait CommandImpl: Send + Sync {'
+  content_hash: sha256:5d2a55890c457422e5baf19ed08a53c95478abfa397774d0ba5c58ff732ec967
+  code: |
+    /// The result of a command that had to await something, boxed so the trait stays object-safe.
+    pub type OutcomeFuture<'a> = Pin<Box<dyn Future<Output = Result<Outcome, ErrorValue>> + Send + 'a>>;
+
+    /// A native implementation of one registry command.
+    ///
+    /// Spec §27.2: native code registers an implementation against a stable command id. The contract
+    /// is data and lives in `docs/contracts/commands/`; this is the code behind it.
+    pub trait CommandImpl: Send + Sync {
+        /// The registry id this implements, such as `ono.process.get`.
+        fn id(&self) -> &str;
+- start_line: 442
+  end_line: 442
+  anchor: fn invoke(
+  content_hash: sha256:43987f1a485478dd72a3ee7f44730ae6c5f7435a3b93c4086ae0ae3b331aebd9
+  code: |2
+        fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue>;
+- start_line: 444
+  end_line: 447
+  anchor: This is the entry point a host should call
+  content_hash: sha256:9eade432e6cf6870ae594d7dfee897732533a69811222541ec1b6e06f8718f49
+  code: |2
+        /// Runs the command, awaiting whatever it has to await.
+        ///
+        /// **This is the entry point a host should call**, through [`CommandTable::run`]. The default
+        /// answers with [`CommandImpl::invoke`], which is what every command that never awaits does.
+- start_line: 453
+  end_line: 456
+  anchor: Box::pin(std::future::ready(self.invoke(ctx)))
+  content_hash: sha256:7d90470093956a2cf556275451683ec315b0c5fc4d2559bd3ed032dd888cc5d5
+  code: |2
+        fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
+            Box::pin(std::future::ready(self.invoke(ctx)))
+        }
+    }
+- start_line: 468
+  end_line: 472
+  anchor: 'implementations: BTreeMap<String, Arc<dyn CommandImpl>>,'
+  content_hash: sha256:b6950610f3ec7f500daeb00143543369a0c8360450509219a826cdf62d63baeb
+  code: |
+    /// The implementations this shell has, by command id.
+    #[derive(Clone, Default)]
+    pub struct CommandTable {
+        implementations: BTreeMap<String, Arc<dyn CommandImpl>>,
+    }
+- start_line: 481
+  end_line: 494
+  anchor: let id = implementation.id().to_owned();
+  content_hash: sha256:36807d78cff8a7e5ee4dcef205fd9091e8cd780250a4cd219bfd4ea7e6acd63e
+  code: |2
+        /// Registers an implementation against the id it declares.
+        ///
+        /// A second implementation of the same id replaces the first, which is how a KUANG/11
+        /// package or a test host substitutes one (spec §31.22).
+        pub fn register(&mut self, implementation: Arc<dyn CommandImpl>) {
+            let id = implementation.id().to_owned();
+            self.implementations.insert(id, implementation);
+        }
+
+        /// The implementation of one id.
+        #[must_use]
+        pub fn get(&self, id: &str) -> Option<&Arc<dyn CommandImpl>> {
+            self.implementations.get(id)
+        }

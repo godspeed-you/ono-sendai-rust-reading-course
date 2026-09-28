@@ -1,0 +1,56 @@
+id: c12-transform-invoke
+source:
+  file: crates/ono-command/src/impls/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 63
+  end_line: 108
+  anchor: 'input.transform(Where::new(move |value: &Value| {'
+  content_hash: sha256:20a068b6ab0e2136394ed50a2c2f7d6e0ab4635992097778120c02b52b14df71
+  code: |2
+        fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+            let spelling = ctx.contract().spelling();
+            let arguments = ctx.arguments();
+            let scope = Arc::clone(ctx.scope());
+            let input = ctx.take_input().ok_or_else(|| needs_input(&spelling))?;
+
+            // `transform` is what raises `stream.unbounded_operation` before anything is read, so a
+            // blocking transform over an endless stream costs nothing (spec §11.1).
+            let output = match self.kind {
+                Kind::Where => {
+                    let predicate = expression(arguments, "predicate", &spelling)?;
+                    let scope = Arc::clone(&scope);
+                    input.transform(Where::new(move |value: &Value| {
+                        evaluate_to_value(&predicate, value, &scope)
+                    }))?
+                }
+                Kind::Select => {
+                    let fields = projection(arguments, &spelling, &scope)?;
+                    input.transform(Select::new(fields)?)?
+                }
+                Kind::Sort => {
+                    // Without a key the values order by themselves, and a bare `desc` or `asc` is
+                    // the direction over that identity rather than a field (ADR-0071 §3).
+                    let (key, direction) = sort_arguments(arguments, &spelling, &scope)?;
+                    let sort = Sort::new(key);
+                    let sort = if direction { sort.descending() } else { sort };
+                    input.transform(sort)?
+                }
+                Kind::Group => {
+                    let key = key_function(arguments, "key", &spelling, &scope)?;
+                    input.transform(Group::new(key))?
+                }
+                Kind::Take => input.transform(Take::new(count(arguments, &spelling, &scope)?))?,
+                Kind::Skip => input.transform(Skip::new(count(arguments, &spelling, &scope)?))?,
+                // `--follow` names what `tail` does anyway on a stream that never ends (ADR-0072);
+                // on a bounded stream the end arrives, and the trailing window is the answer.
+                Kind::Tail => input.transform(Tail::new(count(arguments, &spelling, &scope)?))?,
+                Kind::Each => {
+                    let body = expression(arguments, "body", &spelling)?;
+                    let scope = Arc::clone(&scope);
+                    input.transform(Each::new(move |value: &Value| {
+                        // One value in, one out. Spec §53 warns about accidental nesting; a body that
+                        // wants many outputs builds a list and the engine keeps it as one value.
+                        evaluate(&body, value, &scope).map(|produced| vec![produced])
+                    }))?
+                }

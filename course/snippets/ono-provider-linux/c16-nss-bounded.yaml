@@ -1,0 +1,36 @@
+id: c16-nss-bounded
+source:
+  file: crates/ono-provider-linux/src/accounts.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 165
+  end_line: 190
+  anchor: tokio::time::timeout(timeout, handle).await.ok()?.ok()?
+  content_hash: sha256:5eb2f4a927ec34a6aa00298f6618bf79e53649e783ae0f0aef55631c2748ccaa
+  code: |
+    /// Runs one blocking NSS call with a deadline, yielding `None` when it does not answer in time.
+    async fn bounded<T, F>(timeout: Duration, lookup: F) -> Option<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Option<T> + Send + 'static,
+    {
+        let handle = tokio::task::spawn_blocking(lookup);
+        // The task is left running on timeout rather than cancelled: a blocking NSS call cannot be
+        // interrupted, and abandoning it is what keeps the enumeration moving (spec §34).
+        tokio::time::timeout(timeout, handle).await.ok()?.ok()?
+    }
+
+    #[async_trait::async_trait]
+    impl Accounts for NssAccounts {
+        async fn user(&self, uid: u32) -> Option<UserAccount> {
+            if let Some(cached) = self.cached_user(uid) {
+                return cached;
+            }
+            let account = bounded(self.timeout, move || {
+                User::from_uid(Uid::from_raw(uid)).ok().flatten()
+            })
+            .await
+            .map(user_account);
+            self.remember_user(uid, account.clone());
+            account
+        }

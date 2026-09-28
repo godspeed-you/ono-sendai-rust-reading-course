@@ -1,0 +1,46 @@
+id: c03-parser-mod
+source:
+  file: crates/ono-parser/src/parser/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 8
+  end_line: 29
+  anchor: mod state;
+  content_hash: sha256:bdc86c1cf765449a1a2fb8713289f068d55d33aae8b57dd287fe7bba3b81544a
+  code: |
+    use crate::ast::{Argument, Program};
+    use crate::diagnostic::Diagnostic;
+    use crate::lexer::{LexMode, Token};
+
+    use self::pipelines::ends_stage;
+    use self::state::Parser;
+
+    mod blocks;
+    mod diagnostics;
+    mod expressions;
+    mod literals;
+    mod pipelines;
+    mod recovery;
+    mod state;
+    mod statements;
+
+    /// The result of parsing a source: a tree, plus everything that was wrong with it.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Parsed {
+        program: Program,
+        diagnostics: Vec<Diagnostic>,
+    }
+- start_line: 81
+  end_line: 89
+  anchor: 'pub fn parse(source: &str) -> Parsed {'
+  content_hash: sha256:dfaac4b4bffac868f920ce23bccf1eb0b479f1192c5c3093c9f96fe82c8fb590
+  code: |
+    #[must_use]
+    pub fn parse(source: &str) -> Parsed {
+        let mut parser = Parser::new(source);
+        let program = parser.parse_program();
+        Parsed {
+            program,
+            diagnostics: parser.diagnostics,
+        }
+    }

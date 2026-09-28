@@ -1,0 +1,87 @@
+id: c15-plugin-provider
+source:
+  file: crates/ono-cli/src/plugin_provider.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 26
+  end_line: 91
+  anchor: 'plugin: Mutex<Arc<LoadedPlugin>>,'
+  content_hash: sha256:d0bc90ee51b24f1c7e816d65f7bd4b66e23fbc6b0c7842df784f65fb9053d4d5
+  code: |
+    /// One target a loaded package contributes, mounted as a [`Provider`].
+    ///
+    /// Its `id` is `plugin:<package.id>` — the same token the host stamps into every record the
+    /// package emits (spec §31.80). A provider whose id disagreed with the provenance of its own
+    /// records would make `inspect` and the registry two different answers to one question.
+    #[derive(Debug)]
+    pub struct PluginProvider {
+        id: String,
+        package_id: String,
+        /// The instance answering right now. A reload replaces the instance behind an id without
+        /// removing the target from the registry (spec §31.72: a reload is never a moment without
+        /// the package), and [`ProviderRegistry`](ono_provider_api::ProviderRegistry) has no
+        /// removal — so the handle is swapped rather than the registration.
+        plugin: Mutex<Arc<LoadedPlugin>>,
+        targets: [&'static str; 1],
+    }
+
+    impl PluginProvider {
+        /// One provider per target `plugin` contributes, ready to be registered.
+        ///
+        /// A package that contributes no target yields none: `roles: [provider]` is a claim about
+        /// what a package may do, and what it actually answers for is what it declared.
+        #[must_use]
+        pub fn of(plugin: &Arc<LoadedPlugin>) -> Vec<Arc<Self>> {
+            plugin
+                .targets()
+                .iter()
+                .map(|registered| Arc::new(Self::for_target(plugin, &registered.contribution.name)))
+                .collect()
+        }
+
+        /// The provider for one named target of `plugin`.
+        #[must_use]
+        pub fn for_target(plugin: &Arc<LoadedPlugin>, target: &str) -> Self {
+            Self {
+                id: format!("plugin:{}", plugin.package_id()),
+                package_id: plugin.package_id().to_owned(),
+                plugin: Mutex::new(Arc::clone(plugin)),
+                targets: [intern_target(target)],
+            }
+        }
+
+        /// The package this provider answers from.
+        #[must_use]
+        pub fn package_id(&self) -> &str {
+            &self.package_id
+        }
+
+        /// The one target this instance answers about.
+        #[must_use]
+        pub fn target(&self) -> &'static str {
+            self.targets[0]
+        }
+
+        /// Points this provider at a freshly loaded instance of the same package.
+        ///
+        /// Reloading replaces the instance (spec §31.72); the registry entry is the same noun either
+        /// way, and re-registering would leave the shut-down instance answering first.
+        pub fn adopt(&self, plugin: Arc<LoadedPlugin>) {
+            *lock(&self.plugin) = plugin;
+        }
+
+        /// The instance answering right now.
+        fn plugin(&self) -> Arc<LoadedPlugin> {
+            Arc::clone(&lock(&self.plugin))
+        }
+- start_line: 309
+  end_line: 314
+  anchor: Err(poisoned) => poisoned.into_inner(),
+  content_hash: sha256:e151d12c93975d3424845a97e37b4c1d69e9be9d88d3c60743e484680983a5f0
+  code: |
+    fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        match mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }

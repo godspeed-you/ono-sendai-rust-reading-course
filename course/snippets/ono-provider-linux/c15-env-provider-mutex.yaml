@@ -1,0 +1,55 @@
+id: c15-env-provider-mutex
+source:
+  file: crates/ono-provider-linux/src/env.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 8
+  anchor: The session owns the environment
+  content_hash: sha256:1200c1a50a03306f8f33d6b3334693df85583f64e1141eaae3c80bc7aacc06dd
+  code: |
+    //! The `env` target: the session's variables as records rather than as `NAME=value` lines.
+    //!
+    //! The session owns the environment — `let`, `set env` and the inherited block all live in the
+    //! evaluator's scopes — so this provider is *given* the bindings rather than reading the shell
+    //! process's own. That is what lets `get env` answer for the scope the user is in rather than
+    //! for whatever `execve` happened to hand the binary. The session publishes its current
+    //! bindings before each pipeline runs ([`EnvProvider::publish`]), so what `set env` bound a
+    //! statement ago is what `get env` lists now.
+- start_line: 96
+  end_line: 127
+  anchor: 'bindings: Mutex<Vec<EnvBinding>>,'
+  content_hash: sha256:8e00361d1695b44a2df51c52236cfcd03313f1bf6a6e96c780e80d189159461c
+  code: |
+    #[derive(Debug, Default)]
+    pub struct EnvProvider {
+        bindings: Mutex<Vec<EnvBinding>>,
+    }
+
+    impl EnvProvider {
+        /// A provider over exactly these bindings.
+        ///
+        /// They are kept in name order, so `get env` is the same list every time it is asked — the
+        /// determinism spec §50 requires of redirected output.
+        #[must_use]
+        pub fn new(bindings: impl IntoIterator<Item = EnvBinding>) -> Self {
+            let provider = Self::default();
+            provider.publish(bindings);
+            provider
+        }
+
+        /// Replaces the bindings with what the session holds now.
+        pub fn publish(&self, bindings: impl IntoIterator<Item = EnvBinding>) {
+            let mut bindings: Vec<EnvBinding> = bindings.into_iter().collect();
+            bindings.sort_by(|left, right| left.name.cmp(&right.name));
+            *self.bindings.lock().unwrap_or_else(PoisonError::into_inner) = bindings;
+        }
+
+        /// The bindings the provider answers with, in name order.
+        #[must_use]
+        pub fn bindings(&self) -> Vec<EnvBinding> {
+            self.bindings
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }

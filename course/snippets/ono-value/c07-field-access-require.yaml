@@ -1,0 +1,27 @@
+id: c07-field-access-require
+source:
+  file: crates/ono-value/src/record.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 65
+  end_line: 81
+  anchor: FieldAccess::Failed(error) => Err((*error).clone()),
+  content_hash: sha256:34f0c2567e7f04fa4f7cf1c32a9a61c8d24addfcfd98b9698ab4d42c2f65965f
+  code: |2
+        /// The value, treating an absent field and a failed access as errors.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::TypeUnknownField`] for an absent field, or the recorded failure for a
+        /// failed access.
+        pub fn require(self, field: &str) -> Result<Value, ErrorValue> {
+            match self {
+                FieldAccess::Absent => Err(ErrorValue::new(
+                    ErrorCode::TypeUnknownField,
+                    format!("no field `{field}` on this record"),
+                )),
+                FieldAccess::Unknown => Ok(Value::Null),
+                FieldAccess::Known(value) => Ok(value),
+                FieldAccess::Failed(error) => Err((*error).clone()),
+            }
+        }

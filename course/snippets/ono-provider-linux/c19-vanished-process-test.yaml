@@ -1,0 +1,39 @@
+id: c19-vanished-process-test
+source:
+  file: crates/ono-provider-linux/tests/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 229
+  end_line: 257
+  anchor: async fn should_skip_a_process_that_exits_between_enumeration_and_detail_read()
+  content_hash: sha256:005bf54a4b3a2098d8138d5ef3ae620a86747d96738d40ac9a016ba64b29b4c3
+  code: |
+    #[tokio::test]
+    async fn should_skip_a_process_that_exits_between_enumeration_and_detail_read() {
+        let fixture = ProcFixture::new();
+        fixture.process(11).stat("survivor", StatFields::default());
+        // A directory with no `stat` is exactly what the kernel leaves behind for the instant
+        // between a listing and a read of a process that has just exited.
+        fixture.process(12);
+
+        let collected = drain(
+            provider(&fixture)
+                .snapshot(&Query::target("process"))
+                .expect("a snapshot"),
+        )
+        .await;
+
+        assert_eq!(
+            records(&collected).len(),
+            1,
+            "the process that vanished is skipped, not reported half-read"
+        );
+        assert_eq!(
+            collected.errors(),
+            &[],
+            "a process that no longer exists is not part of the answer and is not a failure to \
+             report; `get process` on a busy machine would otherwise be unusable for the noise \
+             (ADR-0029). Got {:?}",
+            collected.errors()
+        );
+    }

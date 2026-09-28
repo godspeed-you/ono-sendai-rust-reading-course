@@ -1,0 +1,25 @@
+id: c13-serve-hello
+source:
+  file: crates/ono-protocol/src/service.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 563
+  end_line: 563
+  anchor: pub async fn serve<T, S>
+  content_hash: sha256:8a403153929f253025a87c336156393b554c653c6d509073d6dde73295d27961
+  code: |
+    pub async fn serve<T, S>(transport: T, config: ServerConfig, service: S) -> Result<(), ErrorValue>
+- start_line: 593
+  end_line: 601
+  anchor: let Message::Hello(hello) =
+  content_hash: sha256:6023fd7ba5d5c7ff4beebb3b5ef2114bd4e9613523992c660759111048ab996b
+  code: |2
+        let Message::Hello(hello) =
+            decode_message(opening.kind(), opening.payload(), &schemas, &limits)
+                .map_err(ErrorValue::from)?
+        else {
+            return Err(ErrorValue::from(ProtocolError::MalformedPayload {
+                kind: opening.kind(),
+                detail: "a link opens with a hello".to_owned(),
+            }));
+        };

@@ -1,0 +1,23 @@
+id: c01-span-integration-test
+source:
+  file: crates/ono-core/tests/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 13
+  anchor: fn should_describe_a_half_open_byte_range_when_constructed()
+  content_hash: sha256:a11633cc3c216c029b26387d26bedceaa369f73bbb98ed37ed8cf16e6087cfce
+  code: |
+    //! Spans are byte offsets into a source line. Diagnostics of spec section 16.3 point at them,
+    //! so their arithmetic is a contract of its own.
+
+    use ono_core::Span;
+
+    #[test]
+    fn should_describe_a_half_open_byte_range_when_constructed() {
+        let span = Span::new(3, 7);
+        assert_eq!(span.start(), 3);
+        assert_eq!(span.end(), 7);
+        assert_eq!(span.len(), 4);
+        assert!(!span.is_empty());
+    }

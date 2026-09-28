@@ -1,0 +1,30 @@
+id: c06-schema-id-from-str
+source:
+  file: crates/ono-value/src/schema.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 55
+  end_line: 74
+  anchor: let (name, version) = text.rsplit_once('/').ok_or_else(error)?;
+  content_hash: sha256:fc1f8dfc8f4088b9def7779b2110355aac222e5b74ceb77f3409c6934f2bacd9
+  code: |
+    impl FromStr for SchemaId {
+        type Err = ErrorValue;
+
+        fn from_str(text: &str) -> Result<Self, Self::Err> {
+            let error = || {
+                ErrorValue::new(
+                    ErrorCode::ParseSyntax,
+                    format!("`{text}` is not a schema id; expected `name/version`"),
+                )
+            };
+            let (name, version) = text.rsplit_once('/').ok_or_else(error)?;
+            if name.is_empty() {
+                return Err(error());
+            }
+            Ok(Self::new(
+                name,
+                version.parse::<u32>().map_err(|_| error())?,
+            ))
+        }
+    }

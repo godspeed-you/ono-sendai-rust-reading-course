@@ -1,0 +1,18 @@
+id: c18-registry-snapshot
+source:
+  file: crates/ono-provider-api/src/registry.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 102
+  end_line: 109
+  anchor: self.provider_for(query.target_name())?.snapshot(query)
+  content_hash: sha256:8b51ea37dcff543ba9adabb7653b1fc1646616510ed963be64193e614ea811ec
+  code: |2
+        /// The objects matching `query`, from the first available provider for its target.
+        ///
+        /// # Errors
+        ///
+        /// See [`ProviderRegistry::provider_for`], plus whatever the provider itself reports.
+        pub fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+            self.provider_for(query.target_name())?.snapshot(query)
+        }

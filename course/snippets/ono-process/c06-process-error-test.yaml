@@ -1,0 +1,17 @@
+id: c06-process-error-test
+source:
+  file: crates/ono-process/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 106
+  end_line: 112
+  anchor: fn should_fall_back_to_permission_denied_for_an_unclassified_system_failure()
+  content_hash: sha256:e487b5ba9f8f537cdf91979128d32abf0e659499e9cbe127df8c2b3e31fd2ff6
+  code: |2
+        #[test]
+        fn should_fall_back_to_permission_denied_for_an_unclassified_system_failure() {
+            // EMFILE: too many open files. The taxonomy has no generic I/O code.
+            let error = Error::from_io("opening a pipe", &io::Error::from_raw_os_error(24));
+            assert_eq!(error.code(), ErrorCode::IoPermissionDenied);
+            assert!(error.message().contains("opening a pipe"));
+        }

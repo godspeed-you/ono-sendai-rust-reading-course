@@ -1,0 +1,45 @@
+id: c03-span-struct-impl
+source:
+  file: crates/ono-core/src/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 16
+  end_line: 37
+  anchor: pub struct Span {
+  content_hash: sha256:335eae6800e4b8960525e331bb5dcef2e2e55a566ddec3d27a832bcab95b7164
+  code: |
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct Span {
+        start: u32,
+        end: u32,
+    }
+
+    impl Span {
+        /// Creates a span covering `[start, end)`.
+        ///
+        /// The ends are ordered on construction, so a caller that computed them backwards gets a
+        /// usable span rather than a panic in the middle of rendering a diagnostic.
+        #[must_use]
+        pub const fn new(start: u32, end: u32) -> Self {
+            if start <= end {
+                Self { start, end }
+            } else {
+                Self {
+                    start: end,
+                    end: start,
+                }
+            }
+        }
+- start_line: 72
+  end_line: 79
+  anchor: 'pub fn join(self, other: Self) -> Self {'
+  content_hash: sha256:99f0e725d72becbbe936b38ac9ab2026036ab7286ab02169ef0262251a6b3ea9
+  code: |2
+        /// The smallest span covering both operands, regardless of their order.
+        #[must_use]
+        pub fn join(self, other: Self) -> Self {
+            Self {
+                start: self.start.min(other.start),
+                end: self.end.max(other.end),
+            }
+        }

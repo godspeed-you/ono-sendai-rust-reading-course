@@ -1,0 +1,26 @@
+id: c21-netlink-drain
+source:
+  file: crates/ono-provider-netlink/src/transport.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 84
+  end_line: 99
+  anchor: pub(crate) fn drain(&self) -> bool {
+  content_hash: sha256:877e91bcdf8f9eaf5164c7dafe74e4e480c3322a87463dae09fdf1971edb3d29
+  code: |2
+        /// Reads and discards everything the kernel has queued, answering whether there was any.
+        ///
+        /// A multicast reader needs to know *that* something changed, not what: the answer is a
+        /// fresh dump decoded by the same functions a `get` uses, so one code path describes an
+        /// interface however the question was asked (ADR-0235).
+        pub(crate) fn drain(&self) -> bool {
+            let mut buffer = vec![0u8; RECEIVE_BUFFER];
+            let mut seen = false;
+            while let Ok(read) = recv(self.fd.as_raw_fd(), &mut buffer, MsgFlags::MSG_DONTWAIT) {
+                if read == 0 {
+                    break;
+                }
+                seen = true;
+            }
+            seen
+        }

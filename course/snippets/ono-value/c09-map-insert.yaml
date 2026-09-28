@@ -1,0 +1,22 @@
+id: c09-map-insert
+source:
+  file: crates/ono-value/src/map.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 61
+  end_line: 72
+  anchor: Some((_, slot)) => Some(std::mem::replace(slot, value)),
+  content_hash: sha256:64600031c77ca0ef38bdffaf8efebd27fdb9260ddc5cba567dce341ade831773
+  code: |2
+        /// Stores `value` under `key`, returning what was there before.
+        ///
+        /// Re-inserting an existing key keeps that key's original position.
+        pub fn insert(&mut self, key: Arc<str>, value: Value) -> Option<Value> {
+            match self.entries.iter_mut().find(|(entry, _)| *entry == key) {
+                Some((_, slot)) => Some(std::mem::replace(slot, value)),
+                None => {
+                    self.entries.push((key, value));
+                    None
+                }
+            }
+        }

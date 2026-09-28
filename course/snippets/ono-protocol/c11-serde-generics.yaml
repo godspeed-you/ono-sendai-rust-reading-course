@@ -1,0 +1,36 @@
+id: c11-serde-generics
+source:
+  file: crates/ono-protocol/src/message.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 495
+  end_line: 498
+  anchor: FrameKind::Hello => from_serde(kind, json).map(Message::Hello),
+  content_hash: sha256:1657593e4fda2a4993d7c45312d4e835cbc1869bef573b273920603ac8a871f8
+  code: |2
+        match kind {
+            FrameKind::Hello => from_serde(kind, json).map(Message::Hello),
+            FrameKind::Accept => from_serde(kind, json).map(Message::Accept),
+            FrameKind::Reject => from_serde(kind, json).map(Message::Reject),
+- start_line: 543
+  end_line: 559
+  anchor: 'fn from_serde<T: serde::de::DeserializeOwned>('
+  content_hash: sha256:98e2fa56a07c8fd65fe4a710c8704935c2259a73a3b0e7fd7d0e7d4dab10f81b
+  code: |
+    fn to_serde<T: serde::Serialize>(kind: FrameKind, value: &T) -> Result<Json, ProtocolError> {
+        serde_json::to_value(value).map_err(|error| bad(kind, error))
+    }
+
+    fn from_serde<T: serde::de::DeserializeOwned>(
+        kind: FrameKind,
+        json: Json,
+    ) -> Result<T, ProtocolError> {
+        serde_json::from_value(json).map_err(|error| bad(kind, error))
+    }
+
+    fn bad(kind: FrameKind, detail: impl std::fmt::Display) -> ProtocolError {
+        ProtocolError::MalformedPayload {
+            kind,
+            detail: detail.to_string(),
+        }
+    }

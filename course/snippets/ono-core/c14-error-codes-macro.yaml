@@ -1,0 +1,74 @@
+id: c14-error-codes-macro
+source:
+  file: crates/ono-core/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 97
+  end_line: 160
+  anchor: macro_rules! error_codes {
+  content_hash: sha256:904f144f25b565467c30365579e463a0b4b48e772d7838904190048cd442a45d
+  code: |
+    /// Builds [`ErrorCode`] together with its number, selector and kind, so the three can never
+    /// drift apart and the exhaustive lists stay derived rather than restated.
+    macro_rules! error_codes {
+        ($( $variant:ident => $number:literal, $name:literal, $kind:ident, $doc:literal; )*) => {
+            /// A stable, machine-readable error identity from spec §43.
+            ///
+            /// The rendered form is `Ono-Sendai-ENNNN`; the selector is the dotted `family.detail`
+            /// name that `docs/contracts/errors.yaml`, `try`/`catch` and predicates over error values
+            /// match on.
+            ///
+            /// ```
+            /// use ono_core::{ErrorCode, ErrorKind};
+            /// assert_eq!(ErrorCode::ParseSyntax.code(), "Ono-Sendai-E0001");
+            /// assert_eq!(ErrorCode::ParseSyntax.name(), "parse.syntax");
+            /// assert_eq!(ErrorCode::ParseSyntax.kind(), ErrorKind::Parse);
+            /// ```
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            #[non_exhaustive]
+            pub enum ErrorCode {
+                $( #[doc = $doc] $variant, )*
+            }
+
+            impl ErrorCode {
+                /// Every code of the taxonomy, in numeric order.
+                pub const ALL: &'static [ErrorCode] = &[ $( ErrorCode::$variant, )* ];
+
+                /// The rendered code, e.g. `Ono-Sendai-E0001`.
+                #[must_use]
+                pub const fn code(self) -> &'static str {
+                    match self { $( ErrorCode::$variant => $number, )* }
+                }
+
+                /// The dotted selector, e.g. `parse.syntax`.
+                #[must_use]
+                pub const fn name(self) -> &'static str {
+                    match self { $( ErrorCode::$variant => $name, )* }
+                }
+
+                /// The kind this code belongs to (ADR-0006).
+                #[must_use]
+                pub const fn kind(self) -> ErrorKind {
+                    match self { $( ErrorCode::$variant => ErrorKind::$kind, )* }
+                }
+            }
+        };
+    }
+
+    error_codes! {
+        ParseSyntax => "Ono-Sendai-E0001", "parse.syntax", Parse,
+            "The input is not valid Ono syntax.";
+        ParseIncomplete => "Ono-Sendai-E0002", "parse.incomplete", Parse,
+            "The input ended in the middle of a construct; more text would complete it.";
+        ResolveCommandNotFound => "Ono-Sendai-E0101", "resolve.command_not_found", Resolution,
+            "No keyword, function, native command or executable answers to this name.";
+        ResolveTargetNotFound => "Ono-Sendai-E0102", "resolve.target_not_found", Resolution,
+            "The verb is known but has no such target.";
+        ResolveAmbiguous => "Ono-Sendai-E0103", "resolve.ambiguous", Resolution,
+            "The name matches more than one candidate and no namespace was given.";
+        ResolveNotInBuild => "Ono-Sendai-E0104", "resolve.not_in_build", Resolution,
+            "The name belongs to a tier this build of ono was compiled without.";
+        TypeMismatch => "Ono-Sendai-E0201", "type.mismatch", Type,
+            "A value did not have the type the operation requires.";
+        TypeUnknownField => "Ono-Sendai-E0202", "type.unknown_field", Type,
+            "A record schema has no such field.";

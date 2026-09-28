@@ -1,0 +1,63 @@
+id: c15-invocation-rebind
+source:
+  file: crates/ono-command/src/invoke.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 186
+  end_line: 199
+  anchor: pub struct Invocation<'a> {
+  content_hash: sha256:cd19245c7b681da757f11f46354808c2aad68f55392983aa49ecbf3d8b43b39e
+  code: |
+    pub struct Invocation<'a> {
+        contract: &'a CommandContract,
+        arguments: &'a BoundArguments,
+        providers: &'a ProviderRegistry,
+        input: Option<ValueStream>,
+        cancel: CancelToken,
+        scope: Arc<Scope>,
+        context: Vec<ContextFrame>,
+        adapters: Option<Arc<ono_adapter::Registry>>,
+        resolver: Option<Resolver>,
+        displays: bool,
+        temporal: Arc<TemporalContext>,
+        verbs: Option<&'a CommandRegistry>,
+    }
+- start_line: 394
+  end_line: 417
+  anchor: 'scope: Arc::clone(&self.scope),'
+  content_hash: sha256:dfc361b8b869d038a153c55c2afc987209c30acc1346fe456bf0431c47f5495c
+  code: |2
+        /// The same invocation over `arguments` instead of the ones it was built with.
+        ///
+        /// The input stream moves — a stream is consumed once — and everything else is shared, so
+        /// the implementation that runs sees exactly the pipeline it belonged to, with the arguments
+        /// the context filled in (ADR-0076).
+        fn rebind<'b>(&mut self, arguments: &'b BoundArguments) -> Invocation<'b>
+        where
+            'a: 'b,
+        {
+            Invocation {
+                contract: self.contract,
+                arguments,
+                providers: self.providers,
+                input: self.input.take(),
+                cancel: self.cancel.clone(),
+                scope: Arc::clone(&self.scope),
+                context: self.context.clone(),
+                adapters: self.adapters.clone(),
+                resolver: self.resolver.clone(),
+                displays: self.displays,
+                temporal: Arc::clone(&self.temporal),
+                verbs: self.verbs,
+            }
+        }
+- start_line: 563
+  end_line: 567
+  anchor: static PRESENT
+  content_hash: sha256:f44fd618aad4aed7a54df4cb77a60ae8c3888b199661a7949a8cb8601da28302
+  code: |
+    /// The present, shared, so an invocation that never hears about time allocates nothing for it.
+    fn present_context() -> Arc<TemporalContext> {
+        static PRESENT: std::sync::OnceLock<Arc<TemporalContext>> = std::sync::OnceLock::new();
+        Arc::clone(PRESENT.get_or_init(|| Arc::new(TemporalContext::Present)))
+    }

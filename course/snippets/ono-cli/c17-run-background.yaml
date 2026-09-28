@@ -1,0 +1,85 @@
+id: c17-run-background
+source:
+  file: crates/ono-cli/src/eval/native/drive.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 315
+  end_line: 344
+  anchor: let handle = runtime.spawn(async move {
+  content_hash: sha256:d0e53c97c2370fd02b91c57d81d2109c24ef9ccfad9fa65624052d9ba28d5184
+  code: |2
+        let providers = providers.clone();
+
+        let model = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+        let values: std::sync::Arc<std::sync::Mutex<Vec<Value>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let failures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let task_model = std::sync::Arc::clone(&model);
+        let task_values = std::sync::Arc::clone(&values);
+        let task_failures = std::sync::Arc::clone(&failures);
+        let handle = runtime.spawn(async move {
+            let mut stream: Option<ValueStream> = None;
+            for (contract, arguments) in &bound {
+                let started = std::time::Instant::now();
+                let temporal = match crate::temporal::invocation_context(arguments).await {
+                    Ok(temporal) => temporal,
+                    Err(error) => {
+                        let _ = task_failures.lock().map(|mut held| held.push(error));
+                        return;
+                    }
+                };
+                let mut invocation = Invocation::new(contract, arguments, &providers)
+                    .with_scope(std::sync::Arc::clone(&scope))
+                    .with_context(context.clone())
+                    .with_adapters(std::sync::Arc::clone(&adapters), resolver.clone())
+                    .with_temporal(temporal, registry);
+                if let Some(previous) = stream.take() {
+                    invocation = invocation.with_input(previous);
+                }
+                match table.run(contract.id(), &mut invocation).await {
+- start_line: 365
+  end_line: 404
+  anchor: session.push_native_job(crate::session::NativeJob {
+  content_hash: sha256:72314bbd6aecb744b723aa48c1955db32e626e5b3295f94490b86f6105da0352
+  code: |2
+            let Some(mut stream) = stream else {
+                return;
+            };
+            while let Some(event) = stream.recv().await {
+                match event {
+                    StreamEvent::Value(value) => {
+                        if !crate::live::apply(
+                            &mut task_model
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner),
+                            &value,
+                        ) {
+                            task_values
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .push(value);
+                        }
+                    }
+                    StreamEvent::Failure(error) => {
+                        task_failures
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(error);
+                    }
+                }
+            }
+        });
+
+        let number = session.executor().reserve_job_number();
+        eprintln!("[%{number}]");
+        session.push_native_job(crate::session::NativeJob {
+            number,
+            command: command_text,
+            model,
+            values,
+            failures,
+            started: Value::now(),
+            handle,
+        });
+        Ok(ExitStatus::SUCCESS)

@@ -1,0 +1,35 @@
+id: c09-table-builders
+source:
+  file: crates/ono-render/src/table.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 138
+  end_line: 162
+  anchor: 'pub fn push_row(&mut self, mut cells: Vec<Cell>) {'
+  content_hash: sha256:ab209edae1fcf44998a9418851854bdd4c3a0e131fc24029355731327b5656d8
+  code: |
+    impl Table {
+        /// An empty table with the given columns.
+        #[must_use]
+        pub fn new(columns: Vec<Column>) -> Self {
+            Self {
+                columns,
+                rows: Vec::new(),
+            }
+        }
+
+        /// Appends a row, in builder style.
+        ///
+        /// A row shorter than the column list is padded with empty cells; a longer one is truncated,
+        /// so a malformed row can never make the layout panic in front of a user.
+        #[must_use]
+        pub fn with_row(mut self, cells: Vec<Cell>) -> Self {
+            self.push_row(cells);
+            self
+        }
+
+        /// Appends a row.
+        pub fn push_row(&mut self, mut cells: Vec<Cell>) {
+            cells.resize(self.columns.len(), Cell::new(""));
+            self.rows.push(cells);
+        }

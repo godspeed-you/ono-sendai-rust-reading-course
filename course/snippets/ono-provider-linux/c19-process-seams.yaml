@@ -1,0 +1,126 @@
+id: c19-process-seams
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 82
+  end_line: 93
+  anchor: 'pub trait Signals: Send + Sync + std::fmt::Debug {'
+  content_hash: sha256:28ab848ba66dca273d6592d6e1abbf473d4041dff99f8010a2a3cf731475f08b
+  code: |
+    /// Delivering a signal to a process.
+    ///
+    /// Injectable so that the pid-reuse refusal of ADR-0015 T13 can be proven without a test run
+    /// ever being able to signal an unrelated process on the machine it runs on.
+    pub trait Signals: Send + Sync + std::fmt::Debug {
+        /// Delivers `signal` to `pid`.
+        ///
+        /// # Errors
+        ///
+        /// Returns the structured form of the kernel's refusal.
+        fn send(&self, pid: i32, signal: i32) -> Result<(), ErrorValue>;
+    }
+- start_line: 150
+  end_line: 161
+  anchor: nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), signal)
+  content_hash: sha256:0a76b26075cab2cd86628fcc8ca8646cdff5cfb2be516ae0629ff887fcc1ac0b
+  code: |
+    /// `kill(2)`.
+    #[derive(Debug, Default)]
+    pub struct KernelSignals;
+
+    impl Signals for KernelSignals {
+        fn send(&self, pid: i32, signal: i32) -> Result<(), ErrorValue> {
+            let signal = nix::sys::signal::Signal::try_from(signal)
+                .map_err(|_| unknown_signal(&signal.to_string()))?;
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), signal)
+                .map_err(|errno| errno_error(errno, &PathBuf::from(format!("/proc/{pid}"))))
+        }
+    }
+- start_line: 170
+  end_line: 240
+  anchor: 'samples: Arc<Mutex<HashMap<(i64, u64), Sample>>>,'
+  content_hash: sha256:5460c9a546d750d3f669aa54b34c0a395f1676626312664f496d72658f4a6740
+  code: |
+    /// Everything reading one process needs, cheap enough to hand to a streaming task.
+    #[derive(Debug, Clone)]
+    struct Reader {
+        proc_root: PathBuf,
+        accounts: Arc<dyn Accounts>,
+        clock: Arc<dyn Clock>,
+        boot_seconds: Option<i64>,
+        boot_id: Option<String>,
+        /// How long the machine had been up when this reader was made, from `/proc/uptime`. It is
+        /// read once per query rather than once per process: every process of one snapshot is
+        /// measured against the same instant (ADR-0232).
+        uptime_seconds: Option<f64>,
+        clock_ticks: u64,
+        page_size: u128,
+        samples: Arc<Mutex<HashMap<(i64, u64), Sample>>>,
+    }
+
+    /// Processes, from procfs.
+    ///
+    /// ```no_run
+    /// use ono_provider_api::{Provider, Query};
+    /// use ono_provider_linux::ProcessProvider;
+    ///
+    /// let provider = ProcessProvider::new();
+    /// let stream = provider.snapshot(&Query::target("process"))?;
+    /// assert!(stream.boundedness().is_bounded());
+    /// # Ok::<(), ono_value::ErrorValue>(())
+    /// ```
+    #[derive(Debug)]
+    pub struct ProcessProvider {
+        reader: Reader,
+        signals: Arc<dyn Signals>,
+        priorities: Arc<dyn Priorities>,
+    }
+
+    impl Default for ProcessProvider {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ProcessProvider {
+        /// Processes of the machine this shell runs on.
+        #[must_use]
+        pub fn new() -> Self {
+            Self::rooted("/")
+        }
+
+        /// Processes of the `proc` filesystem mounted under `root`.
+        ///
+        /// `root` locates the kernel interface — `<root>/proc` — and nothing else: the paths inside
+        /// a record are the ones the kernel itself reported.
+        #[must_use]
+        pub fn rooted(root: impl AsRef<Path>) -> Self {
+            let proc_root = root.as_ref().join("proc");
+            Self {
+                reader: Reader {
+                    boot_seconds: procfs::boot_time_seconds(&proc_root),
+                    boot_id: procfs::boot_id(&proc_root),
+                    uptime_seconds: procfs::uptime_seconds(&proc_root),
+                    proc_root,
+                    accounts: Arc::new(NssAccounts::new()),
+                    clock: Arc::new(SystemClock::new()),
+                    clock_ticks: procfs::clock_ticks(),
+                    page_size: procfs::page_size(),
+                    samples: Arc::new(Mutex::new(HashMap::new())),
+                },
+                signals: Arc::new(KernelSignals),
+                priorities: Arc::new(KernelPriorities),
+            }
+        }
+- start_line: 256
+  end_line: 261
+  anchor: 'pub fn with_signals(mut self, signals: Arc<dyn Signals>) -> Self {'
+  content_hash: sha256:bf7401deb602ba281b16a9c3f79a99526de2a8ba86b6860edb38047d59a8b000
+  code: |2
+        /// Delivers signals through `signals`.
+        #[must_use]
+        pub fn with_signals(mut self, signals: Arc<dyn Signals>) -> Self {
+            self.signals = signals;
+            self
+        }

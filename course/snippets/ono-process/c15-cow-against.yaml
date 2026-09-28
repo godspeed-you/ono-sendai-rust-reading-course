@@ -1,0 +1,45 @@
+id: c15-cow-against
+source:
+  file: crates/ono-process/src/plan.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 190
+  end_line: 212
+  anchor: Redirect::Write { fd, path } => {
+  content_hash: sha256:09e1df2788f7d5cb3775b91a1f41240b0d60eb914972049d7d9b285d0e777036
+  code: |2
+            Redirect::Write { fd, path } => {
+                let target = against(path, cwd);
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&target)
+                    .map_err(|error| {
+                        Error::from_io(format!("opening {} for writing", path.display()), &error)
+                    })?;
+                plan.set(fd.raw(), OwnedFd::from(file));
+            }
+            Redirect::Append { fd, path } => {
+                let target = against(path, cwd);
+                let file = OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&target)
+                    .map_err(|error| {
+                        Error::from_io(format!("opening {} for appending", path.display()), &error)
+                    })?;
+                plan.set(fd.raw(), OwnedFd::from(file));
+            }
+- start_line: 226
+  end_line: 232
+  anchor: fn against<'a>
+  content_hash: sha256:e4cd80a351a9ae1af96a9de0c5cf295dfcaceab7c88822a95ddb056f916b14c0
+  code: |
+    /// A redirection path is relative to the directory the command will run in, as in a shell.
+    fn against<'a>(path: &'a Path, cwd: Option<&Path>) -> Cow<'a, Path> {
+        match cwd {
+            Some(dir) if path.is_relative() => Cow::Owned(dir.join(path)),
+            _ => Cow::Borrowed(path),
+        }
+    }

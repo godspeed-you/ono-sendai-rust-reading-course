@@ -1,0 +1,1048 @@
+id: iterators-closures
+number: 12
+title: Iterators and closures
+summary: |
+  From here on the course changes pace. Chapters 12 to 19 are **code-reading exercises**: each
+  lesson still introduces its idea with real Ono-Sendai code, but most of the work is yours —
+  reading whole functions, tracing values and control flow, and naming the abstraction in front
+  of you. Every exercise has a worked analysis that separates what the code guarantees, what
+  follows from Rust's rules, and what is an architectural interpretation.
+
+  This chapter is about the two constructs that make Ono-Sendai's code look "functional":
+  **iterators** (a source, a chain of lazy adapters, one consumer) and **closures** (small
+  anonymous functions that can capture the variables around them). You will read a one-line
+  lookup, the provider registry, value comparison, the `env` provider's filtering, the handles
+  an entered object answers to, the transforms handed to the pipeline engine, and finally an
+  iterator Ono-Sendai writes by hand to walk untrusted kernel bytes.
+lessons:
+  - id: iterators-closures-01
+    title: "Iterator chains: a source, adapters, a consumer"
+    stage: practice
+    summary: Read an iterator chain from left to right — where the items come from, what each adapter does, and which call finally makes it run.
+    prerequisites: [generics-01]
+    concepts: [iterators, closures, borrowing]
+    ono_topics: [value-model, providers]
+    objectives:
+      - Split an iterator chain into its source, its adapters and its consumer.
+      - Say whether the items of a chain are owned values, copies or borrows.
+      - Explain why iterator chains are lazy, and which call makes them do work.
+      - Recognise when Ono-Sendai prefers a plain `for` loop over a chain, and why.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          You have met iterators in passing: `impl IntoIterator<Item = …>` parameters and
+          `MapValue`'s iterator-returning methods in [chapter 11](chapter:generics). This chapter
+          reads them head-on, because almost every non-trivial function in Ono-Sendai contains at
+          least one chain such as `.iter().filter(…).map(…).collect()`.
+
+          The first example is the smallest real chain in the codebase. `ByteUnit` is the unit of a
+          byte-size literal (`KiB`, `MB`, …), and `from_suffix` turns the text after the number in
+          `512MiB` into a unit. It is called from `ByteSize::parse` and from both expression
+          evaluators whenever a literal carries a suffix.
+      - type: code
+        snippet: c12-byteunit-from-suffix
+        caption: |
+          `Self::ALL` is a `&'static [ByteUnit]` listing every unit; `ByteUnit` derives `Copy`.
+        annotations:
+          - lines: 111
+            token: "Self::ALL"
+            kind: rust
+            body: |
+              The **source**: a slice of every unit, in the order spec §10.6 lists them.
+          - lines: 112-113
+            kind: ownership
+            body: |
+              `.iter()` yields `&ByteUnit` — borrows into the static slice. `.copied()` turns each
+              borrow into a `ByteUnit` value. That is only possible because `ByteUnit` is `Copy`: a
+              copy of a unit is a plain bitwise copy of a small enum tag.
+          - lines: 114
+            kind: flow
+            body: |
+              The **consumer**. `find` pulls items one at a time, calls the closure on each, and
+              stops at the first `true`, returning `Some(unit)`; if the source runs dry it returns
+              `None`. The closure `|unit| unit.suffix() == suffix` reads the function's `suffix`
+              parameter from the surrounding scope — it *captures* it by reference.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          An iterator is a value with a `next()` method that returns `Option<Item>`: `Some(item)`
+          while there are items, `None` at the end. Everything else is built on that one method.
+
+          Read a chain in three parts:
+
+          | Part | In `from_suffix` | Job |
+          |---|---|---|
+          | source | `Self::ALL.iter()` | produces items |
+          | adapters | `.copied()` | wrap the iterator in another iterator that transforms, filters or combines items |
+          | consumer | `.find(…)` | calls `next()` until it has its answer |
+
+          Adapters are **lazy**. `.copied()` does no work when it is called; it only returns a new
+          iterator that will copy each item *when asked*. Nothing happens until a consumer such as
+          `find`, `collect`, `all`, `any`, `count` or a `for` loop starts pulling. That is also why
+          `find` can stop early: once it has found `MiB` it never asks for `GiB`.
+
+          The `|unit| …` syntax is a **closure**, an anonymous function. For now read it as "a
+          function of `unit`" that may use variables from around it. [Lesson 3](lesson:iterators-closures-03)
+          looks closely at how closures capture.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The doc comment gives the reason for *exact* matching: "Matching is case-sensitive so
+          `MB` and `MiB` can never be confused for one another." `MB` is 1 000 000 bytes and `MiB`
+          is 1 048 576; a case-insensitive or prefix match would silently turn one into the other.
+          Returning `Option<Self>` keeps "no such unit" visible, and `ByteSize::parse` turns that
+          `None` into a `type.invalid_unit` error with `ok_or_else(…)?`.
+      - type: prose
+        kind: context
+        title: A registry answering questions with chains
+        body: |
+          The provider registry (first met in [chapter 10](chapter:traits)) is a
+          `Vec<Arc<dyn Provider>>` in registration order. Two of its questions are answered with
+          chains, and one with a plain loop. Read all three.
+      - type: code
+        snippet: c12-registry-for-target
+        caption: |
+          `Provider::schemas` returns an owned `Vec<Arc<Schema>>`; `Provider::targets` returns a
+          borrowed `&[&str]`.
+        highlight: [50, 59, 81]
+        annotations:
+          - lines: 48-51
+            kind: rust
+            body: |
+              `flat_map` calls the closure on every provider. Each call returns a *collection*
+              (a `Vec<Arc<Schema>>`), and `flat_map` flattens them into one stream of
+              `Arc<Schema>` items. `collect()` is the consumer; the return type
+              `Vec<Arc<Schema>>` tells it what to build.
+          - lines: 56
+            kind: ownership
+            body: |
+              `Vec<&Arc<dyn Provider>>`: a vector of **borrows** into the registry's own vector.
+              No provider is copied and no reference count changes. By the elision rules the
+              borrows live as long as the `&self` borrow of the registry.
+          - lines: 59
+            kind: rust
+            body: |
+              `filter` keeps the items for which the closure returns `true`. `targets()` returns
+              `&[&str]`, and `.contains` wants a reference to an element, so the `&str`
+              parameter is passed as `&target` — a `&&str`.
+          - lines: 80-88
+            kind: flow
+            body: |
+              A plain `for` loop with an early `return` for the first available provider, and a
+              side effect — collecting a reason — for every unavailable one.
+      - type: prose
+        kind: ono
+        title: Why a chain in one place and a loop in the other?
+        body: |
+          `schemas` and `for_target` are pure questions: "every schema", "every claimant". A chain
+          states them directly and, in `for_target`, returns borrows so that the caller decides
+          whether it needs its own `Arc` handles.
+
+          `provider_for` does two things at once. It returns the **first** available claimant, and
+          if there is none it must explain **every** claimant's reason. The doc comment says why
+          the distinction matters: "`resolve.target_not_found` … and `provider.unavailable` —
+          carrying the provider's own reason — … The two are different questions and a user needs
+          to be told which one they are looking at." A loop with a `return` and a `push` expresses
+          "stop at the first success, remember every failure" without contortions. Ono-Sendai uses
+          whichever form reads more plainly; iterators are not a rule.
+      - type: exercise
+        id: iterators-closures-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `for_target("package")` returns two entries on a machine where both package providers
+          are registered. What exactly does the caller receive?
+        snippets: [c12-registry-for-target]
+        choices:
+          - text: Two new, independent provider objects, deep-copied from the registry.
+            feedback: |
+              No. Nothing in the chain clones anything: `iter()` yields references and `filter`
+              passes them through unchanged. A deep copy of a provider would also be impossible
+              here — `dyn Provider` is not required to implement `Clone`.
+          - text: Two new `Arc` handles, each a reference-count increment.
+            feedback: |
+              Close, but no. That would require `.cloned()` or `Arc::clone` somewhere in the chain,
+              and the return type would be `Vec<Arc<dyn Provider>>`. The `&` in
+              `Vec<&Arc<dyn Provider>>` says the elements are borrows.
+          - text: Two borrows of the `Arc`s stored inside the registry, valid while the registry is borrowed.
+            correct: true
+            feedback: |
+              Right. `self.providers.iter()` produces `&Arc<dyn Provider>` items, `filter` keeps
+              some of them, and `collect` gathers the references. The caller can use them but
+              cannot keep them past the borrow of the registry; if it needs to, it calls
+              `Arc::clone` itself.
+          - text: Only the first claimant, because `filter` stops at the first match.
+            feedback: |
+              No. That is what `find` does. `filter` keeps *every* item for which the closure
+              returns `true`; the consumer `collect` then pulls all of them.
+      - type: exercise
+        id: iterators-closures-01-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          `register_with_env` registers the dpkg package provider and then the rpm provider; both
+          claim the target `package`. On a Red Hat machine the dpkg provider reports
+          `Availability::Unavailable(reason)` and the rpm provider reports `Available`.
+
+          Trace `provider_for("package")` from its first line to its return. Which lines run,
+          how many times does the loop body run, and what is returned? Then do the same for a
+          machine where *neither* database exists.
+        snippets: [c12-registry-for-target]
+        hints:
+          - level: 1
+            body: |
+              Start with what `for_target` returns, in which order, and whether `claiming` can be
+              empty. Then follow the `match` for each element.
+        solution:
+          summary: |
+            On the Red Hat machine `claiming` holds two borrows (dpkg, rpm). The first iteration
+            pushes dpkg's reason into `reasons`; the second matches `Available` and returns
+            `Ok(rpm)` from inside the loop. The `provider.unavailable` error is never built. With
+            neither database, both iterations push a reason, the loop ends, and the function
+            returns `Err(provider.unavailable)` whose message joins both reasons with `"; "`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Line 71 calls `for_target`, which runs its whole chain (lines 57–60) and returns a
+                vector in registration order. Line 72's `is_empty()` is `false`, so the
+                `target_not_found` branch (73–77) is skipped. The loop (81–88) visits dpkg first:
+                `Unavailable(reason)` → `push`. It then visits rpm: `Available` → `return
+                Ok(provider)`, leaving the function immediately. Lines 89–99 are not reached.
+            - aspect: outputs
+              body: |
+                Red Hat: `Ok` holding a borrow of the rpm provider's `Arc`. Neither database:
+                `Err` with code `ProviderUnavailable`, a message such as
+                ``"`package` cannot be answered here — <dpkg-id>: <reason>; <rpm-id>: <reason>"``,
+                and the help line explaining that this is not "there are no packages".
+            - aspect: ownership
+              body: |
+                Nothing is cloned. `claiming` is a `Vec` of borrows into `self.providers`, and the
+                returned value is one of those borrows. `reasons` is a local `Vec<String>` that
+                owns freshly formatted strings; it is dropped on the successful path and consumed
+                by `join` on the failing one.
+            - aspect: errors
+              body: |
+                Two distinct failures: nobody claims the target (early `return Err` at 73) and
+                claimants exist but none can answer (the final `Err` at 89). The order of checks
+                guarantees that an empty claim list is never reported as "unavailable".
+          guarantees: |
+            The code guarantees that the first *available* claimant in registration order answers,
+            that an unavailable claimant never answers even if it comes first, and that the
+            unavailable error carries every claimant's own reason.
+          semantics: |
+            `return` inside the `for` loop leaves `provider_for` itself, not just the loop.
+            `for provider in &claiming` iterates by reference, so `claiming` is not consumed and
+            the items are borrows of borrows; the returned reference still points into the
+            registry, whose borrow (`&self`) bounds its lifetime.
+          interpretation: |
+            This is how Ono-Sendai lets several systems claim one noun without a special case:
+            registration order is priority, and availability is asked at query time. The same
+            mechanism lets a later provider extend a target (the struct's doc mentions KUANG/11
+            packages), and it keeps "nothing claims this" and "this system is not here" apart for
+            the user — the distinction the doc comment insists on.
+      - type: exercise
+        id: iterators-closures-01-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          Rewrite `provider_for`'s loop in your head as a single chain, for example with
+          `claiming.iter().find(|p| …)`. What would the chain version lose, or have to do twice?
+          What does that tell you about when Ono-Sendai chooses a chain and when a loop?
+        snippets: [c12-registry-for-target]
+        hints:
+          - level: 1
+            body: |
+              `find` answers "which is the first?". What does the error message need that `find`
+              does not keep?
+          - level: 2
+            body: |
+              The loop has two outputs: the early `return` and the `reasons` vector filled as a
+              side effect.
+        solution:
+          summary: |
+            `find(|p| matches!(p.availability(), Availability::Available))` would return the first
+            available provider, but on failure it throws away *why* each claimant was unavailable.
+            To build the error, the code would have to iterate a second time and call
+            `availability()` again on every provider. The loop does both jobs in one pass.
+          analysis:
+            - aspect: purpose
+              body: |
+                `provider_for` must answer with a provider **or** explain every refusal. A chain
+                expresses one result per consumer; this function needs a result and an
+                accumulated explanation.
+            - aspect: side-effects
+              body: |
+                `availability()` may inspect the system (a socket, a file, a service). Calling it
+                twice per provider would double that work and, in principle, could give two
+                different answers between the two passes.
+            - aspect: control-flow
+              body: |
+                The loop's `return Ok(provider)` is an early exit that a `find` would also give;
+                the `push` for every other variant is what has no direct place in `find`.
+            - aspect: traits
+              body: |
+                `schemas` and `for_target` are chains because they are pure selections over the
+                `Provider` trait's getters; no step has a side effect or a second output.
+          guarantees: |
+            As written, each claimant's `availability()` is called exactly once per
+            `provider_for` call, stopping at the first available one.
+          semantics: |
+            Iterator adapters are lazy and consumers such as `find` stop early, so a chain would
+            also stop at the first available provider. Collecting side information from inside a
+            `find` closure is possible (by capturing `&mut reasons`) but mixes a search with a
+            mutation, which is what the loop states openly.
+          interpretation: |
+            Ono-Sendai's code uses chains for selections and transformations and switches to
+            loops when a step needs early exit plus accumulated state, or when it awaits
+            something. When you read either form, ask the same questions: what is the source,
+            what is kept, what stops the walk, and what is produced.
+
+  - id: iterators-closures-02
+    title: "Asking about every element: zip, all, find_map and take"
+    stage: practice
+    summary: Read chains that compare two sequences, short-circuit on the first counterexample, and push a query's selectors down into a provider.
+    prerequisites: [iterators-closures-01]
+    concepts: [iterators, closures, pattern-matching, option]
+    ono_topics: [value-model, providers, rendering]
+    objectives:
+      - Read `zip` + `all` as "pairwise, and stop at the first mismatch".
+      - Destructure tuples in closure parameters.
+      - Read `find_map`, `Option::and_then`, `Option::is_none_or` and `take` in a real filter.
+      - Notice when a comparison depends on iteration order.
+    sections:
+      - type: prose
+        kind: context
+        title: Comparing data, not readings
+        body: |
+          Two readings of the same unchanged process differ in one thing: the instant each was
+          observed, recorded in the record's provenance. Ordinary `==` on a record compares
+          provenance too. `diff` and `watch` need a different question — "did the *data*
+          change?" — and `Value::same_data` answers it (ADR-0229, "a diff compares objects, not
+          readings"). For lists and maps it walks the elements and asks the same question of
+          each, so a record nested inside a list is compared by its data too.
+      - type: code
+        snippet: c12-value-same-data
+        annotations:
+          - lines: 440
+            token: "match (self, other)"
+            kind: rust
+            body: |
+              Matching on a **tuple of two references**. Each arm names the pair of variants it
+              handles. The patterns bind through the references, so `left` and `right` are
+              `&Arc<…>` borrows, not moved values.
+          - lines: 443-447
+            kind: flow
+            body: |
+              `&&` short-circuits: if the lengths differ, the element walk never starts. `zip`
+              pairs the two iterators element by element and **stops at the shorter one** — which
+              is exactly why the length check is needed. Without it, `[1, 2]` and `[1, 2, 3]` would
+              compare equal. `all` stops at the first pair for which the closure says `false`.
+          - lines: 452
+            kind: rust
+            body: |
+              A closure parameter can be a pattern. `zip` yields `(item_of_left, item_of_right)`
+              and each map item is itself `(key, value)`, so the parameter destructures a pair of
+              pairs. The inner names `left`/`right` shadow the outer ones inside the closure.
+          - lines: 457
+            kind: flow
+            body: |
+              Every other combination — two ints, a string and a record, … — falls back to
+              ordinary structural `==`.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          `zip`, `all` and `any` are the vocabulary of "for every element" questions:
+
+          - `a.zip(b)` produces `(a_item, b_item)` pairs until **either** side ends.
+          - `all(pred)` is `true` if `pred` holds for every item; it returns `false` at the first
+            counterexample and never looks further. An empty iterator is vacuously `true`.
+          - `any(pred)` is the mirror image: `true` at the first match, `false` for an empty
+            iterator.
+
+          `same_data` is also **recursive**: the closure on line 447 calls `same_data` on the
+          elements, which may be lists again. Recursion and iterators combine without any special
+          syntax.
+      - type: prose
+        kind: context
+        title: Pushing a query down into a provider
+        body: |
+          `get env PATH --exported` asks the `env` provider for bindings. The provider does not
+          hand every binding to the pipeline and let `where` sort it out; it applies the selectors
+          it understands itself. `selected` is that function. `query.selectors()` is a
+          `&[Selector]`; `Selector::Field { name, value }` is "field `name` equals `value`".
+          `query.option_value("exported")` is an `Option<&Value>`, and `query.max()` is the
+          `Option<usize>` limit.
+      - type: code
+        snippet: c12-env-selected
+        annotations:
+          - lines: 142-148
+            kind: rust
+            body: |
+              `find_map` combines `find` and `map`: the closure returns an `Option`, and the first
+              `Some` wins. The `match` inside uses a **guard** (`if name == "name"`) and turns the
+              selector's value into text with `as_str().ok()` — a `Result` converted into an
+              `Option`, so a non-text value simply does not count. `wanted` is an
+              `Option<&str>` borrowed from the query.
+          - lines: 149-151
+            kind: rust
+            body: |
+              `and_then` chains two optional steps: "if the option was given, and if it is a
+              bool". `exported` is an `Option<bool>`.
+          - lines: 152-153
+            kind: ownership
+            body: |
+              `bindings()` returns an **owned** `Vec<EnvBinding>` (a clone of what the provider
+              holds, taken under a lock — see [chapter 15](chapter:smart-pointers)).
+              `into_iter()` consumes that vector and yields owned `EnvBinding`s, which the chain
+              can move straight into the result.
+          - lines: 154-155
+            kind: rust
+            body: |
+              `is_none_or(f)` is `true` when the option is `None`, and otherwise `f(value)`. So
+              "no name selector" keeps every binding, and "a name selector" keeps only the matching
+              one. Two `filter`s in a row are an AND.
+          - lines: 156
+            kind: flow
+            body: |
+              `take(n)` stops after `n` items. `unwrap_or(usize::MAX)` makes "no limit" a limit no
+              list can reach, so the chain has one shape for both cases.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The module doc says the session **gives** this provider its bindings, "so what `set env`
+          bound a statement ago is what `get env` lists now". Filtering inside the provider keeps
+          the answer small, but it must mean exactly what the generic `where` would: every
+          selector that is not understood here is simply not applied (`_ => None`), and the
+          binding list is already in name order, so `take` returns the *first* bindings by name —
+          the deterministic output spec §50 asks for.
+      - type: exercise
+        id: iterators-closures-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `Option::is_none_or` takes `self` **by value**. Yet line 154 calls
+          `wanted.is_none_or(…)` once for every binding, many times on the same `wanted`. Why does
+          this compile?
+        snippets: [c12-env-selected]
+        choices:
+          - text: "`wanted` is an `Option<&str>`, which is `Copy`: each call receives a copy, and the original stays usable."
+            correct: true
+            feedback: |
+              Right. A shared reference `&str` is `Copy`, and `Option<T>` is `Copy` whenever `T`
+              is. Passing it by value copies two machine words; nothing is moved out of `wanted`.
+              The same holds for `exported`, an `Option<bool>`.
+          - text: The closure borrows `wanted`, so `is_none_or` actually receives `&Option<&str>`.
+            feedback: |
+              The closure does capture `wanted` by reference, but that does not change the
+              receiver type of `is_none_or`. The call copies the captured `Option<&str>` out of
+              the borrow — allowed only because the type is `Copy`.
+          - text: Each call moves `wanted`; the compiler re-creates it for the next binding.
+            feedback: |
+              Rust never re-creates a moved value. If `wanted` were not `Copy` (say an
+              `Option<String>`), the second call would be a "use of moved value" error — you would
+              write `wanted.as_deref().is_none_or(…)` instead.
+          - text: "`filter` clones every captured variable before each call."
+            feedback: |
+              No. `filter` knows nothing about the closure's captures, and Rust never clones
+              implicitly. Only `Copy` types are duplicated implicitly, bit for bit.
+      - type: exercise
+        id: iterators-closures-02-q2
+        exercise_type: trace-value
+        prompt: |
+          Two map values are built from the same entries in a different order:
+          `A = {pid: 1, name: "sshd"}` and `B = {name: "sshd", pid: 1}`.
+
+          `MapValue`'s `==` (in `map.rs`) checks that the lengths match and that every key of one
+          map is found with an equal value in the other. `MapValue::iter` yields `(key, value)`
+          pairs **in insertion order**.
+
+          Trace `Value::Map(A).same_data(&Value::Map(B))` and `Value::Map(A) == Value::Map(B)`.
+          What does each return? Compare the result with the doc comment's sentence "Identical to
+          `==` for every value but a record".
+        snippets: [c12-value-same-data]
+        hints:
+          - level: 1
+            body: |
+              Which arm of the `match` runs, and what are the first two pairs that `zip` produces?
+        solution:
+          summary: |
+            `same_data` returns `false`: the `Map` arm runs, the lengths match, and the first
+            zipped pair is `(("pid", 1), ("name", "sshd"))`, whose keys differ, so `all` stops at
+            once. `==` returns `true`, because `MapValue`'s equality looks each key up regardless of
+            order. For two maps with the same entries in different insertion orders the code
+            therefore does *not* behave like `==`, whatever the doc sentence says.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `(self, other)` is `(Value::Map(A), Value::Map(B))`, so the arm at line 449 runs.
+                `left.len() == right.len()` is `2 == 2`. `zip` pairs the insertion-ordered
+                entries: first `("pid", 1)` with `("name", "sshd")`. The closure evaluates
+                `left_key == right_key` → `"pid" == "name"` → `false`; `&&` skips the recursive
+                call; `all` returns `false` without looking at the second pair.
+            - aspect: types
+              body: |
+                `left` and `right` in the arm are `&Arc<MapValue>`; method calls such as `len()`
+                and `iter()` reach the `MapValue` through auto-deref. In the closure, `left_key`
+                is a `&str` and `left` a `&Value`.
+            - aspect: outputs
+              body: |
+                `same_data` → `false`, `==` → `true`. For two maps built in the *same* order, both
+                return the same answer.
+            - aspect: next-steps
+              body: |
+                To see whether this matters in practice, find the callers of `same_data` (the
+                `diff`/`watch` code named in ADR-0229) and check whether the maps they compare are
+                always built in a fixed key order — for example by the same provider code.
+          guarantees: |
+            The code guarantees an element-wise, order-sensitive comparison for lists and maps,
+            with records compared by `RecordValue::same_data`, and a plain `==` for everything
+            else.
+          semantics: |
+            `zip` pairs by position, never by key; `all` short-circuits; `&&` evaluates its right
+            side only if the left is `true`. None of these know anything about maps being
+            order-insensitive — that knowledge lives only in `MapValue`'s hand-written
+            `PartialEq`.
+          interpretation: |
+            The doc comment states the intent ("identical to `==` … but a record"); the map arm
+            is stricter than that for reordered maps. This is a good example of why the course
+            asks you to read the code rather than only its documentation: they usually agree, and
+            when they do not, the code is what runs. Whether the difference is ever observable
+            depends on how the compared maps are built, which this function alone cannot tell you.
+      - type: exercise
+        id: iterators-closures-02-q3
+        exercise_type: read-function
+        prompt: |
+          The table renderer must decide which columns a stream of values gets before it draws
+          anything: the record schema's columns, a shared map key list, a single `VALUE` column, or
+          `TYPE`/`VALUE` for a mixture. `Shape::of` makes that decision. Read the whole function
+          and explain what it returns for each kind of input, and how it gets there.
+        snippets: [c12-shape-of]
+        hints:
+          - level: 1
+            body: |
+              Everything is decided by the first value and one `all` over the whole slice. What
+              does each arm compare every value against?
+        solution:
+          summary: |
+            `Shape::of` looks at the first value. An empty slice is `Empty`. If the first value is
+            a record, the shape is `Records(schema)` when **every** value is a record of the same
+            schema id, otherwise `Mixed`. If it is a map, the shape is `Maps(keys)` when every value
+            is a map with exactly the same keys in the same order, otherwise `Mixed`. Otherwise it
+            is `Scalars` when no value is a record or a map, and `Mixed` if any is.
+          analysis:
+            - aspect: purpose
+              body: |
+                Classify a slice of values into the one shape that determines table columns. The
+                renderer's `table` method then matches on the result to build the columns.
+            - aspect: control-flow
+              body: |
+                `let Some(first) = values.first() else { return Shape::Empty; };` handles the empty
+                slice. The `match first` has three arms; each computes a `bool` named `same` (or an
+                inline condition) with `values.iter().all(…)`, then chooses between the specific
+                shape and `Mixed`. `all` stops at the first value that breaks the rule. The first
+                value is compared with itself too, which is harmless.
+            - aspect: types
+              body: |
+                `Shape` is a private enum: `Records` carries an `Arc<Schema>`, `Maps` a
+                `Vec<String>` of keys. `as_record()` / `as_map()` return `Result`s, and
+                `is_ok_and(|x| …)` reads "is `Ok`, and the value satisfies this".
+            - aspect: ownership
+              body: |
+                `Arc::clone(record.schema())` takes a new handle to the first record's schema — a
+                reference-count increment — so the returned `Shape` owns it independently of
+                `values`. The map keys are copied into owned `String`s (`map(str::to_owned)`)
+                because the shape must outlive the borrow of the first map.
+            - aspect: architecture
+              body: |
+                The comparison for maps is order-sensitive (`keys().zip(keys.iter()).all(…)`), so
+                two maps with the same keys in different orders make the stream `Mixed`.
+          guarantees: |
+            A `Records` shape guarantees every value is a record of one schema id; a `Maps` shape
+            guarantees identical key lists in identical order; `Scalars` guarantees no record or
+            map appears anywhere in the slice. Anything else is `Mixed`.
+          semantics: |
+            `let … else` must diverge in its `else` block (here with `return`). `all` on an
+            iterator is short-circuiting and returns `true` for a single element compared with
+            itself. `matches!(value, Value::Record(_) | Value::Map(_))` is a boolean pattern
+            test with an or-pattern.
+          interpretation: |
+            The `table` doc explains why `Mixed` exists instead of a union of all columns: "a row
+            that lacks a column would then look exactly like a row whose value is unknown — the
+            conflation spec §10.5 exists to prevent." `Shape::of` is where that rule is enforced:
+            it refuses to pretend heterogeneous values share columns.
+
+  - id: iterators-closures-03
+    title: "Closures that capture: borrowing helpers and `move` closures handed to the engine"
+    stage: practice
+    summary: Read a closure stored in a local variable, `?` inside a closure, and `move` closures that must own everything because the pipeline engine keeps them.
+    prerequisites: [iterators-closures-02]
+    concepts: [closures, iterators, shared-ownership, trait-bounds]
+    ono_topics: [spatial-context, command-dispatch, pipeline]
+    objectives:
+      - Say what a closure captures and whether it captures by reference or by value.
+      - Explain where `?` inside a closure returns to.
+      - Explain why a closure handed to `Where::new` must be `move` and own an `Arc` handle.
+      - Trace which values are cloned, moved or borrowed on the way into a transform.
+    sections:
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          A closure is an anonymous function that may use variables of the scope it is written
+          in. How it uses them decides how it **captures** them:
+
+          - only reads a variable → captures a shared reference `&v`;
+          - mutates it → captures `&mut v`;
+          - moves it (or is marked `move`) → takes ownership of it.
+
+          A closure that captures references cannot outlive the variables it borrows. Writing
+          `move |…| …` forces every capture to be taken by value, which is how a closure is made
+          self-contained enough to be stored, sent to another task, or kept after the function
+          that built it has returned.
+
+          The compiler also decides which of the traits `Fn`, `FnMut` and `FnOnce` a closure
+          implements from what its body does. The pipeline's function traits (`Predicate`,
+          `KeyFn`, `Mapper`, `Folder`) are implemented for every `Fn(…) + Send + Sync + 'static`
+          closure by blanket impls — you saw that pattern in [chapter 11](chapter:generics).
+      - type: prose
+        kind: context
+        title: The handles of an entered object
+        body: |
+          `enter socket …` makes later commands narrow themselves to the entered object
+          (ADR-0076, "the implicit selector seam"). To do that, the context frame records the
+          object's **handles**: its scalar fields by name, plus the scalar fields of structural
+          sub-records where nothing already claims the name — "so a socket's `local.port` answers
+          to `port`". `ContextFrame::of_record` computes them.
+      - type: code
+        snippet: c12-context-frame-of-record
+        annotations:
+          - lines: 71
+            token: "let fields = |record: &RecordValue| -> Vec<(String, Value)> {"
+            kind: rust
+            body: |
+              A closure stored in a local variable, with an explicit parameter type and return
+              type. It captures **nothing** — it only uses its own parameter — so it is really a
+              small local function, written as a closure to keep it next to its only user. It is
+              called twice: on the entered record (line 81) and on each nested record (line 89).
+          - lines: 76-78
+            kind: flow
+            body: |
+              `filter_map` keeps the `Some` results. The `?` after `record.get(…)` applies to an
+              `Option`, and it returns `None` **from the inner closure**, not from `fields` and
+              not from `of_record`: a declared field with no stored value is simply skipped.
+          - lines: 82-86
+            kind: ownership
+            body: |
+              `top.iter()` borrows the tuples; `filter` sees `&&(String, Value)` and the pattern
+              `|(_, value)|` reaches through the references. `.cloned()` then clones each kept
+              tuple: the `String` name is copied into a new allocation, the `Value` clone is a
+              copy or a reference-count increment.
+          - lines: 90
+            kind: rust
+            body: |
+              `any` with a closure that borrows `name` from the loop: "is this name already held?".
+              `*held == name` compares two `String`s by value without moving either.
+      - type: prose
+        kind: context
+        title: Closures the engine keeps
+        body: |
+          The pipeline crate (`ono-pipeline`) knows nothing about expressions: its doc says
+          "`where` holds a predicate, not an expression … which is what keeps this crate — and its
+          tests — free of a dependency on the parser (ADR-0005)". So something must turn the
+          parsed `where cpu > 20` into a Rust function. That is `TransformCommand::invoke`. The
+          transform module's doc: "read the expressions the contract declares, compile them into
+          the already-resolved functions the engine wants (ADR-0005), and hand the engine the
+          input stream."
+
+          Treat `evaluate` / `evaluate_to_value` as a black box: "evaluate this parsed expression
+          for this value, with these variables in scope". `Scope` holds the shell variables an
+          expression may see.
+      - type: code
+        snippet: c12-transform-invoke
+        annotations:
+          - lines: 66
+            token: "Arc::clone(ctx.scope())"
+            kind: ownership
+            body: |
+              `ctx.scope()` returns `&Arc<Scope>`. `Arc::clone` gives this function its **own**
+              handle — a reference-count increment, not a copy of the scope — so it no longer
+              depends on borrowing `ctx`.
+          - lines: 67
+            kind: flow
+            body: |
+              `take_input` moves the input stream out of the invocation (a stream is consumed
+              once). `ok_or_else` turns "no input" into an error; its closure borrows `spelling`
+              and only runs on the `None` path. `?` returns that error from `invoke`.
+          - lines: 73-77
+            kind: ownership
+            body: |
+              The `Where` arm. `predicate` is an owned, parsed expression. A second
+              `Arc::clone` makes a handle for this arm. The `move` closure then takes ownership of
+              `predicate` and that handle; `Where::new` boxes the closure, and
+              `input.transform(…)` hands it to the engine, which calls it once per value, later,
+              on a pipeline task.
+          - lines: 106
+            kind: rust
+            body: |
+              `Result::map`: if `evaluate` succeeded, wrap the one produced value in a `Vec` (the
+              `Mapper` trait's return type); if it failed, pass the error through unchanged.
+      - type: diagram
+        kind: ownership
+        title: Where the `where` predicate's pieces end up
+        art: |
+          Invocation (borrowed as ctx)
+            ├─ scope: Arc<Scope> ──Arc::clone──► scope (invoke's handle)
+            │                                      └─Arc::clone──► scope (Where arm's handle)
+            │                                                         │ move
+            ├─ input: Option<ValueStream> ──take()──► input            ▼
+            │                                           │     closure { predicate, scope }
+            └─ arguments ──expression()──► predicate ──move──►        │
+                                                        │   Where::new boxes it
+                                                        ▼          ▼
+                                     input.transform(Where { Box<dyn Predicate> })
+                                                        │ moved into the engine
+                                                        ▼
+                                           output: ValueStream  ──► Outcome::Values
+        description: |
+          The invocation holds the scope as an `Arc<Scope>`. `invoke` takes its own handle with
+          `Arc::clone` (a reference-count increment), and the `Where` arm takes another. The input
+          stream is *moved* out of the invocation with `take()`. The parsed predicate expression is
+          an owned value produced by `expression()`. The `move` closure takes ownership of the
+          predicate and of the arm's scope handle. `Where::new` puts the closure in a
+          `Box<dyn Predicate>`, and `input.transform(…)` moves the input stream and the `Where`
+          into the engine, which returns the output stream. Nothing borrowed from `invoke`'s stack
+          frame ends up inside the engine.
+      - type: prose
+        kind: ono
+        title: Why must these closures be `move`?
+        body: |
+          `Where::new` accepts `impl Predicate`, and the blanket impl makes a closure a
+          `Predicate` only if it is `Fn(&Value) -> Value + Send + Sync + 'static`. The `'static`
+          bound rules out borrowing anything from `invoke`'s stack frame, because the engine runs
+          the predicate on a pipeline task after `invoke` has returned. `Send + Sync` allow that
+          task to run on another thread. A `move` closure that owns an `Expr` and an `Arc<Scope>`
+          satisfies all of it: the `Arc` keeps the scope alive for as long as any stage still
+          holds a handle, and dropping the last handle frees it.
+
+          A detail worth reading exactly: in the `Where` arm the compiler would also accept
+          moving the outer `scope` straight into the closure, since nothing after the `match`
+          uses it. The per-arm `Arc::clone` costs one atomic increment and keeps every arm the
+          same shape; do not read it as something the borrow checker demands.
+      - type: exercise
+        id: iterators-closures-03-q1
+        exercise_type: trace-value
+        prompt: |
+          An entered socket record has the top-level fields `protocol: "tcp"`, `state: null`,
+          `local: {address: 10.0.0.5, port: 22}` and `remote: {address: 10.0.0.9, port: 51000}`
+          (the last two are nested records, declared in that order).
+
+          Trace `of_record` and list the final `handles` in order. Which `port` wins, and why?
+        snippets: [c12-context-frame-of-record]
+        hints:
+          - level: 1
+            body: |
+              Separate the two phases: what the `filter` at line 84 keeps from `top`, and what the
+              loop at lines 87–95 adds.
+          - level: 2
+            body: |
+              Line 90's `any` checks *all* handles collected so far, including those pushed by an
+              earlier nested record.
+        solution:
+          summary: |
+            `handles` ends as `[("protocol", "tcp"), ("address", 10.0.0.5), ("port", 22)]`.
+            `state` is null and `local`/`remote` are records, so none of them is a top-level
+            handle. The loop then visits `local` first and adds its `address` and `port`; when it
+            visits `remote`, both names are already held, so nothing is added. The local port 22
+            wins because `local` is declared first.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `fields(record)` lists the four declared fields that have stored values (the
+                null `state` is stored as `Value::Null`, so it is listed). The `filter` keeps only
+                `protocol`, since `is_handle` rejects null, records, lists, maps and errors. The
+                `for` loop matches `Value::Record(nested)` for `local` and then `remote`; for each
+                nested field it checks `is_handle` and the `any` test.
+            - aspect: ownership
+              body: |
+                `top` owns its tuples. The handles taken from `top` are clones (`.cloned()`); the
+                handles taken from nested records come from `fields(nested)`, which returns a fresh
+                owned `Vec`, and are *moved* into `handles` by `push` — no second clone.
+            - aspect: types
+              body: |
+                `nested` is `&Arc<RecordValue>`; passing it to `fields`, which wants
+                `&RecordValue`, works by deref coercion.
+            - aspect: purpose
+              body: |
+                These handles are what later commands of the same target read to narrow
+                themselves: after entering this socket, a parameter named `port` finds 22.
+          guarantees: |
+            A top-level scalar always becomes a handle; a nested scalar becomes one only if no
+            handle of that name has been collected yet, with nested records visited in declared
+            field order.
+          semantics: |
+            `?` inside the `filter_map` closure leaves the closure with `None`; it cannot return
+            from `of_record`. `any` short-circuits at the first held name. `for (_, value) in
+            &top` borrows `top`, which is why `top` could still be used afterwards.
+          interpretation: |
+            The doc comment describes the rule as "where nothing at the top level claims the
+            name"; the code is slightly stricter, because an earlier sub-record also claims the
+            name. For sockets that means the local side answers to `port`, which matches the
+            example the doc gives (`get socket` / `trace socket --port`).
+      - type: exercise
+        id: iterators-closures-03-q2
+        exercise_type: read-function
+        prompt: |
+          Read `TransformCommand::invoke` as far as the snippet goes (the `Where`, `Select`,
+          `Sort`, `Group`, `Take`, `Skip`, `Tail` and `Each` arms). Describe what it does for
+          `where` and for `each`, where it can fail, and who owns what when it returns.
+        snippets: [c12-transform-invoke]
+        hints:
+          - level: 1
+            body: |
+              Count the `?`s and ask, for each one, which function's `Result` it propagates. Then
+              look at what each `move` closure captures.
+        solution:
+          summary: |
+            `invoke` prepares one built-in transform. It fetches the command's spelling, its bound
+            arguments and a handle to the scope, takes the input stream (failing if there is none),
+            and then, depending on `self.kind`, builds the engine-level transform — for `where` a
+            `Where` owning a predicate closure, for `each` an `Each` owning a mapping closure — and
+            applies it to the input. It returns `Ok(Outcome::Values(output))`.
+          analysis:
+            - aspect: inputs
+              body: |
+                `&self` (only `kind` is read; `Kind` is `Copy`, so `match self.kind` copies it) and
+                `ctx: &mut Invocation<'_>` — mutable because `take_input` removes the stream from
+                it.
+            - aspect: errors
+              body: |
+                `ok_or_else(…)?` fails when no stream is connected. `expression(…)?` fails when the
+                contract's selector has no expression. `transform(…)?` fails when a blocking
+                transform meets an unbounded stream (the comment at 69–70). Each `?` returns an
+                `ErrorValue` from `invoke`. Errors *during* evaluation of a value are not handled
+                here; they happen later, inside the engine, per value.
+            - aspect: ownership
+              body: |
+                The input stream is moved out of `ctx` and then into `transform`. The predicate or
+                body `Expr` is moved into its closure. Each closure owns an `Arc<Scope>` handle.
+                After `invoke` returns, the engine owns the transforms and the closures; `invoke`
+                keeps nothing.
+            - aspect: traits
+              body: |
+                `Where::new` and `Each::new` accept `impl Predicate` / `impl Mapper`. The closures
+                qualify through blanket impls because they are `Fn`, `Send`, `Sync` and `'static`
+                — which is why they are `move` closures that own their captures.
+            - aspect: architecture
+              body: |
+                This is the seam between the command layer (which knows expressions) and the
+                pipeline engine (which only knows resolved functions), as ADR-0005 requires.
+          guarantees: |
+            A transform is built only after its argument expression exists and only if there is
+            an input stream; boundedness is checked before any value is read.
+          semantics: |
+            `move` closures own their captures, so they can outlive `invoke`. `Arc::clone` is a
+            reference-count increment; the `Scope` itself is never copied. `?` returns early and
+            converts the error with `From::from` (here the types already match).
+          interpretation: |
+            "Compile expressions into closures, then hand them to a generic engine" is the
+            general shape of Ono-Sendai's native pipeline: the engine stays free of the parser,
+            and each closure is a small, self-contained function object carrying exactly the
+            data it needs.
+
+  - id: iterators-closures-04
+    title: Writing an iterator by hand to walk untrusted bytes
+    stage: practice
+    summary: Read a hand-written `Iterator` implementation whose every step is bounds-checked and guaranteed to make progress.
+    prerequisites: [iterators-closures-03]
+    concepts: [iterators, associated-types, lifetimes, slices-strings]
+    ono_topics: [system-integration]
+    objectives:
+      - Read `impl Iterator for …` with `type Item` and `fn next(&mut self)`.
+      - Explain how a slice cursor (`rest`) advances and why the walk always terminates.
+      - Explain what the lifetime `'a` says about the items an iterator yields.
+      - See that implementing `next` alone gives every adapter (`find`, `map`, …) for free.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Ono-Sendai reads network interfaces, routes, neighbours and sockets straight from the
+          kernel over netlink. A netlink message carries a run of **attributes**: each has a
+          4-byte header (a `u16` length and a `u16` type) followed by a payload, padded to a
+          4-byte boundary. The module doc of `wire.rs` sets the rule for this code:
+
+          > Everything the kernel sends arrives here first, and everything here treats it as
+          > untrusted input …: every length is checked against what remains, every read is a
+          > bounded slice rather than an index, and every step of an iterator consumes at least
+          > one aligned header, so no malformed length can turn a walk into a loop.
+
+          In this file `sys::ATTR_HEADER` is 4 and `sys::ALIGN` is 4. `u16_at(bytes, offset)`
+          returns `Option<u16>`: `None` if the buffer does not reach that far.
+      - type: code
+        snippet: c12-netlink-attributes
+        annotations:
+          - lines: 100
+            kind: rust
+            body: |
+              `Attributes<'_>`: the elided lifetime says the returned iterator borrows `bytes`.
+          - lines: 110-111
+            kind: type
+            body: |
+              Implementing `Iterator` means naming the item type (an **associated type**) and
+              writing `next`. `Attribute<'a>` holds a `payload: &'a [u8]`: every item borrows from
+              the *original buffer*, not from the iterator, so an item may outlive the iterator
+              that produced it.
+          - lines: 115-118
+            kind: flow
+            body: |
+              Too few bytes for a header: empty the cursor and end the walk. Emptying `rest`
+              means every later `next()` also returns `None` at once.
+          - lines: 119
+            kind: rust
+            body: |
+              `?` on an `Option` inside `next`: if `u16_at` returns `None`, `next` returns `None`.
+              `as usize` applies to the `u16` after `?` has unwrapped it.
+          - lines: 125-127
+            kind: flow
+            body: |
+              `get(range)` returns `None` instead of panicking when the range is out of bounds;
+              `unwrap_or(&[])` turns that into an empty slice. `align(length).min(remaining)`
+              rounds up to the padding but never past the end of the buffer.
+          - lines: 133-137
+            kind: rust
+            body: |
+              The payoff: with `next` written once, `find` and `map` work on `Attributes` like on
+              any other iterator. `attribute` returns the payload of the first attribute of the
+              wanted type.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          The `Iterator` trait has one required method, `next(&mut self) -> Option<Self::Item>`,
+          and dozens of provided methods (`map`, `filter`, `find`, `take`, `collect`, …) built on
+          it. Implementing `next` is therefore enough to plug a custom walk into the whole
+          iterator vocabulary.
+
+          `&mut self` is how an iterator remembers where it is. Here the entire state is `rest`,
+          a shorter and shorter view of the same buffer: reassigning `self.rest` to a sub-slice
+          moves the cursor forward without copying a single byte.
+
+          The lifetime `'a` ties items to the buffer. In `attribute`, the iterator is a temporary
+          that is dropped at the end of the expression, but the returned `&[u8]` stays valid,
+          because it borrows `bytes`, not the iterator.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The doc comment on `attributes` states the policy for a bad length: it "ends the walk
+          rather than raising an error: the attributes already read are still good, and the caller
+          reports the ones it needed and did not get as failed fields, which is what keeps a
+          truncated message from erasing the object it described." So `next` returns `None` for
+          malformed input instead of an error, and callers such as the interface provider ask for
+          one attribute at a time with `wire::attribute(attributes, sys::IFLA_IFNAME)`.
+      - type: exercise
+        id: iterators-closures-04-q1
+        exercise_type: trace-value
+        prompt: |
+          A 14-byte buffer holds two attributes. The first header says length 6, type 3; the
+          second (starting at offset 8) says length 6, type 1. Trace `rest.len()`, `length`,
+          `payload.len()` and `advance` through each call of `next`, until it returns `None`.
+          Then trace `attribute(buffer, 1)`.
+        snippets: [c12-netlink-attributes]
+        hints:
+          - level: 1
+            body: |
+              `align(6)` is 8. For the second attribute compare `align(length)` with `remaining`.
+        solution:
+          summary: |
+            Call 1: `remaining` 14, `length` 6, payload bytes 4..6 (2 bytes), `advance` = min(8, 14)
+            = 8, `rest` becomes 6 bytes; yields type 3. Call 2: `remaining` 6, `length` 6, payload
+            2 bytes, `advance` = min(8, 6) = 6, `rest` becomes empty; yields type 1. Call 3:
+            `remaining` 0 < 4 → `None`. `attribute(buffer, 1)` pulls type 3 (no match), then type 1
+            (match), and returns its 2-byte payload — it never makes the third call.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Each call passes the header-size check and the length check (4 ≤ 6 ≤ remaining)
+                until the buffer is exhausted. The `min(remaining)` on line 126 matters on the
+                second call: without it `advance` would be 8 and `get(8..)` on a 6-byte slice would
+                return `None`, which `unwrap_or(&[])` would also turn into an empty slice — the
+                `min` makes the intent explicit.
+            - aspect: mutation
+              body: |
+                Only `self.rest` changes, and only by being reassigned to a sub-slice of itself.
+                The buffer's bytes are never modified or copied.
+            - aspect: outputs
+              body: |
+                Two `Attribute` values whose `payload`s are slices into the original buffer, then
+                `None`. `attribute` returns `Some(&buffer[12..14])`.
+            - aspect: errors
+              body: |
+                There are no errors: malformed input shortens the walk. Had the second header said
+                length 2 (smaller than a header) or 40 (larger than what remains), `next` would
+                have emptied `rest` and returned `None`, and `attribute(buffer, 1)` would have
+                returned `None`.
+          guarantees: |
+            Every `next` either consumes at least `ATTR_HEADER` bytes (because `length ≥ 4` and
+            `advance ≥ min(length, remaining) ≥ 4`) or empties the cursor and returns `None`. The
+            walk therefore terminates for any input, and no read goes out of bounds.
+          semantics: |
+            `slice.get(range)` is the non-panicking counterpart of indexing. `?` on `Option` in a
+            function returning `Option` returns `None`. `find` stops pulling at the first match,
+            so later attributes are not even parsed.
+          interpretation: |
+            This is defensive parsing expressed with an iterator: the invariant "each step makes
+            progress" lives in one small `next`, and every caller gets the protection by using
+            ordinary adapters. It is a pattern worth recognising elsewhere wherever Ono-Sendai
+            reads bytes it did not produce.
+      - type: exercise
+        id: iterators-closures-04-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          The same walk could have been written as a function that returns
+          `Vec<Attribute<'_>>`, or as a `while` loop inside every caller. What does implementing
+          `Iterator` buy here? Consider laziness, the callers' code, and the "untrusted input"
+          rule.
+        snippets: [c12-netlink-attributes]
+        hints:
+          - level: 1
+            body: |
+              Look at `attribute`: how many attributes does it actually parse when the wanted one
+              comes first?
+        solution:
+          summary: |
+            An `Iterator` is lazy, so `attribute` parses only up to the first match and allocates
+            nothing; a `Vec` would parse and store every attribute first. The bounds-checking and
+            progress rules are written once, in `next`, instead of being repeated in every
+            caller's loop. And callers compose it with the standard adapters (`find`, `map`,
+            `filter`) they already know.
+          analysis:
+            - aspect: purpose
+              body: |
+                Provide one safe primitive for walking attributes that every netlink provider
+                can reuse.
+            - aspect: traits
+              body: |
+                Implementing `Iterator` (one method plus `type Item`) unlocks every provided
+                method of the trait; `attribute` is a two-adapter chain as a result.
+            - aspect: ownership
+              body: |
+                Items borrow from the buffer (`Attribute<'a>`), so no payload is copied. A `Vec`
+                of attributes would still borrow, but would add a heap allocation per message.
+            - aspect: architecture
+              body: |
+                The untrusted-input policy of the module doc is concentrated in one place, which
+                is easier to review than many hand-written loops.
+          guarantees: |
+            Whatever adapter a caller uses, every attribute it sees has passed the length checks
+            in `next`, and the walk ends.
+          semantics: |
+            Adapters are lazy and drive the iterator only as far as the consumer needs; the
+            iterator's state is private (`rest` is not `pub`), so callers cannot move the cursor
+            around the checks.
+          interpretation: |
+            In Ono-Sendai a hand-written iterator is a sign of a walk with rules — here, rules
+            about hostile input. When you meet one, read `next` carefully once; after that, the
+            call sites read like any other chain.

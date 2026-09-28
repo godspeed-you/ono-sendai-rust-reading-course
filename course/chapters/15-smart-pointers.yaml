@@ -1,0 +1,974 @@
+id: smart-pointers
+number: 15
+title: Shared ownership and smart pointers
+summary: |
+  Rust's single-owner rule is simple until two parts of a program need the same thing: every
+  pipeline stage needs the same cancellation token, the session and the provider registry need
+  the same `env` provider, every clone of a process reader needs the same table of CPU samples.
+  Ono-Sendai solves this with a small set of **smart pointers** — types that own a value and add
+  behaviour: `Arc` for shared ownership, `Box` for a single owner on the heap, and `Cow` for
+  "borrow if possible, own if needed".
+
+  The most important distinction of the chapter: **`Arc` gives shared ownership, not
+  synchronization.** Through an `Arc` everyone gets only shared (`&`) access. Changing shared data
+  needs a second tool — an atomic or a `Mutex` — and Ono-Sendai always writes that tool out
+  explicitly. Ono-Sendai uses `Arc` everywhere and `Rc` nowhere, because its values cross Tokio
+  tasks and threads.
+lessons:
+  - id: smart-pointers-01
+    title: "`Arc`: cheap sharing of immutable data"
+    stage: practice
+    summary: Read why every compound `Value` sits behind an `Arc`, what `Arc::clone` costs, and how one struct literal moves, copies, shares and deep-clones its fields.
+    prerequisites: [derives-macros-04]
+    concepts: [smart-pointers, shared-ownership, copy-clone, ownership]
+    ono_topics: [value-model, records-schemas, command-dispatch]
+    objectives:
+      - Explain what `Arc<T>` owns and what `Arc::clone` does (and does not) copy.
+      - Explain why Ono-Sendai uses `Arc` rather than `Rc`.
+      - Read the `Arc::clone(&x)` convention as "reference-count increment".
+      - Classify each field of a struct literal as moved, copied, shared or deep-cloned.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          You met `Value` as an enum in [chapter 4](chapter:enums-matching). Now read its doc
+          comment and its payload types with ownership in mind.
+      - type: code
+        snippet: c15-value-arcs
+        annotations:
+          - lines: 19-21
+            kind: ono
+            body: |
+              The reason, stated by the code itself: "cloning a value is a refcount bump whatever
+              it holds: spec §34 budgets a pipeline stage in microseconds, and a value model that
+              copies its payload cannot meet that."
+          - lines: 23-25
+            kind: ono
+            body: |
+              The deliberate non-feature: streams are not values, because "a clonable value whose
+              second clone yields nothing" would be unclear.
+          - lines: 52
+            kind: type
+            body: |
+              `Arc<str>`: shared, immutable text. Unlike `String` it cannot grow, and cloning it
+              never copies the characters.
+          - lines: 74
+            kind: ownership
+            body: |
+              Small payloads such as `Port(u16)` or `Ip(IpAddr)` are stored inline and simply
+              copied when the value is cloned.
+          - lines: 76-82
+            kind: type
+            body: |
+              `Arc<[Value]>`, `Arc<MapValue>`, `Arc<RecordValue>`, `Arc<ErrorValue>`: every
+              compound case is behind an `Arc`.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          `Arc<T>` ("atomically reference-counted") puts a `T` on the heap next to a counter.
+          Each `Arc` handle is a pointer to that allocation.
+
+          - `Arc::new(t)` moves `t` into a new allocation with count 1.
+          - `Arc::clone(&a)` copies the pointer and **increments the count**. It does not copy
+            `T`. It costs one atomic increment, regardless of how big `T` is.
+          - Dropping a handle decrements the count; when it reaches zero, `T` is dropped and the
+            memory freed.
+          - Through an `Arc<T>` you get only `&T`. There is no `&mut T` while other handles
+            exist — shared ownership means shared, read-only access.
+
+          `Rc<T>` is the same idea with a non-atomic counter. It is cheaper, but not `Send`: an
+          `Rc` cannot be moved to another thread. Ono-Sendai's values flow between Tokio tasks
+          that may run on different threads, so it uses `Arc` throughout; at v0.6.2 there is no
+          `Rc` in its non-test code at all.
+
+          So "cloning is expensive" is not a rule in Rust. Cloning a `Value` is cheap *by design*;
+          cloning a `Vec<String>` copies every string. You must look at the type.
+      - type: code
+        snippet: c15-record-access
+        annotations:
+          - lines: 3-6
+            kind: ono
+            body: |
+              Why a record holds `Arc<Schema>` instead of just a schema id: name lookups need no
+              registry, and "the `Arc` keeps a record as cheap to clone as spec §34 needs it to
+              be". Every record of one query shares the same schema.
+          - lines: 197
+            token: "Arc::clone(error)"
+            kind: ownership
+            body: |
+              `error` is a `&Arc<ErrorValue>` (bound through the reference returned by `get`).
+              `Arc::clone(error)` makes a new handle. Ono-Sendai writes the associated-function
+              form rather than `error.clone()` so the reader sees at once that only a count
+              changes.
+          - lines: 199
+            kind: ownership
+            body: |
+              `value.clone()` clones a `&Value` into an owned `Value`. Because of the `Arc`
+              payloads, that is a copy of a small enum plus, at most, one count increment.
+      - type: prose
+        kind: context
+        title: One struct literal, four kinds of ownership
+        body: |
+          When a command is re-run with arguments filled in from the context (ADR-0076), the
+          invocation is rebuilt around the new arguments. `rebind`'s doc: "The input stream
+          moves — a stream is consumed once — and everything else is shared". Read the fields of
+          `Invocation` first, then the literal.
+      - type: code
+        snippet: c15-invocation-rebind
+        annotations:
+          - lines: 399-402
+            kind: rust
+            body: |
+              `where 'a: 'b` reads "`'a` outlives `'b`". The new invocation borrows for the
+              shorter `'b` (the new arguments' borrow), and every `&'a` reference of the old one
+              is also valid for `'b`, so it can be copied in.
+          - lines: 407
+            kind: ownership
+            body: |
+              `Option::take` **moves** the stream out and leaves `None` behind; the old invocation
+              no longer has input.
+          - lines: 409
+            kind: ownership
+            body: |
+              `Arc::clone`: shared, one count increment.
+          - lines: 410
+            kind: ownership
+            body: |
+              `self.context.clone()` clones a `Vec<ContextFrame>`: a new vector, and every frame's
+              strings copied. This field is a real deep copy, usually of a very short list.
+          - lines: 565-566
+            kind: rust
+            body: |
+              A process-wide `static OnceLock<Arc<…>>`: the `Present` context is allocated once, on
+              first use, and every invocation gets an `Arc::clone` of the same one.
+      - type: diagram
+        kind: ownership
+        title: Two values sharing one record
+        art: |
+          let a: Value = record.into_value();   let b = a.clone();
+
+          a ── Value::Record(ptr) ──┐
+                                     ├──► [ count: 2 | RecordValue { schema: Arc ──► [count: n | Schema] ,
+          b ── Value::Record(ptr) ──┘                                 fields, extra, provenance } ]
+        description: |
+          `a` and `b` are two separate `Value::Record` handles. Each holds a pointer to the same
+          heap allocation, which contains the reference count (now 2) and the `RecordValue`. The
+          record in turn holds an `Arc<Schema>` pointing to one shared schema allocation, whose
+          count is the number of records (and other holders) of that schema. Cloning `a` into `b`
+          copied a pointer and incremented a count; no field of the record was copied. The record
+          is dropped when both `a` and `b` are gone. Neither handle can mutate the record: an
+          `Arc` gives shared, read-only access.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          Values are copied constantly: every transform stage passes values on, `sort` and
+          `group` buffer them, `@-1` keeps recent results. With an `Arc` behind every compound
+          case that is always cheap. And because nothing is mutated through these `Arc`s — code
+          that "changes" a value, such as `Value::map_text`, builds a new one — no lock is needed.
+          Immutability is what makes this sharing safe without synchronization.
+      - type: exercise
+        id: smart-pointers-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A `Value::String` holding a 10 MB log line is cloned 1 000 times into a buffer. How much
+          text is copied?
+        snippets: [c15-value-arcs]
+        choices:
+          - text: 10 GB — each clone copies the string.
+            feedback: |
+              That would be true for `String`, whose `clone` copies the bytes. `Value::String`
+              holds an `Arc<str>`, whose clone copies only a pointer.
+          - text: None; each clone copies a pointer and increments the shared count.
+            correct: true
+            feedback: |
+              Right. All 1 001 values point to one `str` allocation with a count of 1 001. The
+              text is freed when the last of them is dropped.
+          - text: 10 MB once, the first time, and then it is shared.
+            feedback: |
+              No. `Arc` never copies on clone, not even the first time; the text was allocated
+              once when the value was created.
+          - text: It depends on whether the clones run on different threads.
+            feedback: |
+              No. `Arc::clone` is the same atomic increment on any thread; that atomicity is what
+              makes it safe across threads.
+      - type: exercise
+        id: smart-pointers-01-q2
+        exercise_type: trace-value
+        prompt: |
+          For every field of the `Invocation` literal in `rebind` (lines 404–415), say whether the
+          new invocation gets it by **move**, by **copy** of a `Copy` value, by **sharing** (a
+          reference-count increment) or by **deep clone**. Use the field types at lines 187–198.
+          Which lines change the old invocation?
+        snippets: [c15-invocation-rebind]
+        hints:
+          - level: 1
+            body: |
+              Shared references `&T` and `bool` are `Copy`. For each `.clone()` ask what the
+              field's type is.
+          - level: 2
+            body: |
+              `CancelToken` is a struct around an `Arc` (next lesson), and `Resolver` is an
+              `Arc<dyn Fn…>` type alias.
+        solution:
+          summary: |
+            Move: `input` (via `take()`). Copy: `contract`, `providers`, `verbs` (shared
+            references or an `Option` of one), `displays` (`bool`), and `arguments` is the new
+            borrow passed in. Sharing: `cancel` (a `CancelToken` wrapping an `Arc`), `scope`,
+            `temporal`, `adapters` (`Option<Arc<…>>`), `resolver` (`Option<Arc<dyn Fn…>>`). Deep
+            clone: `context`, a `Vec<ContextFrame>`. Only line 407 changes the old invocation,
+            which is why `rebind` takes `&mut self`.
+          analysis:
+            - aspect: ownership
+              body: |
+                One field moves because a stream may be consumed only once; everything else is
+                either a reference, a `Copy` scalar, or an `Arc` handle — except `context`, whose
+                `clone` copies the vector and the frames' strings.
+            - aspect: mutation
+              body: |
+                `self.input.take()` needs `&mut self`: it writes `None` into the old invocation.
+                All other fields are only read.
+            - aspect: types
+              body: |
+                `Option<Arc<T>>::clone` clones the `Arc` inside if there is one; `Option<&T>` is
+                `Copy`. `CancelToken` derives `Clone`, and its only field is an `Arc<Inner>`.
+            - aspect: architecture
+              body: |
+                The rebound invocation belongs to the same pipeline: same cancellation token,
+                same scope, same temporal coordinate — the doc's "sees exactly the pipeline it
+                belonged to".
+          guarantees: |
+            After `rebind`, exactly one invocation has the input stream, and both share the
+            pipeline's cancellation token and scope.
+          semantics: |
+            `Arc::clone` increments a count; `Vec::clone` allocates and clones each element;
+            copying `&T` copies a pointer; `Option::take` swaps in `None`. `where 'a: 'b` lets
+            `&'a` fields be used where `&'b` is required.
+          interpretation: |
+            The literal is a compact statement of Ono-Sendai's ownership policy for a running
+            command: streams move, pipeline-wide state is shared through `Arc`, and small
+            per-invocation data is simply copied.
+
+  - id: smart-pointers-02
+    title: "Sharing is not synchronizing: `CancelToken` and the `env` provider"
+    stage: practice
+    summary: Read two shared objects that are mutated through `&self` — one with atomics, one with a `Mutex` — and separate what the `Arc` does from what the lock or atomic does.
+    prerequisites: [smart-pointers-01]
+    concepts: [shared-ownership, interior-mutability, send-sync, testing]
+    ono_topics: [cancellation, providers, pipeline]
+    objectives:
+      - Explain why an `Arc<T>` alone does not allow mutation.
+      - Read `AtomicBool` and `Mutex` as interior mutability that is safe across threads.
+      - Explain how long a `MutexGuard` lives in `*m.lock()… = x;` and in `m.lock()….clone()`.
+      - Read a test as evidence of what sharing means.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          When the user presses Ctrl-C, every stage of a native pipeline must stop. The
+          `CancelToken` doc: "Ctrl-C, a `try` block unwinding, or a consumer that has seen enough
+          all trip the same token, and every stage selects its channel against it. That is what
+          makes a native pipeline stop at its next await rather than at the end of its current
+          producer (spec §18.5)." Treat `Notify`, the `wake` field and the async `cancelled()`
+          method (not shown) as black boxes here;
+          [chapter 17](lesson:tasks-channels-01) revisits the token from the async side.
+      - type: code
+        snippet: c15-cancel-token
+        annotations:
+          - lines: 14
+            kind: ono
+            body: |
+              "Cloning shares the scope; the clones are the same token, not copies of it."
+          - lines: 24-27
+            kind: ownership
+            body: |
+              The token is only an `Arc<Inner>`. `#[derive(Clone)]` clones that `Arc`, so every
+              clone points to the one `Inner`: this is the **shared ownership** part.
+          - lines: 29-36
+            kind: type
+            body: |
+              `AtomicBool` fields: booleans that can be read and written through a shared
+              reference, safely from several threads. This is the **synchronization** part.
+          - lines: 47-50
+            kind: rust
+            body: |
+              `cancel` takes `&self` — a shared borrow — and still changes state, through
+              `store`. With a plain `bool` field this line would not compile: `Arc` only ever
+              gives `&Inner`, and a plain field cannot be assigned through `&`. Read
+              `Ordering::SeqCst` as "the strongest, simplest memory ordering"; the details do not
+              matter for reading this code.
+          - lines: 78-84
+            kind: rust
+            body: |
+              `compare_exchange(false, true, …)` atomically sets the flag only if it is still
+              `false`, and reports whether this call did it. Of many stages calling
+              `claim_report`, exactly one gets `true`.
+      - type: code
+        snippet: c15-cancel-test
+        caption: |
+          A test in `ono-command` that documents the sharing: the test keeps one handle, the
+          invocation holds a clone.
+        annotations:
+          - lines: 183
+            token: "token.clone()"
+            kind: ownership
+            body: |
+              The clone is moved into the invocation; the test still owns the original.
+          - lines: 186-189
+            kind: flow
+            body: |
+              Cancelling through the test's handle is observed through the invocation's handle —
+              the assertion message cites spec §18.5: "one token stops every stage of the
+              pipeline".
+      - type: prose
+        kind: rust
+        title: "What does this Rust mean? Two separate jobs"
+        body: |
+          | need | tool in `CancelToken` | what it provides |
+          |---|---|---|
+          | many owners of one flag | `Arc<Inner>` | shared ownership; the flag lives until the last token is dropped |
+          | changing the flag through `&` | `AtomicBool` | interior mutability that is safe across threads |
+
+          Remove the `Arc` and each clone would get its own flags — cancelling one would not stop
+          the others. Remove the atomics and `cancel(&self)` could not change anything. The two
+          are independent, and the code needs both.
+
+          `Arc<T>` is `Send` and `Sync` only if `T` is `Send + Sync`; `AtomicBool` is, so the
+          token can be shared across the runtime's threads. An `Arc` around a type that is not
+          `Sync` could not be shared between threads at all — `Arc` never adds thread safety that
+          `T` lacks.
+      - type: prose
+        kind: context
+        title: A provider the session keeps updating
+        body: |
+          `get env` lists the session's variables. The `env` provider is registered in the
+          provider registry like any other — but the session also keeps a handle to it and
+          publishes its bindings before each pipeline runs.
+      - type: code
+        snippet: c15-env-provider-mutex
+        annotations:
+          - lines: 98
+            token: "Mutex<Vec<EnvBinding>>"
+            kind: type
+            body: |
+              A `std::sync::Mutex` around the bindings: interior mutability with a lock.
+          - lines: 114-118
+            kind: rust
+            body: |
+              `publish` takes `&self`. `self.bindings.lock()` returns a guard that gives `&mut`
+              access; `*guard = bindings` replaces the whole vector. The guard is a temporary, so it
+              is dropped — and the lock released — at the end of the statement.
+          - lines: 117
+            token: "unwrap_or_else(PoisonError::into_inner)"
+            kind: rust
+            body: |
+              `lock()` returns `Err` if another thread panicked while holding the lock ("poisoned").
+              `PoisonError::into_inner` takes the guard anyway. Read it as: use the data even
+              after such a panic.
+          - lines: 122-127
+            kind: ownership
+            body: |
+              `bindings()` clones the vector under the lock and returns the clone. The guard is
+              dropped when the function returns, so a caller iterating the result holds no lock.
+      - type: code
+        snippet: c15-register-with-env
+        annotations:
+          - lines: 125
+            token: "registry.register(env);"
+            kind: ownership
+            body: |
+              `env` is an `Arc<EnvProvider>`; `register` wants `Arc<dyn Provider>`. The `Arc` is
+              moved in and coerced to a trait-object handle — the same allocation.
+      - type: code
+        snippet: c15-session-publish-env
+        annotations:
+          - lines: 1441
+            kind: ownership
+            body: |
+              The session hands the registry a **clone** of its handle and keeps its own.
+          - lines: 1510-1522
+            kind: rust
+            body: |
+              `publish_env(&self)`: through its handle the session calls `publish`, which locks
+              and replaces the bindings the registry's handle will read.
+      - type: diagram
+        kind: ownership
+        title: One `env` provider, two owners, one lock
+        art: |
+          Session.environment.env_provider ──Arc──┐
+                                                   ├──► [ count: 2 | EnvProvider { bindings: Mutex<Vec<EnvBinding>> } ]
+          ProviderRegistry.providers[i] ─Arc<dyn>──┘                               ▲        ▲
+                                                                                    │        │
+                       publish_env → publish(&self): lock, replace ────────────────┘        │
+                       get env → snapshot → selected → bindings(&self): lock, clone ─────────┘
+        description: |
+          The session and the provider registry each hold an `Arc` handle to the same
+          `EnvProvider` allocation (count 2); the registry's handle is typed as
+          `Arc<dyn Provider>`. The `Arc`s give both of them shared, read-only access and keep the
+          provider alive. Mutation happens only inside the provider's `Mutex`: the session's
+          `publish_env` calls `publish(&self)`, which locks the mutex and replaces the vector; a
+          `get env` query goes through the registry to `snapshot`, whose `selected` calls
+          `bindings(&self)`, which locks the mutex and clones the vector. The lock makes these two
+          operations take turns.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The module doc: "The session owns the environment … so this provider is *given* the
+          bindings … The session publishes its current bindings before each pipeline runs, so
+          what `set env` bound a statement ago is what `get env` lists now." The registry stores
+          providers as `Arc<dyn Provider>`, and the `Provider` trait's methods take `&self`, so
+          no one can ever get `&mut EnvProvider`. A `Mutex` inside is therefore the only way to
+          update it — and cloning the bindings out keeps the lock short, never held while
+          records are built or sent.
+      - type: exercise
+        id: smart-pointers-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Suppose `Inner.cancelled` were a plain `bool` and `cancel` wrote
+          `self.inner.cancelled = true;`. What happens?
+        snippets: [c15-cancel-token]
+        choices:
+          - text: It compiles; the `Arc` makes the field safely writable from every clone.
+            feedback: |
+              No. `Arc<Inner>` only hands out `&Inner`. Assigning to a field needs `&mut`, which
+              an `Arc` never provides while it can be shared. `Arc` is shared ownership, not
+              synchronization.
+          - text: It does not compile, because the field cannot be assigned through the shared reference that `Arc` gives.
+            correct: true
+            feedback: |
+              Right. To mutate through `&self` you need interior mutability — `AtomicBool`, a
+              `Mutex`, or (single-threaded only) `Cell`. The atomic is what makes the write both
+              possible and safe across threads.
+          - text: It compiles, but only one clone sees the change.
+            feedback: |
+              It would not compile at all. (And if each token owned its own `Inner` without an
+              `Arc`, that is what would happen — which is why both parts are needed.)
+          - text: It compiles if `cancel` is changed to take `&mut self`.
+            feedback: |
+              Even with `&mut CancelToken`, you only get `&mut` to the `Arc` handle, not to the
+              shared `Inner`; `Arc` still gives only `&Inner`. (`Arc::get_mut` exists, but works
+              only while no other clone exists — useless for a token meant to be shared.)
+      - type: exercise
+        id: smart-pointers-02-q2
+        exercise_type: trace-value
+        prompt: |
+          Follow the test `should_carry_a_cancellation_token_into_the_implementation`: how many
+          `CancelToken` handles and how many `Inner`s exist after line 183? What exactly does
+          `token.cancel()` change, and why does `invocation.cancel_token().is_cancelled()` see it?
+        snippets: [c15-cancel-test, c15-cancel-token]
+        hints:
+          - level: 1
+            body: |
+              `with_cancel` stores its argument in the invocation's `cancel` field.
+        solution:
+          summary: |
+            Two handles (the test's `token` and the clone stored inside `invocation`) and one
+            `Inner`, whose reference count is 2. `cancel()` stores `true` into the shared
+            `AtomicBool` and wakes waiters. `is_cancelled()` on the invocation's handle loads the
+            same atomic, so it reads `true`.
+          analysis:
+            - aspect: ownership
+              body: |
+                `CancelToken::new()` creates one `Inner` behind an `Arc`. `token.clone()` is an
+                `Arc` clone; it is moved into `with_cancel` and stored in the invocation. The test
+                keeps `token`.
+            - aspect: mutation
+              body: |
+                The only mutation is `cancelled.store(true, …)` through `&self`; no handle is
+                changed.
+            - aspect: async
+              body: |
+                Because the flag is atomic, the same holds when the handles are on different
+                threads — the situation in a real pipeline, where stages run as tasks.
+          guarantees: |
+            All clones of a token observe the same cancellation state; cancelling is idempotent.
+          semantics: |
+            `#[derive(Clone)]` on a struct whose field is an `Arc` produces a clone that shares the
+            allocation. Atomic loads and stores through `&` are how the state changes without
+            `&mut`.
+          interpretation: |
+            The test is executable documentation of the doc's promise "the clones are the same
+            token, not copies of it". When a doc makes a sharing claim, a test like this is where
+            to confirm it.
+      - type: exercise
+        id: smart-pointers-02-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `EnvProvider::publish` takes `&self` and uses a `Mutex`. Why could it not simply take
+          `&mut self`? And why does `bindings()` return a cloned `Vec` instead of the guard or a
+          reference into the locked vector?
+        snippets: [c15-env-provider-mutex, c15-register-with-env, c15-session-publish-env]
+        hints:
+          - level: 1
+            body: |
+              How many owners does the provider have, and what kind of access does an `Arc` give
+              each of them?
+        solution:
+          summary: |
+            The provider is owned through two `Arc`s — the session's and the registry's
+            `Arc<dyn Provider>` — so nobody can obtain `&mut EnvProvider`; `&self` plus a `Mutex`
+            is the only way to change it. `bindings()` returns a clone so that the lock is held only
+            for the copy: callers then filter, build records and send them without blocking
+            `publish`, and no guard (which would hold the lock) escapes the method.
+          analysis:
+            - aspect: ownership
+              body: |
+                `Arc::new(EnvProvider::new(…))` in the session, `Arc::clone` into
+                `registry_with_tables`, then `registry.register(env)`. Two owners, shared access
+                only.
+            - aspect: traits
+              body: |
+                `Provider: Send + Sync` and its methods take `&self`. `Mutex<Vec<…>>` is `Sync`, so
+                `EnvProvider` can be shared across threads.
+            - aspect: mutation
+              body: |
+                All mutation is `*guard = bindings` inside `publish`; the lock is released at the
+                end of that statement.
+            - aspect: side-effects
+              body: |
+                `bindings()` allocates a new `Vec` and clones every `EnvBinding` (two `String`s
+                each). That is the price of a short lock, and the list is small.
+          guarantees: |
+            A reader of `bindings()` always sees one complete published list, never a half-written
+            one, and never holds the lock after the call returns.
+          semantics: |
+            A `MutexGuard` releases the lock when dropped; temporaries are dropped at the end of
+            the full statement. `Arc` provides `&T` only; interior mutability is what turns `&T`
+            into controlled mutation.
+          interpretation: |
+            This is the general Ono-Sendai shape for state that several parts share and one part
+            updates: `Arc` for who holds it, an explicit lock for who may change it, and short
+            critical sections that copy data out.
+
+  - id: smart-pointers-03
+    title: "`Arc<Mutex<…>>` and swappable handles"
+    stage: practice
+    summary: Read a cloneable reader whose clones share one sample table, and a provider that swaps which shared plugin instance it answers from.
+    prerequisites: [smart-pointers-02]
+    concepts: [shared-ownership, interior-mutability, smart-pointers, option]
+    ono_topics: [providers, system-integration]
+    objectives:
+      - Explain what a `#[derive(Clone)]` struct shares and what it copies when some fields are `Arc`s.
+      - Read `Arc<Mutex<T>>` as "one shared, lockable T".
+      - Read `Mutex<Arc<T>>` as "a lockable choice of which shared T is current".
+      - Say exactly when a lock guard is dropped in a chain or a statement.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `get process` reports each process's CPU share. A share is a rate, and a rate needs two
+          readings. The process provider's `Reader` is described by its doc as "Everything reading
+          one process needs, cheap enough to hand to a streaming task." It is cloned for every
+          query, and its clones must remember CPU samples **together**, so that a second
+          `get process` can compute a rate against the first. (Chapter 19 reads this provider as a
+          whole; here we look only at its sharing.) `Arc<dyn Clock>` is the injectable clock of
+          [chapter 10](chapter:traits).
+      - type: code
+        snippet: c15-process-samples
+        annotations:
+          - lines: 171-185
+            kind: ownership
+            body: |
+              `#[derive(Clone)]`: cloning a `Reader` copies the `PathBuf`, the `Option<String>` and
+              the numbers, and **shares** the three `Arc` fields — the account resolver, the clock
+              and the sample table.
+          - lines: 184
+            token: "Arc<Mutex<HashMap<(i64, u64), Sample>>>"
+            kind: type
+            body: |
+              One table, keyed by `(pid, start time)`, shared by every clone and changed under a
+              lock. The start time in the key keeps a reused pid from inheriting another process's
+              sample.
+          - lines: 389-393
+            kind: rust
+            body: |
+              `refreshed` clones the reader and updates **its own** `uptime_seconds`; the clone
+              still shares the sample table with the original.
+          - lines: 436-440
+            kind: rust
+            body: |
+              `lock().ok()` turns a poisoned lock into `None`. `and_then(|mut samples| …)` receives
+              the guard by value; `insert` stores the new sample and returns the previous one, if
+              any. The guard is dropped when the closure returns, so the lock is held only for the
+              insert.
+          - lines: 441-445
+            kind: rust
+            body: |
+              An edition-2024 **let chain**: `if let … && let … && cond && let …` runs the block
+              only if every pattern matches and every condition holds, in order.
+          - lines: 453
+            kind: flow
+            body: |
+              Otherwise — no previous sample, clock went backwards, counters reset, or the lock
+              was poisoned — the share over the process's lifetime is reported instead (ADR-0232).
+      - type: prose
+        kind: context
+        title: Swapping the instance behind a provider
+        body: |
+          A KUANG/11 package contributes targets and is mounted as a `PluginProvider`. Packages
+          can be reloaded, but the registry has no removal. Treat `LoadedPlugin` (the running
+          package) and `intern_target` (it turns the target name into a `&'static str`) as black
+          boxes.
+      - type: code
+        snippet: c15-plugin-provider
+        annotations:
+          - lines: 35-39
+            kind: ono
+            body: |
+              The design reason, in the field's doc: "A reload replaces the instance behind an id
+              without removing the target from the registry …, and `ProviderRegistry` has no
+              removal — so the handle is swapped rather than the registration."
+          - lines: 39
+            token: "Mutex<Arc<LoadedPlugin>>"
+            kind: type
+            body: |
+              The `Mutex` guards **which** `Arc` is current, not the plugin's internals.
+          - lines: 49-55
+            kind: ownership
+            body: |
+              One provider per contributed target, each in its own `Arc<Self>` ready to register;
+              each holds an `Arc::clone` of the same plugin.
+          - lines: 84-86
+            kind: rust
+            body: |
+              `adopt`: assign a new handle through the guard. The old `Arc` is dropped by the
+              assignment — a count decrement; the old instance is freed only when every other
+              holder has dropped its handle too.
+          - lines: 89-91
+            kind: ownership
+            body: |
+              `Arc::clone(&lock(&self.plugin))`: lock, clone the current handle, and drop the guard
+              at the end of the statement. The caller then uses its own handle with no lock held.
+          - lines: 309-314
+            kind: rust
+            body: |
+              A small generic helper: `lock` for any `Mutex<T>`, recovering from poisoning with
+              `into_inner`.
+      - type: diagram
+        kind: ownership
+        title: "Before and after `adopt(new)`"
+        art: |
+          before:  PluginProvider.plugin: Mutex ─► Arc ──► [count: 2 | LoadedPlugin v1]
+                   running query:  p = self.plugin() ──┘
+
+          adopt(new):  lock; *guard = new; unlock
+
+          after:   PluginProvider.plugin: Mutex ─► Arc ──► [count: 1 | LoadedPlugin v2]
+                   running query:  p ──────────────────► [count: 1 | LoadedPlugin v1]
+                   (v1 is dropped when the query drops p)
+        description: |
+          Before the reload the provider's mutex holds an `Arc` to plugin instance v1, and a
+          running query has obtained its own handle through `plugin()`, so v1's count is 2.
+          `adopt(new)` locks the mutex and assigns the handle to v2; the provider's old handle to
+          v1 is dropped, and v1's count falls to 1. The running query still holds its handle and
+          keeps using v1 undisturbed; new calls to `plugin()` get v2. When the query drops its
+          handle, v1's count reaches 0 and the instance is dropped.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The two shapes solve two problems. `Arc<Mutex<Map>>` in `Reader`: many holders need to
+          **change one table** — every clone of the reader records samples into it. `Mutex<Arc<T>>`
+          in `PluginProvider`: one holder needs to **change which instance** is current, while
+          others keep using whichever instance they obtained. `adopt`'s doc gives the reason for
+          swapping in place: "re-registering would leave the shut-down instance answering first",
+          because the registry answers with the first claimant.
+      - type: exercise
+        id: smart-pointers-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In `PluginProvider`, what does the `Mutex` in `Mutex<Arc<LoadedPlugin>>` protect?
+        snippets: [c15-plugin-provider]
+        choices:
+          - text: Every method call on the plugin, so only one query can use it at a time.
+            feedback: |
+              No. `plugin()` clones the `Arc` and releases the lock at the end of the statement;
+              callers then use the plugin concurrently without the provider's lock.
+          - text: The choice of which `Arc` handle is current, so reading and replacing it cannot race.
+            correct: true
+            feedback: |
+              Right. The lock is held only to read (`plugin`) or replace (`adopt`) the handle. How
+              the plugin itself deals with concurrent calls is `LoadedPlugin`'s business.
+          - text: The reference count, which is not thread-safe without it.
+            feedback: |
+              No. `Arc`'s count is atomic and thread-safe on its own; that is the "A" in `Arc`.
+          - text: Nothing; it only exists so the struct is `Send`.
+            feedback: |
+              No. Without the `Mutex`, `adopt(&self, …)` could not replace the field at all,
+              since `&self` gives no `&mut` access.
+      - type: exercise
+        id: smart-pointers-03-q2
+        exercise_type: read-function
+        prompt: |
+          Read `Reader::cpu` together with the `Reader` struct and `refreshed`. Explain what it
+          returns on the first and on a second `get process` in the same session, what state is
+          shared between the two queries, and what happens if the sample lock is poisoned.
+        snippets: [c15-process-samples]
+        hints:
+          - level: 1
+            body: |
+              Each query uses `self.reader.refreshed()` — a clone. Which of its fields point to the
+              same data as the provider's reader?
+        solution:
+          summary: |
+            `cpu` records the current CPU ticks for `(pid, starttime)` in the shared sample table
+            and gets the previous sample back. On a first query there is none, so it returns the
+            share over the process's lifetime (`lifetime_share`). On a second query in the same
+            session the previous sample exists — recorded by an earlier clone into the same
+            `Arc<Mutex<HashMap>>` — so it returns the rate over the interval between the two
+            readings, with that interval as the window. A poisoned lock is treated like "no
+            previous sample".
+          analysis:
+            - aspect: ownership
+              body: |
+                `refreshed` clones the reader per query; the clone owns its own `uptime_seconds`
+                and paths but shares `samples`, `clock` and `accounts` through `Arc`. That shared
+                table is what connects two queries.
+            - aspect: mutation
+              body: |
+                The only mutation is `samples.insert(…)` under the lock, inside the `and_then`
+                closure, which also ends the lock's lifetime.
+            - aspect: control-flow
+              body: |
+                The let chain requires a previous sample, a positive elapsed time and a
+                non-decreasing tick counter; if any fails, control falls through to
+                `self.lifetime_share(stat)`. `i128::try_from(elapsed).ok()?` could return `None`
+                for an absurdly long interval.
+            - aspect: errors
+              body: |
+                No error type: failure modes degrade to the lifetime share or to `None` ("only
+                when the kernel gave neither", per the doc).
+            - aspect: architecture
+              body: |
+                The injected `Arc<dyn Clock>` makes the interval testable; `ono-provider-linux`'s
+                tests replace it with a fake clock.
+          guarantees: |
+            A rate is reported only against an earlier sample of the same process instance
+            (same pid and start time) with a positive interval; otherwise the lifetime share is
+            reported.
+          semantics: |
+            `HashMap::insert` returns the previous value for the key. A `MutexGuard` moved into a
+            closure is dropped when the closure returns. Let chains evaluate left to right and
+            short-circuit.
+          interpretation: |
+            The doc calls both answers "shares of one logical CPU" and says `cpu_window` tells
+            them apart (ADR-0232). Sharing one table among cheap clones is what lets a streaming
+            task per query still contribute to the session's memory of samples.
+
+  - id: smart-pointers-04
+    title: "`Box` and `Cow`: owning differently"
+    stage: practice
+    summary: "Read `Box` as single ownership on the heap — for recursive types and `self: Box<Self>` receivers — and `Cow` as borrow-when-possible, own-when-needed."
+    prerequisites: [smart-pointers-03]
+    concepts: [smart-pointers, trait-objects, lifetimes, conversions]
+    ono_topics: [pipeline, process-execution]
+    objectives:
+      - Say when Ono-Sendai uses `Box` and what it owns.
+      - "Read a `self: Box<Self>` receiver and a call site that boxes before calling."
+      - Read `Cow<'a, Path>` and explain when it allocates.
+    sections:
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          `Box<T>` is the simplest smart pointer: **one owner**, value on the heap, freed when the
+          box is dropped. No counting and no sharing. Ono-Sendai uses it for three things:
+
+          - a **recursive type** that needs a finite size, such as `DeclaredType::List(Box<DeclaredType>)`
+            ([lesson conversions-02](lesson:conversions-02));
+          - an **owned trait object** whose concrete type is erased, such as `Where`'s
+            `Box<dyn Predicate>` ([chapter 11](chapter:generics));
+          - a **`self: Box<Self>` receiver**, below.
+      - type: code
+        snippet: c15-transform-box-self
+        annotations:
+          - lines: 42-45
+            kind: ono
+            body: |
+              Parameters are "already resolved by the time a transform is built" — this crate
+              stays free of the parser (ADR-0005).
+          - lines: 46
+            kind: rust
+            body: |
+              Supertraits `Send + 'static`: a transform may be moved to a pipeline task and must
+              not borrow anything short-lived.
+          - lines: 51-53
+            kind: rust
+            body: |
+              A default method: streaming unless a transform says otherwise.
+          - lines: 60
+            token: "self: Box<Self>"
+            kind: ownership
+            body: |
+              The method consumes the **boxed** transform. The transform is used up by applying
+              it, and the box is freed when `apply`'s body is done with it.
+      - type: code
+        snippet: c15-stream-transform-box
+        annotations:
+          - lines: 522
+            kind: rust
+            body: |
+              Generic over a concrete `T: Transform` — static dispatch; `self` (the stream) and
+              `transform` are both taken by value.
+          - lines: 523-528
+            kind: flow
+            body: |
+              The boundedness check of spec §11.1 happens before anything runs; an unbounded
+              stream with a blocking transform and no window is an error.
+          - lines: 529
+            token: "Box::new(transform).apply(input)"
+            kind: ownership
+            body: |
+              The transform is moved into a new box, which `apply` consumes.
+      - type: prose
+        kind: note
+        title: Reading what the code does not say
+        body: |
+          `self: Box<Self>` is the receiver form that still works on a trait object: with it, a
+          `Box<dyn Transform>` could call `apply`, whereas a plain `self` receiver cannot be
+          called on an unsized `dyn Transform`. At v0.6.2, however, no code in the workspace
+          writes `dyn Transform`; the only caller shown here boxes a concrete type. The source
+          does not document why the receiver was chosen, so describe what it does — one heap
+          allocation per applied transform, i.e. per pipeline stage, not per value — rather than
+          guessing at intent.
+      - type: prose
+        kind: context
+        title: A path that is usually borrowed
+        body: |
+          `ono-process` turns redirections such as `> out.txt` into file descriptors for a child
+          process. A relative path must be relative to the directory the command will run in, not
+          to the shell's own directory.
+      - type: code
+        snippet: c15-cow-against
+        annotations:
+          - lines: 191
+            kind: ownership
+            body: |
+              `target` is a `Cow<Path>`: either a borrow of `path` or an owned joined `PathBuf`.
+          - lines: 196
+            kind: rust
+            body: |
+              `&target` works where a path is expected: `Cow<Path>` dereferences to `Path` and
+              implements `AsRef<Path>`.
+          - lines: 198
+            kind: ono
+            body: |
+              The error message uses the original `path`, as the user wrote it.
+          - lines: 200
+            kind: rust
+            body: |
+              `OwnedFd::from(file)` — a `From` conversion ([chapter 13](chapter:conversions)):
+              the file is moved into an owned descriptor.
+          - lines: 227-231
+            kind: rust
+            body: |
+              `Cow::Owned(dir.join(path))` allocates a new `PathBuf` only when there is a working
+              directory **and** the path is relative (a match guard). In every other case,
+              `Cow::Borrowed(path)` returns the input unchanged. The lifetime `'a` ties a borrowed
+              result to the `path` argument.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The doc states the rule: "A redirection path is relative to the directory the command
+          will run in, as in a shell." `Cow` ("clone on write") lets the function return the
+          common case — an absolute path, or no separate working directory — without allocating,
+          and the uncommon case as an owned value, behind one type the caller does not need to
+          inspect. `Cow` is rare in Ono-Sendai (two uses at v0.6.2); `Arc` and `Box` are the
+          smart pointers you will meet constantly.
+      - type: exercise
+        id: smart-pointers-04-q1
+        exercise_type: trace-value
+        prompt: |
+          Trace `against` for three calls and say, for each, which `Cow` variant is returned and
+          whether anything is allocated: (a) `path = out.txt`, `cwd = Some(/srv/app)`;
+          (b) `path = /tmp/log`, `cwd = Some(/srv/app)`; (c) `path = out.txt`, `cwd = None`.
+          Which file does `open` then create in (c)?
+        snippets: [c15-cow-against]
+        hints:
+          - level: 1
+            body: |
+              The first arm needs both `Some(dir)` and a relative path.
+        solution:
+          summary: |
+            (a) `Cow::Owned(/srv/app/out.txt)` — one `PathBuf` allocated by `join`. (b)
+            `Cow::Borrowed(/tmp/log)` — the path is absolute, the guard fails, nothing allocated.
+            (c) `Cow::Borrowed(out.txt)` — no working directory, nothing allocated; `open` then
+            resolves `out.txt` relative to the process's current directory, i.e. where the shell
+            process itself runs.
+          analysis:
+            - aspect: control-flow
+              body: |
+                One `match` on `cwd` with a guarded first arm (`Some(dir) if path.is_relative()`)
+                and a wildcard second arm covering `None` and absolute paths.
+            - aspect: ownership
+              body: |
+                `Borrowed` holds `&'a Path` pointing at the caller's `path`; `Owned` holds a new
+                `PathBuf`. When `target` is dropped at the end of the `match` arm, an owned path is
+                freed; a borrowed one frees nothing.
+            - aspect: types
+              body: |
+                `Cow<'a, Path>` is an enum over `&'a Path` and `PathBuf` (the owned form of
+                `Path`). Both are used as a `&Path` at the call site.
+          guarantees: |
+            A relative redirection path is resolved against the command's working directory when
+            one is set; absolute paths are never changed.
+          semantics: |
+            Match guards are checked after the pattern matches; a failing guard falls through to
+            the next arm. `Path::join` allocates a new `PathBuf`. The returned `Cow`'s lifetime
+            cannot outlive `path`.
+          interpretation: |
+            Case (c) shows why the parameter exists: without a `cwd`, the shell's own directory is
+            used, which is correct only when the child runs there too.
+      - type: exercise
+        id: smart-pointers-04-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          Across this chapter you have seen `Arc<T>`, `Arc<Mutex<T>>`, `Mutex<Arc<T>>`,
+          `Arc` + atomics, `Box<T>`, `Box<dyn Trait>` and `Cow<'a, T>`. For each of these
+          Ono-Sendai examples, name the pointer and the one question it answers:
+          `Value::List`, `CancelToken`, `Reader.samples`, `PluginProvider.plugin`,
+          `DeclaredType::List`, `Where.predicate`, `against`'s return value.
+        snippets: [c15-transform-box-self, c15-cow-against]
+        hints:
+          - level: 1
+            body: |
+              Ask two questions each time: how many owners are there, and can anyone change the
+              data after it is shared?
+        solution:
+          summary: |
+            `Value::List(Arc<[Value]>)`: many owners, immutable — cheap clones. `CancelToken`
+            (`Arc<Inner>` with `AtomicBool`s): many owners, and a flag they may all flip.
+            `Reader.samples` (`Arc<Mutex<HashMap>>`): many owners changing one table under a
+            lock. `PluginProvider.plugin` (`Mutex<Arc<LoadedPlugin>>`): one owner changing which
+            shared instance is current. `DeclaredType::List(Box<…>)`: one owner; the box gives a
+            recursive type a finite size. `Where.predicate` (`Box<dyn Predicate>`): one owner of a
+            value whose concrete type is erased. `against` (`Cow<'a, Path>`): borrow unless an
+            owned value had to be built.
+          analysis:
+            - aspect: ownership
+              body: |
+                `Arc` = shared ownership; `Box` = single ownership on the heap; `Cow` = borrowed or
+                owned, decided at run time.
+            - aspect: mutation
+              body: |
+                Only the atomic and the two `Mutex` cases allow change after sharing; every other
+                case is immutable once shared or has a single owner.
+            - aspect: async
+              body: |
+                `Arc`, atomics and `std::sync::Mutex` are all thread-safe, which is required
+                because these values are used from Tokio tasks; `Rc` or `Cell` would not be.
+          guarantees: |
+            In each example the type itself states who owns the data and who may change it; there
+            is no hidden sharing.
+          semantics: |
+            `Arc<T>` gives `&T`; mutation through `&T` needs interior mutability; `Box<T>` owns
+            exactly one `T`; `Cow` implements `Deref` to the borrowed form in both variants.
+          interpretation: |
+            Reading Ono-Sendai's types in this way — "how many owners, who may mutate" — tells you
+            most of a component's concurrency story before you read a single function body.

@@ -1,0 +1,760 @@
+id: derives-macros
+number: 14
+title: Derives, macros and serde
+summary: |
+  Some of the code you read in Ono-Sendai is not in the file at all: it is **generated** at
+  compile time. `#[derive(...)]` writes trait implementations; `macro_rules!` macros write enums,
+  methods and impls from a compact table; serde's derives write the code that reads YAML and JSON;
+  `include_str!` puts whole files into the binary; `#[cfg(...)]` decides which of two functions
+  exists at all.
+
+  None of this needs to be read token by token. The skill this chapter trains is knowing **what
+  each construct generates**, so that you can read the declaration, trust the generated part, and
+  know where to look when "go to definition" finds nothing.
+lessons:
+  - id: derives-macros-01
+    title: "Derives: trait implementations you do not see"
+    stage: practice
+    summary: Read a derive list as a list of generated trait impls, and notice which derives are missing and why.
+    prerequisites: [conversions-04]
+    concepts: [derives, attributes, traits, enums]
+    ono_topics: [providers, value-model]
+    objectives:
+      - Say what `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `PartialOrd`, `Ord`, `Hash` and `Default` generate.
+      - Explain the ordering a derived `Ord` gives an enum.
+      - Explain why `Value` derives `PartialEq` but not `Eq`.
+      - Tell a derived impl from a hand-written one in the same file.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          A provider declares, for each capability it has, how risky it is. `Risk` is that
+          declaration; its doc says spec §17.1 "computes a risk descriptor from this together with
+          the number of targets, the context, the privilege level and irreversibility. This is the
+          part the provider declares." You saw a provider use it in
+          [chapter 12](chapter:iterators-closures): the `env` provider's only capability is
+          `Capability::new("env.read", Risk::Read)`.
+      - type: code
+        snippet: c14-risk-derives
+        annotations:
+          - lines: 14
+            token: "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]"
+            kind: rust
+            body: |
+              Eight generated impls. `Debug`: `{:?}` formatting (`Read`, `Mutate`, …). `Clone` +
+              `Copy`: a `Risk` is copied implicitly, like an integer. `PartialEq` + `Eq`: `==`,
+              with full equivalence. `PartialOrd` + `Ord`: `<`, `max`, sorting — ordered **by
+              declaration order**, so `Read < Observe < Mutate < Destructive`. `Hash`: usable as a
+              `HashMap` key.
+          - lines: 28
+            kind: rust
+            body: |
+              `#[must_use]`: the compiler warns if a caller ignores the result. Ono-Sendai puts it
+              on almost every getter and constructor.
+          - lines: 40-42
+            kind: rust
+            body: |
+              A `const fn` using `matches!` with an or-pattern — callable in constant contexts.
+          - lines: 45-49
+            kind: rust
+            body: |
+              `Display` is **hand-written**: it prints the contract name (`read`, `destructive`),
+              not the Rust variant name that the derived `Debug` would print.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          `#[derive(Trait)]` asks the compiler (or, for traits from other crates, a procedural
+          macro) to write `impl Trait for Type` field by field or variant by variant. The derived
+          code is what you would write by hand in the obvious way: `Clone` clones every field,
+          `PartialEq` compares every field, `Ord` on an enum compares variants by their position
+          in the declaration and then their fields.
+
+          Two consequences matter when reading:
+
+          - A derive only compiles if every field supports the trait. You cannot derive `Copy` for
+            a struct holding a `String`, or `Eq` for one holding an `f64`.
+          - Derives appear in **pairs with meaning**. `Eq` promises that `==` is a full
+            equivalence (every value equals itself); `Ord` promises a total order. Their absence
+            is information too.
+
+          The same mechanism powers library derives: `thiserror::Error` in
+          [lesson conversions-04](lesson:conversions-04), and serde's `Serialize`/`Deserialize` in
+          [lesson 3](lesson:derives-macros-03).
+      - type: code
+        snippet: c14-value-derive-default
+        caption: |
+          The start of the central `Value` enum (you will read all of it in
+          [chapter 15](chapter:smart-pointers)).
+        annotations:
+          - lines: 38
+            kind: rust
+            body: |
+              `Default` derived on an enum needs one variant marked `#[default]`: here
+              `Value::default()` is `Value::Null`, "a value that is known to be unknown".
+          - lines: 48
+            kind: type
+            body: |
+              `Float(f64)`: floating-point numbers have `NaN`, which is not equal to itself.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          `Risk` is a small, closed vocabulary, so it derives everything that makes such a type
+          convenient and cheap: copying, comparing, hashing, ordering. The ordering follows the
+          doc comments from harmless to irreversible. The one behaviour that must match the
+          contract files — the printed name — is written by hand against
+          `docs/contracts/capabilities.yaml`.
+
+          `Value` derives far less. It cannot derive `Eq` or `Hash` because it contains `f64`, and
+          it does not derive `PartialOrd`: its doc points readers to `compare_to` "for the ordering
+          the language's `==` and `<` operators need" instead of a structural order.
+      - type: exercise
+        id: derives-macros-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `Value` derives `Debug, Clone, PartialEq, Default` — but not `Eq`. What is the reason
+          the derive list gives you?
+        snippets: [c14-value-derive-default]
+        choices:
+          - text: "`Eq` cannot be derived for enums with data-carrying variants."
+            feedback: |
+              No. `Risk` has no data, but `ExitStatus` (a newtype) and many enums with payloads
+              derive `Eq`. What matters is whether every payload type is `Eq`.
+          - text: "`Value::Float(f64)` holds an `f64`, and `f64` is not `Eq` because `NaN != NaN`; so `#[derive(Eq)]` would not compile."
+            correct: true
+            feedback: |
+              Right. Deriving `Eq` requires every field to be `Eq`. Floating-point equality is
+              only partial, so `Value` can offer `==` (`PartialEq`) but not the stronger promise.
+              A consequence: `Value` cannot be a `HashMap` key either, since `Hash` + `Eq` go
+              together.
+          - text: "`Eq` would make cloning a `Value` expensive."
+            feedback: |
+              No. `Eq` is a marker trait with no methods and no runtime cost; it has nothing to do
+              with `Clone`.
+          - text: The `Arc` payloads prevent `Eq`.
+            feedback: |
+              No. `Arc<T>` is `Eq` whenever `T` is, and the other payloads are fine; the obstacle
+              is the `f64`.
+      - type: exercise
+        id: derives-macros-01-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          Someone proposes reordering `Risk`'s variants alphabetically
+          (`Destructive, Mutate, Observe, Read`) "for tidiness". What would change in the program,
+          and what would not? Consider every derived trait and the hand-written parts.
+        snippets: [c14-risk-derives]
+        hints:
+          - level: 1
+            body: |
+              Which of the derived traits depend on the *position* of a variant?
+        solution:
+          summary: |
+            The derived `PartialOrd`/`Ord` would change meaning: `Destructive` would become the
+            smallest risk and `Read` the largest, so any code comparing, sorting or taking the
+            `max` of risks would silently invert. `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` and
+            `Hash` would behave the same for users of the type, and so would the hand-written
+            `as_str`, `changes_the_world` and `Display`, which match by name.
+          analysis:
+            - aspect: traits
+              body: |
+                Derived `Ord` for a fieldless enum compares declaration positions. Equality and
+                hashing only distinguish variants; they do not care about order.
+            - aspect: control-flow
+              body: |
+                The `match` in `as_str` and the `matches!` in `changes_the_world` name variants,
+                so they are unaffected by order.
+            - aspect: next-steps
+              body: |
+                Before accepting such a change, search the workspace for comparisons of `Risk`
+                values (`<`, `>`, `max`, `sort`) — the derive list alone does not tell you whether
+                anyone relies on the order.
+          guarantees: |
+            As written, the declaration order puts `Read < Observe < Mutate < Destructive`,
+            matching the escalating doc comments.
+          semantics: |
+            A derived `Ord` on an enum orders by variant index first. Reordering variants is
+            therefore a behavioural change even though no line of code in an `impl` changes.
+          interpretation: |
+            Declaration order in a derive-`Ord` enum is part of its contract. Ono-Sendai's order
+            here reads as "increasing risk"; treat such orders as meaningful whenever `Ord` is
+            derived.
+
+  - id: derives-macros-02
+    title: "`macro_rules!`: reading a macro as a table"
+    stage: practice
+    summary: Read declarative macros by reading their invocation first, then the one rule that expands each row.
+    prerequisites: [derives-macros-01]
+    concepts: [macros, enums, code-navigation]
+    ono_topics: [rendering, core-vocabulary, pipeline]
+    objectives:
+      - Read a `macro_rules!` rule's matcher (`$name:fragment`, `$( … )*`) and transcriber.
+      - Predict what an invocation expands to.
+      - Explain why a macro keeps an enum and its lookup tables from drifting apart.
+      - Know what to do when "go to definition" of an enum variant lands in a macro invocation.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Ono-Sendai's renderer never names a colour. Output asks for a semantic **token** (spec
+          §44), and the theme decides what the token looks like. Each token has a Rust variant and
+          a spec name such as `ui.value.null`. The `tokens!` macro keeps the two together.
+      - type: code
+        snippet: c14-tokens-macro
+        annotations:
+          - lines: 17
+            kind: rust
+            body: |
+              The **matcher**. `$( … )*` means "zero or more repetitions of this". Each repetition
+              captures an identifier (`$variant:ident`), a literal (`$name:literal`) and another
+              literal (`$doc:literal`), separated by `=>`, `,` and ending in `;`.
+          - lines: 18-37
+            kind: rust
+            body: |
+              The **transcriber**: the code the macro produces. Every `$( … )*` inside it repeats
+              once per captured row, so one row becomes one enum variant (with its doc comment via
+              `#[doc = $doc]`), one entry in `ALL`, and one arm in `name`'s `match`.
+          - lines: 41-66
+            kind: ono
+            body: |
+              The **invocation** — read this first. It is a table: variant, spec name,
+              description.
+          - lines: 68-74
+            kind: rust
+            body: |
+              Ordinary code that uses what the macro generated: `ALL` and `name()`. It is the same
+              `iter().copied().find(…)` shape as `ByteUnit::from_suffix` in
+              [chapter 12](lesson:iterators-closures-01).
+      - type: prose
+        kind: rust
+        title: How to read a declarative macro
+        body: |
+          A `macro_rules!` macro is a set of rules `(matcher) => { transcriber }`. At compile time
+          the compiler matches the invocation's tokens against the matchers and replaces the
+          invocation with the transcriber, substituting the captured fragments. The result is
+          ordinary Rust, type-checked like any other.
+
+          Reading strategy:
+
+          1. Read the **invocation** as data.
+          2. Read **one** rule, and phrase it as "for each row, emit …".
+          3. Imagine the expansion for one row. For `Dim => "ui.dim", "…";` that is a variant
+             `Dim`, the element `Token::Dim` in `ALL`, and the arm `Token::Dim => "ui.dim"`.
+
+          A consequence for navigation: `Token::Dim` has no `enum Token { … Dim … }` written
+          anywhere. An editor's "go to definition" lands on the invocation row, which is the right
+          place to read.
+      - type: code
+        snippet: c14-debug-as-name
+        caption: |
+          A second shape: a macro that writes a trait impl for each type it is given. It is used,
+          for example, as below in `transforms/slice.rs`.
+        annotations:
+          - lines: 69
+            kind: rust
+            body: |
+              `$($transform:ty),+` — one or more types separated by commas; `$(,)?` allows an
+              optional trailing comma.
+          - lines: 71-73
+            kind: rust
+            body: |
+              Fully qualified paths (`::std::fmt::Debug`, `$crate::Transform::name`) so the
+              expansion means the same wherever it is invoked, whatever that module imports.
+              `$crate` names the crate that defined the macro.
+          - lines: 80
+            kind: rust
+            body: |
+              `pub(crate) use` makes the macro reachable crate-wide by path
+              (`crate::transform::debug_as_name!`).
+      - type: code
+        snippet: c14-debug-as-name-use
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The `tokens!` doc says it "Builds `Token` together with the name spec §44 gives it". The
+          sibling macro for error codes states the motive outright: "so the three can never drift
+          apart and the exhaustive lists stay derived rather than restated". A new row adds the
+          variant, its `ALL` entry and its `match` arms at once; forgetting one is impossible.
+
+          `debug_as_name!` exists for a different reason, given in its doc: "A transform holds
+          resolved functions — closures, trait objects — which have no `Debug` worth printing, and
+          derivation is therefore impossible." A `Where` holds a `Box<dyn Predicate>`, and
+          `#[derive(Debug)]` would need `Debug` for that field.
+      - type: exercise
+        id: derives-macros-02-q1
+        exercise_type: trace-value
+        prompt: |
+          Write out, in your own words or as Rust, what
+          `crate::transform::debug_as_name!(Take, Skip, Tail, First, Last);` expands to. What
+          does `format!("{:?}", some_take)` print, and why?
+        snippets: [c14-debug-as-name, c14-debug-as-name-use]
+        hints:
+          - level: 1
+            body: |
+              The outer `$( … )+` in the transcriber repeats once per captured `$transform`.
+        solution:
+          summary: |
+            Five `impl ::std::fmt::Debug for T` blocks, one each for `Take`, `Skip`, `Tail`,
+            `First` and `Last`, each with an `fmt` that writes `Transform::name(self)`. Formatting
+            a `Take` with `{:?}` prints its transform name — the name the language spells it with,
+            such as `take` — and nothing about its fields.
+          analysis:
+            - aspect: control-flow
+              body: |
+                The matcher captures five `ty` fragments. The transcriber's `$( impl … )+`
+                emits one impl per capture, substituting the type for `$transform`.
+            - aspect: traits
+              body: |
+                The generated `fmt` calls the `Transform` trait's required `name` method with the
+                fully qualified syntax `$crate::Transform::name(self)`, so it compiles only for
+                types that implement `Transform`.
+            - aspect: outputs
+              body: |
+                `Debug` output is the transform's `&'static str` name, e.g. what `Where`'s
+                `name()` returns (`"where"`).
+          guarantees: |
+            Every type listed gets a `Debug` impl, and a type that is not a `Transform` would be a
+            compile error at the invocation.
+          semantics: |
+            Macro expansion happens before type checking; the expanded impls are checked like
+            hand-written ones. `$crate` resolves to `ono_pipeline` wherever the macro is used.
+          interpretation: |
+            The doc names the audience: "What a reader of a failed assertion wants is the
+            transform's name." A test failure involving a pipeline prints readable names instead of
+            closure internals.
+      - type: exercise
+        id: derives-macros-02-q2
+        exercise_type: read-function
+        prompt: |
+          `ono-core` defines its error-code taxonomy with a second table macro. Read the rule and
+          the first rows of the invocation. What does the macro generate, what do
+          `ErrorCode::TypeMismatch.code()`, `.name()` and `.kind()` return, and where would you
+          look to add a new code?
+        snippets: [c14-error-codes-macro]
+        hints:
+          - level: 1
+            body: |
+              Count the fragments captured per row, then find each one in the transcriber.
+        solution:
+          summary: |
+            The macro generates `enum ErrorCode` (one documented variant per row, deriving
+            `Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash`, `#[non_exhaustive]`), the
+            constant `ErrorCode::ALL` in row order, and three `const fn`s mapping each variant to
+            its rendered number, its dotted name and its `ErrorKind`. For `TypeMismatch` they
+            return `"Ono-Sendai-E0201"`, `"type.mismatch"` and `ErrorKind::Type`. A new code is
+            added as one new row in the invocation.
+          analysis:
+            - aspect: inputs
+              body: |
+                Each row captures five fragments: the variant (`ident`), the rendered number and
+                the selector (`literal`s), the kind (`ident`, substituted into `ErrorKind::$kind`),
+                and the doc text (`literal`).
+            - aspect: outputs
+              body: |
+                One enum, one constant slice, three `match`-based `const fn`s — all derived from
+                the same rows. The macro also emits a doc comment with a doctest (lines 107–112),
+                so `cargo test` checks an example of the generated API.
+            - aspect: types
+              body: |
+                `$kind:ident` becomes a path `ErrorKind::$kind`, so a row with a kind that is not
+                an `ErrorKind` variant fails to compile.
+            - aspect: next-steps
+              body: |
+                "Go to definition" on `ErrorCode::ProviderUnsupported` leads to its row (line 173).
+                `docs/contracts/errors.yaml`, named in the generated doc, is the contract the rows
+                follow.
+          guarantees: |
+            Number, name, kind and the `ALL` list can never disagree for any code, because they
+            are all generated from one row.
+          semantics: |
+            `macro_rules!` repetitions `$( … )*` expand in lockstep: every repetition in the
+            transcriber iterates over the same captured rows. The derived `Ord` orders codes by row
+            order, which the doc calls "numeric order".
+          interpretation: |
+            The doc's phrase "the exhaustive lists stay derived rather than restated" is the design
+            principle: whenever Ono-Sendai needs several views of one closed vocabulary, it
+            generates them from a single table instead of maintaining parallel lists.
+
+  - id: derives-macros-03
+    title: "Serde: the shape of the data on disk"
+    stage: practice
+    summary: Read serde derives and field attributes as a description of the file format, and follow the raw-then-validated pattern for contracts.
+    prerequisites: [derives-macros-02]
+    concepts: [serde, derives, attributes, conversions]
+    ono_topics: [history, adapters, command-registry]
+    objectives:
+      - Read `Serialize`/`Deserialize` derives and `#[serde(...)]` attributes as format rules.
+      - Explain `default`, `skip_serializing_if`, `rename`, `skip` and `deny_unknown_fields`.
+      - Recognise the raw-then-validated pattern and say why the conversion step exists.
+    sections:
+      - type: prose
+        kind: context
+        title: History on disk
+        body: |
+          `ono-history` persists every command as one JSON object per line (JSONL). The crate doc
+          gives the reason for the format: "a torn write at the moment a machine loses power costs
+          one entry, not the history." The store writes an entry with `serde_json::to_string` and
+          reads each line back with `serde_json::from_str::<Entry>`. What those calls produce is
+          described entirely by the struct below.
+      - type: code
+        snippet: c14-history-entry
+        annotations:
+          - lines: 17
+            token: "Serialize, Deserialize"
+            kind: crate
+            body: |
+              Serde's derives generate code that writes the struct as a map of field names to
+              values, and reads it back. Field types must themselves be serializable: `String`,
+              `PathBuf`, `jiff::Timestamp` and `Option`/`Vec` of such types all are.
+          - lines: 23-24
+            kind: crate
+            body: |
+              `skip_serializing_if = "Option::is_none"`: when the status is unknown, the key is
+              left out rather than written as `null`. `default`: when reading, a missing key
+              becomes `None` instead of an error — so older lines without the key still parse.
+          - lines: 29-30
+            kind: crate
+            body: |
+              The same for vectors: an empty list is omitted, and a missing key reads as empty.
+          - lines: 49-52
+            kind: rust
+            body: |
+              In the constructor, `Option` combinators fill the optional fields only when an
+              outcome exists. `u64::try_from(…).unwrap_or(u64::MAX)` narrows the `u128`
+              milliseconds, saturating instead of failing.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The doc comment quotes spec §20.1, "History records semantics, not only strings", and
+          adds: "the fields that phase A can honestly fill are filled now, and nothing is
+          fabricated". An unknown status is **absent**, never a made-up `0`; that is what `Option`
+          plus `skip_serializing_if` expresses on disk.
+      - type: code
+        snippet: c14-adapter-pack-serde
+        caption: |
+          Adapter packs describe how the output of Unix tools becomes typed values (ADR-0055).
+        annotations:
+          - lines: 195
+            kind: crate
+            body: |
+              `deny_unknown_fields`: a key the struct does not declare is a parse **error**, not
+              silently ignored. A typo such as `executabels:` fails loudly.
+          - lines: 218-219
+            kind: crate
+            body: |
+              `rename`: the file's key `process.exec` is not a valid Rust identifier, so the field
+              gets a Rust name and serde maps between them.
+          - lines: 250-253
+            kind: crate
+            body: |
+              `skip`: never read from or written to the file. These fields are filled in by code
+              after parsing (each adapter learns which pack it came from); they need `Default`
+              while deserializing.
+      - type: code
+        snippet: c14-raw-command
+        caption: |
+          Command contracts go through two stages: serde reads them into `Raw*` structs of plain
+          strings, and `into_contract` converts those into strong types, with an error per bad
+          field.
+        annotations:
+          - lines: 978-1005
+            kind: type
+            body: |
+              Almost everything is a `String` or `bool`: serde only checks the *shape*. Words
+              like `stability: "stable"` are validated later.
+          - lines: 1051-1052
+            kind: crate
+            body: |
+              `type` is a Rust keyword, so the field is `declared_type` and renamed. This string is
+              what `DeclaredType::from_str` parses ([lesson conversions-02](lesson:conversions-02)).
+          - lines: 1095-1100
+            kind: flow
+            body: |
+              The second stage: a `match` on the string turns it into the `Stability` enum, and any
+              other word returns a `contract_error` naming the contract and the bad value.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          Serde attributes are instructions to the generated code, not runtime logic you can step
+          through. Read them as a format specification:
+
+          | attribute | meaning |
+          |---|---|
+          | `default` | a missing key uses `Default::default()` |
+          | `skip_serializing_if = "path"` | omit the key when the function returns `true` |
+          | `rename = "…"` / `rename_all = "kebab-case"` | the key's spelling in the file |
+          | `skip` | not in the file at all |
+          | `deny_unknown_fields` | unknown keys are errors |
+          | `untagged` (on an enum) | try the variants in order until one fits |
+
+          Raw-then-validated splits parsing into "does it have the right shape?" (serde) and "does
+          it mean something valid?" (a hand-written conversion that can explain what is wrong).
+      - type: exercise
+        id: derives-macros-03-q1
+        exercise_type: predict
+        prompt: |
+          An entry is created with `outcome: None` (the command's outcome is not known). Predict
+          the JSON line `serde_json::to_string` writes for it: which keys appear, which do not?
+          Then predict what happens when a line from an older version, which has no `adapters`
+          key, is read back.
+        snippets: [c14-history-entry]
+        hints:
+          - level: 1
+            body: |
+              With `outcome: None`, which fields does the constructor set to `None` or to an empty
+              vector?
+        solution:
+          summary: |
+            Keys written: `id`, `at`, `command`, `cwd` and `session`. `status` and `duration_ms`
+            are `None` and are skipped; `adapters` and `plans` are empty and are skipped. An older
+            line without `adapters` parses fine: `#[serde(default)]` fills an empty `Vec`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                In `new`, `outcome.as_ref().map(…)` yields `None` for status and duration, and
+                `…unwrap_or_default()` yields empty vectors when there is no outcome.
+            - aspect: outputs
+              body: |
+                Something like
+                `{"id":"…","at":"2026-…Z","command":"ls","cwd":"/home/u","session":"…"}` —
+                `Timestamp` serializes as text, `PathBuf` as a string. Field order follows the
+                struct.
+            - aspect: errors
+              body: |
+                Reading never fails because of the missing optional keys. A line that is not
+                valid JSON at all fails `from_str`, and the store skips it (the `if let Ok(entry)`
+                in `store.rs`), matching the crate doc's torn-write policy.
+          guarantees: |
+            Unknown facts are never written as values: an absent status stays absent in the file.
+          semantics: |
+            `skip_serializing_if` affects only writing; `default` affects only reading. Together
+            they make optional fields round-trip as "absent".
+          interpretation: |
+            This is how the history format stays honest (nothing fabricated) and evolvable (new
+            optional fields do not break old files).
+      - type: exercise
+        id: derives-macros-03-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          `AdapterPack` and its parts use `deny_unknown_fields`; `RawCommand` does not, but every
+          one of its word-valued fields is checked in `into_contract`. Why parse into strings first
+          and convert afterwards, instead of deriving `Deserialize` directly on `Stability`,
+          `ArgumentMode` and friends? What does each approach catch, and when?
+        snippets: [c14-raw-command, c14-adapter-pack-serde]
+        hints:
+          - level: 1
+            body: |
+              Compare the error a serde enum mismatch would produce with the one `contract_error`
+              produces.
+        solution:
+          summary: |
+            Deriving `Deserialize` on the strong enums would reject a bad word too, but with a
+            generic serde message. Parsing into strings and converting in `into_contract` lets
+            Ono-Sendai report the contract's id and the offending value in its own words
+            ("`<id>` in docs/contracts/commands/ is not a valid contract: unknown stability `x`"),
+            and lets the conversion check things serde cannot, such as a parameter's type text
+            through `DeclaredType::from_str`. `deny_unknown_fields` on the adapter structs catches
+            misspelled or extra *keys* at parse time; `RawCommand`, as written, would ignore an
+            unknown key.
+          analysis:
+            - aspect: errors
+              body: |
+                Two layers of checking: serde (shape, required keys, and for adapters unknown
+                keys) and `into_contract` (vocabulary, with `contract_error`).
+            - aspect: types
+              body: |
+                `Raw*` structs are `pub(crate)` or private: the loose, stringly-typed form never
+                leaves the crate; callers only ever see `CommandContract`.
+            - aspect: architecture
+              body: |
+                `contract_error`'s doc: "A contract file that does not typecheck against this
+                vocabulary is a build defect, so loading says exactly which entry and which field
+                went wrong."
+            - aspect: next-steps
+              body: |
+                To confirm how unknown keys in command contracts are handled, check whether the
+                JSON is validated elsewhere (for example by the build script or `xtask`), since
+                `RawCommand` itself does not deny them.
+          guarantees: |
+            A `CommandContract` exists only if every word-valued field was one of the known
+            words; an adapter pack parses only if it contains no undeclared keys.
+          semantics: |
+            Serde enforces what the derive and attributes describe and nothing more. Without
+            `deny_unknown_fields`, extra keys are silently skipped by the generated code.
+          interpretation: |
+            Raw-then-validated is a recurring Ono-Sendai pattern for any data it loads: keep
+            parsing mechanical, keep meaning in reviewed Rust code with precise errors.
+
+  - id: derives-macros-04
+    title: "Compile-time choices: `include_str!`, `OnceLock` and `#[cfg]`"
+    stage: practice
+    summary: Read built-in macros that embed files into the binary, a parse-once static, and two definitions of one function selected by a Cargo feature.
+    prerequisites: [derives-macros-03]
+    concepts: [macros, conditional-compilation, attributes, shared-ownership]
+    ono_topics: [command-registry, providers]
+    objectives:
+      - Explain what `include_str!(concat!(env!("OUT_DIR"), …))` does and when.
+      - Read a `static OnceLock` as "computed on first use, then shared".
+      - Read `#[cfg(feature = …)]` pairs and say which definition a given build contains.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Every command Ono-Sendai knows is described by a contract in
+          `docs/contracts/commands/*.yaml`. The registry must be available the moment the shell
+          starts, without depending on installed files, and within spec §34's cold-start budget.
+      - type: code
+        snippet: c14-embedded-registry
+        annotations:
+          - lines: 25
+            kind: rust
+            body: |
+              Three built-in macros, evaluated by the compiler: `env!("OUT_DIR")` reads the build
+              directory that Cargo gives the build script; `concat!` joins string literals;
+              `include_str!` reads that file **at compile time** and turns its contents into a
+              `&'static str` in the binary.
+          - lines: 46
+            kind: rust
+            body: |
+              `OnceLock<T>` is a cell that can be set once, safely from any thread. As a `static`
+              it is shared by the whole program.
+          - lines: 90
+            kind: flow
+            body: |
+              `get_or_init` runs the closure only on the first call; every later call returns a
+              reference to the stored result. The closure parses the registry and keeps only the
+              message of a failure (a `String`), so the stored value does not need `ErrorValue`.
+          - lines: 91-98
+            kind: flow
+            body: |
+              On success the caller gets `&'static CommandRegistry` — a borrow of the static that
+              lives as long as the program. On failure an `ErrorValue` is rebuilt from the stored
+              message on each call.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The module doc answers directly: a cold start of under 100 ms "which a dozen YAML reads
+          would spend before the prompt appears; and a shell whose command set depends on files
+          being installed correctly is a shell that breaks when they are not. The registry is
+          therefore part of the binary, parsed once on first use — and parsed from JSON, which
+          `build.rs` transcodes from the YAML at build time, because the YAML parse alone cost a
+          quarter of a cold start (ADR-0571)."
+      - type: code
+        snippet: c14-through-time-cfg
+        caption: |
+          Called at the end of `registry_with_tables`, after every provider has been registered.
+        annotations:
+          - lines: 110
+            kind: rust
+            body: |
+              `#[cfg(feature = "temporal")]`: this function exists only in builds with the
+              `temporal` Cargo feature.
+          - lines: 114
+            kind: ownership
+            body: |
+              Each provider is wrapped: `Arc::clone(provider)` gives the wrapper its own handle,
+              and the `TemporalProvider` is put in a new `Arc`.
+          - lines: 120-125
+            kind: rust
+            body: |
+              `#[cfg(not(feature = "temporal"))]`: the other definition, with the same name and
+              signature. Exactly one of the two is compiled; the other is removed before type
+              checking.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          `#[cfg(...)]` removes the item it is attached to unless the condition holds. With a
+          `cfg`/`cfg(not)` pair, every build contains exactly one `through_time`, and callers do
+          not know or care which. Cargo features are declared in a crate's `Cargo.toml`; in
+          `ono-cli`, `default = ["full"]` and `full` includes `temporal`, while the core profile
+          is built with `--no-default-features --features core` (ADR-0910).
+
+          When you read such code, first decide **which build** you are reading. Tools such as an
+          editor may grey out the inactive branch.
+      - type: exercise
+        id: derives-macros-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A user runs the `ono` binary built with plain `cargo build -p ono-cli`. Which
+          `through_time` is in that binary?
+        snippets: [c14-through-time-cfg]
+        choices:
+          - text: The one wrapping every provider in `TemporalProvider` (lines 110–117).
+            correct: true
+            feedback: |
+              Right. The default feature set is `full`, which enables `temporal`, so
+              `cfg(feature = "temporal")` holds and the wrapping version is compiled.
+          - text: The one registering providers directly (lines 120–127).
+            feedback: |
+              That version exists only in builds without `temporal`, such as the core profile
+              built with `--no-default-features --features core`.
+          - text: Both; the program chooses at run time.
+            feedback: |
+              No. `cfg` is resolved at compile time; the inactive definition is not in the binary
+              at all. Two definitions with the same name could not coexist anyway.
+          - text: Neither; `cfg` functions must be called through a feature check.
+            feedback: |
+              No. Callers call `through_time(&registry)` normally; whichever definition was
+              compiled is the one they get.
+      - type: exercise
+        id: derives-macros-04-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Trace three calls to `CommandRegistry::embedded()` in one process: the first two on a
+          correctly built binary, the third imagined on a binary whose embedded `process.json`
+          contains an entry with `stability: "beta"`. What runs, what is returned, and how often is
+          JSON parsed?
+        snippets: [c14-embedded-registry]
+        hints:
+          - level: 1
+            body: |
+              `get_or_init` runs its closure at most once per process. What does it store in the
+              failing case?
+        solution:
+          summary: |
+            First call: `get_or_init` runs `Self::load()`, which parses every embedded JSON file
+            and builds the registry; the `Ok` is stored and `Ok(&'static registry)` returned.
+            Second call: the closure does not run; the same reference is returned without parsing.
+            In the failing binary, the first call's `load` returns an `ErrorValue` (from
+            `into_contract`'s `contract_error`), whose message is stored as `Err(String)`; that
+            call and every later call return a freshly built `ProviderSchemaViolation` error with
+            the help "…this is a build defect". JSON is parsed once per process in both cases.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `load` loops over `COMMAND_FILES`, calling `serde_json::from_str` and then
+                `into_contract` for every raw command, with `?` on both; the first failure ends
+                the load.
+            - aspect: ownership
+              body: |
+                The static owns the `Result`. Successful callers borrow the registry for
+                `'static`; failing callers get an owned `ErrorValue` built from a clone of the
+                stored message.
+            - aspect: async
+              body: |
+                `OnceLock` is thread-safe: if two threads call `embedded()` at once, one runs the
+                closure and the other waits, then both see the same stored value.
+            - aspect: side-effects
+              body: |
+                No file I/O at run time: the JSON text was compiled into the binary by
+                `include_str!`.
+          guarantees: |
+            The registry is parsed at most once per process, and a broken embedded contract is
+            reported, not replaced by an empty registry — the doc says "reported rather than
+            papered over with an empty registry".
+          semantics: |
+            `include_str!` is evaluated at compile time. `OnceLock::get_or_init` initialises at
+            most once and returns `&T`. `&'static` references to a static are valid for the rest
+            of the program.
+          interpretation: |
+            Memoising a `Result` means a build defect cannot be "retried away" and is cheap to
+            report again; the design treats the registry as part of the program, not as
+            configuration.

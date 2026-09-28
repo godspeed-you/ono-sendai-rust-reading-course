@@ -1,0 +1,62 @@
+id: c12-context-frame-of-record
+source:
+  file: crates/ono-command/src/invoke.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 62
+  end_line: 102
+  anchor: 'let fields = |record: &RecordValue| -> Vec<(String, Value)> {'
+  content_hash: sha256:d7a0ba4eeeb78768450cbe9971dbd12475e53c85fd95c669e2e3708767dcc8e4
+  code: |2
+        /// An object frame that knows the handles of the entered object (ADR-0076).
+        ///
+        /// The handles are the record's scalar fields by name, plus the scalar fields of its
+        /// structural sub-records under their own names where nothing at the top level claims the
+        /// name — so a socket's `local.port` answers to `port`, the parameter `get socket` and
+        /// `trace socket --port` declare. A later command of the same target takes the first of its
+        /// declared parameters that the frame has a handle for.
+        #[must_use]
+        pub fn of_record(target: impl Into<String>, identity: Value, record: &RecordValue) -> Self {
+            let fields = |record: &RecordValue| -> Vec<(String, Value)> {
+                record
+                    .schema()
+                    .fields()
+                    .iter()
+                    .filter_map(|field| {
+                        Some((field.name().to_owned(), record.get(field.name())?.clone()))
+                    })
+                    .collect()
+            };
+            let top = fields(record);
+            let mut handles: Vec<(String, Value)> = top
+                .iter()
+                .filter(|(_, value)| is_handle(value))
+                .cloned()
+                .collect();
+            for (_, value) in &top {
+                if let Value::Record(nested) = value {
+                    for (name, value) in fields(nested) {
+                        if is_handle(&value) && !handles.iter().any(|(held, _)| *held == name) {
+                            handles.push((name, value));
+                        }
+                    }
+                }
+            }
+            Self {
+                kind: FrameKind::Object,
+                target: target.into(),
+                identity,
+                handles,
+            }
+        }
+- start_line: 161
+  end_line: 166
+  anchor: 'fn is_handle(value: &Value) -> bool {'
+  content_hash: sha256:5bda053ba4b52c7ac4f82282d2beff1aab018b4c38c43724cab2d425a0bcafcf
+  code: |
+    fn is_handle(value: &Value) -> bool {
+        !matches!(
+            value,
+            Value::Null | Value::Record(_) | Value::List(_) | Value::Map(_) | Value::Error(_)
+        )
+    }

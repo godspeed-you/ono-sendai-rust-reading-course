@@ -1,0 +1,31 @@
+id: c10-test-clock
+source:
+  file: crates/ono-provider-linux/tests/common/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 360
+  end_line: 380
+  anchor: impl Clock for TestClock {
+  content_hash: sha256:b7bd895b1bdf94211aa8e85aa29839360fed71edb47ab8d213f85cd2c53207e1
+  code: |
+    /// A monotonic clock a test moves by hand, so a rate has an exact denominator.
+    #[derive(Debug, Default)]
+    pub struct TestClock {
+        nanos: AtomicU64,
+    }
+
+    impl TestClock {
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        pub fn advance(&self, by: Duration) {
+            self.nanos.fetch_add(by.as_nanos() as u64, Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now_nanos(&self) -> u128 {
+            u128::from(self.nanos.load(Ordering::SeqCst))
+        }
+    }

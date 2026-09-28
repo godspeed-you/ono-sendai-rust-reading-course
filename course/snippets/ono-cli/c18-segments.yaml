@@ -1,0 +1,89 @@
+id: c18-segments
+source:
+  file: crates/ono-cli/src/eval/native/segment.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 112
+  end_line: 190
+  anchor: _ if native => segments.push(Segment::Native(vec![index])),
+  content_hash: sha256:aa0c1cc8f9255f95fdfe5cef89a34a3efc78206059cd68e6d047ccc714948642
+  code: |
+    /// Splits `list` into runs of native and external stages.
+    ///
+    /// Returns `None` when the registry itself cannot be read, which leaves the caller on the
+    /// external path it would have taken before native commands existed.
+    pub(super) fn segments(
+        session: &mut Session,
+        list: &StageList,
+        start: usize,
+        seeded: bool,
+    ) -> Option<Vec<Segment>> {
+        let registry = registry().ok()?;
+        let mut segments: Vec<Segment> = Vec::new();
+        let mut structured = seeded;
+
+        for (index, stage) in list.stages.iter().enumerate().skip(start) {
+            let native = native_contract(session, registry, stage, structured).is_some();
+            structured = if native {
+                native_contract(session, registry, stage, structured)
+                    .is_some_and(|contract| !produces_bytes(contract))
+            } else {
+                // An adapted program hands structure on (spec v0.3 §1.4), so `lsblk | sort size`
+                // is the transform where `printf x | sort` is the program (ADR-0028, ADR-0057).
+                ono_command::is_adapt(stage)
+                    || negotiate_literally(session, stage, &OutputDemand::Structured { schema: None })
+                        .is_some_and(|negotiation| negotiation.plan().is_some())
+            };
+
+            match segments.last_mut() {
+                Some(Segment::Native(indices)) if native => indices.push(index),
+                Some(Segment::External(indices)) if !native => indices.push(index),
+                _ if native => segments.push(Segment::Native(vec![index])),
+                _ => segments.push(Segment::External(vec![index])),
+            }
+        }
+        Some(segments)
+    }
+
+    /// The contract `stage` names, if a native command is what it means here.
+    ///
+    /// `structured` says whether objects reach this stage. It is what keeps `printf … | sort` the
+    /// program it has always been while `get process | sort name` is the transform: a command
+    /// declared over a stream of records binds only where a stream of records arrives.
+    pub(super) fn native_contract(
+        session: &Session,
+        registry: &'static CommandRegistry,
+        stage: &Stage,
+        structured: bool,
+    ) -> Option<&'static CommandContract> {
+        let StageHead::Command(name) = &stage.head else {
+            return None;
+        };
+        let namespace = Namespace::from_prefix(name.namespace.as_deref())?;
+        if matches!(namespace, Namespace::External | Namespace::Function) {
+            return None;
+        }
+        // A shell builtin changes the shell, so it is never a native command: `cd` in a pipeline
+        // moves a directory nobody is standing in, and the evaluator has already said so.
+        let first_word = stage
+            .arguments
+            .first()
+            .and_then(ono_parser::Argument::as_word);
+        if crate::resolve::builtin_for(&name.name, first_word).is_some() {
+            return None;
+        }
+
+        let contract = registry
+            .resolve(&name.name, &stage.arguments)
+            .ok()?
+            .contract;
+        if binds_here(contract, structured) || matches!(namespace, Namespace::Native) {
+            return Some(contract);
+        }
+        // A transform reached by bytes is the program of the same name, where one exists. Where none
+        // does, the transform stays and reports the type error honestly — "`count` needs objects" is
+        // a better answer than "command not found: count".
+        crate::resolve::find_on_path(session, &name.name)
+            .is_none()
+            .then_some(contract)
+    }

@@ -1,0 +1,39 @@
+id: c18-bind-stage
+source:
+  file: crates/ono-cli/src/eval/native/bind.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 20
+  end_line: 48
+  anchor: let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+  content_hash: sha256:62af9e8cdfdc0192f727787fa363b5033110c602981ce30f48a5a518653ab12d
+  code: |
+    /// Binds one stage of a native segment: the contract the registry places it at, its globs
+    /// expanded, its arguments resolved against that contract.
+    ///
+    /// The one place a native stage is bound, so the streaming continuation of §26.2 and the drained
+    /// segment below cannot drift apart in what "bound" means. `None` is the registry declining to
+    /// place the stage here; what that means is the caller's to decide — a refusal for a segment
+    /// already claimed as native, a reason not to continue a stream for one that was only offered.
+    ///
+    /// # Errors
+    ///
+    /// The structured error of a glob that could not be expanded, an argument that does not resolve,
+    /// or a spatial command the settings have switched off.
+    pub(super) fn bind_stage(
+        session: &mut Session,
+        registry: &'static CommandRegistry,
+        stage: &Stage,
+        structured: bool,
+    ) -> Eval<Option<(&'static CommandContract, BoundArguments)>> {
+        let Some(contract) = native_contract(session, registry, stage, structured) else {
+            return Ok(None);
+        };
+        refuse_switched_off_spatial(session, contract, stage)?;
+        let arguments = crate::expand::expand_globs(session, &stage.arguments).map_err(Flow::Failed)?;
+        let resolved = registry
+            .resolve(head_name(stage), &arguments)
+            .map_err(Flow::Failed)?;
+        let arguments = contract.bind(resolved.arguments).map_err(Flow::Failed)?;
+        Ok(Some((contract, arguments)))
+    }

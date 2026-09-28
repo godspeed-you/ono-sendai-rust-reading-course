@@ -1,0 +1,44 @@
+id: c13-transform-count
+source:
+  file: crates/ono-command/src/impls/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 248
+  end_line: 281
+  anchor: usize::try_from(count).map_err(|_| {
+  content_hash: sha256:6addf703f059c7858c4bcb1468e7938fb9ce80e826ab74622435884b810c7d4a
+  code: |
+    /// The count `take` and `skip` were given, evaluated with no record in hand.
+    fn count(
+        arguments: &BoundArguments,
+        spelling: &str,
+        scope: &Arc<Scope>,
+    ) -> Result<usize, ErrorValue> {
+        let value = match arguments.selector_binding("count") {
+            Some(Binding::Value(value)) => value.clone(),
+            Some(Binding::Expressions(expressions)) => {
+                let first = expressions.first().ok_or_else(|| {
+                    ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`{spelling}` needs a count"),
+                    )
+                })?;
+                evaluate(first, &Value::Null, scope)?
+            }
+            None => {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{spelling}` needs a count, and none was given"),
+                )
+                .with_help(format!("write it as `{spelling} 10`")));
+            }
+        };
+        let count = value.as_int()?;
+        usize::try_from(count).map_err(|_| {
+            ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!("`{spelling}` cannot take {count} values"),
+            )
+            .with_help("a count is zero or more")
+        })
+    }

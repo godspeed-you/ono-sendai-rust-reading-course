@@ -1,0 +1,49 @@
+id: c11-predicate-blanket
+source:
+  file: crates/ono-pipeline/src/function.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 9
+  end_line: 47
+  anchor: impl<F> Predicate for F
+  content_hash: sha256:e84ed06d566af3fed7919857cdb2eebea7a9811685bc4d65a637ba9b2557b7d4
+  code: |
+    /// Decides whether `where` keeps a value.
+    ///
+    /// The result is a [`Value`] rather than a `bool` because ADR-0014 gives the question four
+    /// answers, not two: `Bool(true)` admits, `Bool(false)` excludes, `Null` excludes as unknown,
+    /// and an `Error` excludes and is reported. Collapsing those into a boolean is exactly the
+    /// ambiguity Ono exists to remove.
+    pub trait Predicate: Send + Sync + 'static {
+        /// Evaluates the predicate for one value.
+        fn test(&self, value: &Value) -> Value;
+    }
+
+    impl<F> Predicate for F
+    where
+        F: Fn(&Value) -> Value + Send + Sync + 'static,
+    {
+        fn test(&self, value: &Value) -> Value {
+            self(value)
+        }
+    }
+
+    /// Extracts the key `sort`, `group`, `measure`, `join` and `diff` work on.
+    pub trait KeyFn: Send + Sync + 'static {
+        /// Reads the key of one value.
+        ///
+        /// # Errors
+        ///
+        /// Returns the failure of reading it — a field that does not exist on this value, or one
+        /// whose access failed. The value is then excluded and the failure reported (spec §16.5).
+        fn key(&self, value: &Value) -> Result<Value, ErrorValue>;
+    }
+
+    impl<F> KeyFn for F
+    where
+        F: Fn(&Value) -> Result<Value, ErrorValue> + Send + Sync + 'static,
+    {
+        fn key(&self, value: &Value) -> Result<Value, ErrorValue> {
+            self(value)
+        }
+    }

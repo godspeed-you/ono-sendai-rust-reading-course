@@ -1,0 +1,59 @@
+id: c16-budgeted-connect
+source:
+  file: crates/ono-provider-systemd/src/dbus.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 32
+  end_line: 37
+  anchor: 'const CALL_BUDGET: Duration = Duration::from_secs(10);'
+  content_hash: sha256:ba2368ca17b04f79fe5bcce710256902f7d3daef2828f2064e9e212ee491d9d6
+  code: |
+    /// How long any one call may take before the provider gives up on it.
+    ///
+    /// A shell that blocks forever on a wedged bus is a shell nobody can use (spec §34). Ten seconds
+    /// is long enough for a slow `StartUnit` that waits on dependencies and short enough that a user
+    /// gets an answer rather than a hang.
+    const CALL_BUDGET: Duration = Duration::from_secs(10);
+- start_line: 66
+  end_line: 84
+  anchor: let connection = open_system_bus().await?;
+  content_hash: sha256:3abb8e417764d6a4db5ebce0a2dac66d5c2aaedd4a658c1cf7b7f9937361b8e9
+  code: |
+    impl SystemBus {
+        /// Opens the system bus and builds the `Manager` proxy.
+        ///
+        /// # Errors
+        ///
+        /// [`BusError::Unavailable`], naming what was missing, when there is no bus socket or the
+        /// connection cannot be established.
+        pub async fn connect() -> Result<Self, BusError> {
+            let connection = open_system_bus().await?;
+            let manager = budgeted(
+                "building the org.freedesktop.systemd1.Manager proxy",
+                Proxy::new(&connection, DESTINATION, MANAGER_PATH, MANAGER_INTERFACE),
+            )
+            .await?;
+            Ok(Self {
+                connection,
+                manager,
+            })
+        }
+- start_line: 399
+  end_line: 412
+  anchor: match tokio::time::timeout(CALL_BUDGET, call).await {
+  content_hash: sha256:e3d8d41b0086430e003028c81740b87ca106d18df4c97aeb75c480c051528b3c
+  code: |
+    /// Runs one bus call under [`CALL_BUDGET`], translating whatever comes back.
+    pub(crate) async fn budgeted<T>(
+        what: &str,
+        call: impl Future<Output = zbus::Result<T>>,
+    ) -> Result<T, BusError> {
+        match tokio::time::timeout(CALL_BUDGET, call).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(translate(&error, what)),
+            Err(_) => Err(BusError::TimedOut(format!(
+                "{what} did not answer within {} seconds",
+                CALL_BUDGET.as_secs()
+            ))),
+        }
+    }

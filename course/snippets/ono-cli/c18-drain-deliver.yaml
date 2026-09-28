@@ -1,0 +1,64 @@
+id: c18-drain-deliver
+source:
+  file: crates/ono-cli/src/eval/native/foreground.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 365
+  end_line: 418
+  anchor: let drained = drive_segment(
+  content_hash: sha256:6a95f55d183a2da029e6717b9dfd9a1d425adaa88d02e8ac57663e1f12b63bc7
+  code: |2
+        let drained = drive_segment(
+            session,
+            &handle,
+            &mut requests,
+            &list.stages,
+            source,
+            draining,
+            showing,
+        )?;
+        // Whatever is left is left because nobody is reading it any more: cancellation wins over
+        // capacity, so a producer behind a stage that stopped does not keep enqueueing (§28.3).
+        if let Some(cancel) = cancel {
+            cancel.cancel();
+        }
+        if let Some(flow) = drained.stopped {
+            return Err(flow);
+        }
+        let values = drained.values;
+        let failures = drained.failures;
+
+        // A failure of the provider kind — it could not answer, or not as promised — is never a
+        // partial one: no object was lost, the answer was (ADR-0085). What did arrive is still
+        // written; the status says the run did not get what it asked for.
+        let unanswered = failures
+            .iter()
+            .any(|failure| failure.kind() == ono_core::ErrorKind::Provider);
+        report_failures(&values, failures)?;
+
+        // ADR-0014 counts what a pipeline dropped so that "a user who is surprised by a row count
+        // has somewhere to look that is not the source code". This is where they look: one note per
+        // run, on stderr, only when something was actually dropped, and only for the pipeline whose
+        // result they are reading (ADR-0261).
+        if last && !capturing {
+            report_counts(&counted);
+        }
+
+        let status = if failed_rows || unanswered {
+            ExitStatus::FAILURE
+        } else {
+            ExitStatus::SUCCESS
+        };
+        deliver_segment(
+            session,
+            &Delivery {
+                list,
+                indices,
+                source,
+                bound: &bound,
+                last,
+                block_shows_itself,
+            },
+            values,
+            status,
+        )

@@ -1,0 +1,836 @@
+id: structs-methods
+number: 3
+title: Structs, methods and modules
+summary: |
+  Most of Ono-Sendai's types are structs with private fields and a small set of functions in an
+  `impl` block. This chapter reads four of them — `Span`, the table `Column`, `SchemaId` and the
+  descriptor number `Fd` — and then the parser's own state, which is spread across a whole
+  directory of module files. You learn the difference between associated functions such as
+  `Span::new` and methods such as `span.join(other)`, the three receivers `self`, `&self` and
+  `&mut self`, and the visibility levels `pub`, `pub(crate)`, `pub(super)` and private, which
+  Ono-Sendai uses to draw real boundaries.
+lessons:
+  - id: structs-methods-01
+    title: "A struct and its impl block: Span"
+    stage: guided
+    summary: "Named fields, `impl`, `Self`, associated functions that construct, and methods that take `self` by value."
+    prerequisites: [reading-rust-03, functions-types-01]
+    concepts: [structs, impl-blocks, methods]
+    ono_topics: [core-vocabulary, parsing]
+    objectives:
+      - "Tell an associated function (`Span::new`) from a method (`span.join(other)`)"
+      - "Read `Self` and the field-init shorthand `Self { start, end }`"
+      - Explain how private fields plus constructors protect a rule about the data
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          You have seen the header of `Span` ([chapter 1](lesson:reading-rust-03)) and its `of`
+          function ([chapter 2](lesson:functions-types-03)). Now read the part in between: how a
+          span is constructed and combined. Spans are created constantly — the parser makes one
+          for every token and every node of the tree — and joined whenever two pieces of syntax
+          form a larger one.
+      - type: code
+        snippet: c03-span-struct-impl
+        caption: |
+          Lines 38–71 (the zero-width constructor `at` and the accessors `start`, `end`, `len`,
+          `is_empty`) are omitted.
+        annotations:
+          - lines: 17
+            token: "pub struct Span {"
+            kind: rust
+            body: |
+              A struct with **named fields**, declared between braces. Compare the tuple struct
+              `ExitStatus(u8)` from chapter 2, whose field is accessed as `.0`; here fields are
+              accessed by name, `self.start`.
+          - lines: 22
+            token: "impl Span {"
+            kind: rust
+            body: |
+              An **`impl` block** attaches functions to a type. The struct declaration says what
+              a `Span` *is*; the `impl` block says what you can *do* with one. A type can have
+              several `impl` blocks, even in different files — you will see that in lesson 4.
+          - lines: 28
+            token: "pub const fn new(start: u32, end: u32) -> Self {"
+            kind: rust
+            body: |
+              No `self` parameter: `new` is an **associated function**. It belongs to the type,
+              not to a value, and is called with `::` — `Span::new(3, 7)`. Rust has no special
+              constructor syntax; `new` is just the conventional name for a function that returns
+              `Self`.
+          - lines: 29
+            token: "if start <= end {"
+            kind: flow
+            body: |
+              The whole `if / else` is the function's final expression. Each branch produces a
+              `Span`, and whichever runs is the return value.
+          - lines: 30
+            token: "Self { start, end }"
+            kind: rust
+            body: |
+              A **struct literal** builds a value by giving every field. `Self { start, end }` is
+              shorthand for `Self { start: start, end: end }`: when a variable has the same name as
+              the field, you write it once.
+          - lines: 32-35
+            kind: rust
+            body: |
+              The long form: field `start` gets the parameter `end`, and field `end` gets the
+              parameter `start` — the two ends are swapped.
+          - lines: 25-26
+            kind: ono
+            body: |
+              "The ends are ordered on construction, so a caller that computed them backwards gets
+              a usable span rather than a panic in the middle of rendering a diagnostic." Once
+              more, the reason is: error reporting must never crash.
+          - lines: 74
+            token: "pub fn join(self, other: Self) -> Self {"
+            kind: ownership
+            body: |
+              A **method**: its first parameter is `self`, so it is called on a value with a dot,
+              `a.join(b)`. It takes `self` and `other` **by value**. For `Span` that is cheap and
+              harmless: the type is `Copy` (line 16), so both arguments are copied and the caller
+              keeps its spans.
+          - lines: 76
+            token: "self.start.min(other.start)"
+            kind: rust
+            body: |
+              Integers have methods too: `a.min(b)` is the smaller of the two, `a.max(b)` the
+              larger. The joined span starts at the earlier start and ends at the later end.
+      - type: prose
+        kind: rust
+        title: Associated functions and methods
+        body: |
+          Everything in an `impl` block is called an *associated item* of the type. The difference
+          between the two kinds of function is only the first parameter:
+
+          | Declared as | Called as | Name |
+          |---|---|---|
+          | `fn new(start: u32, end: u32) -> Self` | `Span::new(3, 7)` | associated function |
+          | `fn join(self, other: Self) -> Self` | `a.join(b)` | method |
+
+          The dot form is convenience: `a.join(b)` means the same as `Span::join(a, b)`. Inside
+          the `impl`, `Self` stands for the type (`Span`) and `self` for the value a method was
+          called on.
+      - type: prose
+        kind: ono
+        title: What the private fields protect
+        body: |
+          The fields `start` and `end` are private, so code outside this module can only get a
+          `Span` from `new`, `at`, `join`, `Default` (zero to zero) or a conversion from a
+          range further down the file, which calls `new`. Every one of those keeps
+          `start <= end`. That matters for `len`, one of the omitted accessors, which computes
+          `self.end - self.start` on unsigned integers: if `start` could be larger than `end`,
+          the subtraction would underflow. The compiler enforces the privacy; the module's own
+          constructors enforce the rule. Together they make it impossible for another crate to
+          build a backwards span.
+      - type: exercise
+        id: structs-methods-01-q1
+        exercise_type: predict
+        prompt: |
+          A caller computes the ends in the wrong order and writes `Span::new(7, 3)`. Predict the
+          resulting span's `start()` and `end()`, and the result of joining it with
+          `Span::new(10, 12)`.
+        snippets: [c03-span-struct-impl]
+        hints:
+          - level: 1
+            body: |
+              Which branch of the `if` on line 29 runs when `start` is 7 and `end` is 3?
+          - level: 2
+            body: |
+              For the join, compare the starts with `min` and the ends with `max`.
+        solution: |
+          `start <= end` is `7 <= 3`, false, so the `else` branch builds
+          `Self { start: 3, end: 7 }` — the ends are swapped. `start()` is **3** and `end()` is
+          **7**.
+
+          Joining with `Span::new(10, 12)`: `start = 3.min(10) = 3`, `end = 7.max(12) = 12`, so
+          the result is the span **[3, 12)**. It covers both operands and the gap between them.
+      - type: exercise
+        id: structs-methods-01-q2
+        exercise_type: multiple-choice
+        prompt: |
+          Which of these calls is an **associated function** call rather than a method call?
+        snippets: [c03-span-struct-impl]
+        choices:
+          - text: "`Span::new(2, 5)`"
+            correct: true
+            feedback: |
+              Right. `new` has no `self` parameter (line 28), so it can only be called on the
+              type with `::`.
+          - text: "`a.join(b)`"
+            feedback: |
+              `join` takes `self` (line 74), so it is a method, called here with the dot syntax.
+          - text: "`Span::join(a, b)`"
+            feedback: |
+              A tempting one: it uses `::`, but `join` is still a method. This is simply the
+              long way to call it — `a.join(b)` is shorthand for exactly this call, with `a`
+              passed as `self`.
+          - text: "`span.start()`"
+            feedback: |
+              `start` is one of the omitted accessors; it is called with a dot on a value, so it
+              is a method taking `self`.
+      - type: exercise
+        id: structs-methods-01-q3
+        exercise_type: explain-line
+        prompt: |
+          The integration test below checks `join`. Explain what line 26 adds to line 24–25: what
+          property of `join` does it pin down, and which line of the implementation makes that
+          property hold?
+        snippets: [c03-span-join-test]
+        hints:
+          - level: 1
+            body: |
+              Compare the order of the operands in line 24 and line 26.
+          - level: 2
+            body: |
+              Would the result change if `join` simply took `self.start` and `other.end`?
+        solution: |
+          Line 24 joins `[2, 5)` with `[9, 11)` and expects `[2, 11)`. Line 26 joins the same two
+          spans in the **opposite order** and expects the same result. It pins down that `join`
+          is order-independent — as its doc comment says, "regardless of their order". The
+          implementation guarantees it by using `min` for the start and `max` for the end
+          (lines 76–77) instead of assuming that `self` comes first. A naive version taking
+          `self.start` and `other.end` would return `[9, 5)` for line 26.
+
+  - id: structs-methods-02
+    title: "Getters that borrow and getters that copy: Column and SchemaId"
+    stage: guided
+    summary: "`&self` methods that return either a borrowed view of a field or a copy of it, in two small types from the renderer and the schema model."
+    prerequisites: [structs-methods-01]
+    concepts: [methods, structs, borrowing, slices-strings]
+    ono_topics: [rendering, records-schemas]
+    objectives:
+      - "Read the receivers `self`, `&self` and `&mut self`"
+      - "Explain why a method returning `&str` from a `String` field does not copy the text"
+      - "Tell which getters hand out a borrow and which hand out a copy"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          `ono-render` lays values out as tables. Its crate doc states a rule that explains why
+          these types exist separately from the data: "a table is a rendering strategy, never a
+          value. Laying a `Table` out never changes it, so column width, ordering and truncation
+          cannot leak into pipeline semantics." A `Column` is one column of such a table: a
+          header and an alignment.
+      - type: code
+        snippet: c03-column
+        caption: |
+          Lines 55–62 (the builder method `align`, which chapter 9 reads) are omitted.
+        annotations:
+          - lines: 40
+            token: "#[derive(Debug, Clone)]"
+            kind: rust
+            body: |
+              No `Copy` this time. A `Column` owns a `String`, and a `String` owns memory on the
+              heap; duplicating it takes a real copy of the text, so Rust only allows it
+              explicitly, with `clone()`. Types that own heap memory are never `Copy`.
+          - lines: 42
+            token: "header: String"
+            kind: type
+            body: |
+              `String` is **owned**, growable text. The column owns its header text; when the
+              column is dropped, so is the text.
+          - lines: 43
+            token: "align: Align"
+            kind: type
+            body: |
+              `Align` is a two-variant enum defined just above in the same file (`Left` or
+              `Right`); it derives `Copy`.
+          - lines: 49
+            token: "header: impl Into<String>"
+            kind: rust
+            body: |
+              Black box for now: `impl Into<String>` means "any value that can be converted into a
+              `String`" — typically a `&str` such as `"PID"` or an existing `String`. Line 51 does
+              the conversion with `.into()`. Chapters 11 and 13 explain the mechanism.
+          - lines: 52
+            token: "align: Align::Left,"
+            kind: rust
+            body: |
+              New columns start left-aligned; the enum variant is named with its type,
+              `Align::Left`.
+          - lines: 65
+            token: "&self"
+            kind: ownership
+            body: |
+              `&self` means the method **borrows** the column for reading: it gets a reference
+              to it, not the column itself and not a copy. The caller keeps its `Column` and can
+              use it afterwards. Nothing can be changed through a `&self` reference.
+          - lines: 65
+            token: "-> &str"
+            kind: ownership
+            body: |
+              The result is a `&str`: a borrowed view of text that someone else owns — here, the
+              column's own `header` field. No text is copied. The view stays valid only as long as
+              the column does; chapter 8 shows how the compiler checks that.
+          - lines: 66
+            token: "&self.header"
+            kind: rust
+            body: |
+              `&` takes a reference to the field. Its type is `&String`, and Rust converts it to
+              the `&str` the signature asks for automatically — a `&String` can always be viewed
+              as a `&str` (this automatic conversion is called *deref coercion*; chapter 15).
+          - lines: 71
+            token: "pub fn alignment(&self) -> Align {"
+            kind: ownership
+            body: |
+              Also `&self`, but this getter returns an `Align` **by value**. Because `Align` is
+              `Copy`, returning `self.align` hands the caller a copy of the variant. Small `Copy`
+              values are returned by value; owned text is handed out as a borrowed view.
+      - type: prose
+        kind: rust
+        title: Three receivers
+        body: |
+          The first parameter of a method decides what the method may do with the value it is
+          called on:
+
+          | Receiver | Meaning | The caller afterwards |
+          |---|---|---|
+          | `&self` | borrow to read | still has the value, unchanged |
+          | `&mut self` | borrow to change | still has the value, possibly changed |
+          | `self` | take the value itself | has given it away — unless the type is `Copy`, in which case the method got a copy |
+
+          `Span::join(self, …)` can take `self` because a span is `Copy`. A method on `Column`
+          that took `self` would *consume* the column — chapters 7 and 9 show where Ono-Sendai
+          does that on purpose, and `&mut self` appears in the next lessons. Getters use `&self`:
+          they only need to look.
+      - type: prose
+        kind: context
+        title: The same pattern in the value model
+        body: |
+          `SchemaId`, from `crates/ono-value/src/schema.rs`, names a schema — the description of
+          an object type such as a process record. Its doc comment calls it "the stable identity
+          of a schema, such as `ono.process/1` (spec §27.3)": a namespaced name plus a version.
+      - type: code
+        snippet: c03-schema-id
+        annotations:
+          - lines: 28
+            token: "name: Arc<str>"
+            kind: type
+            body: |
+              Black box for now: `Arc<str>` is text that can be **shared** by many owners without
+              copying it; the last owner to disappear frees it. For reading this code, treat it
+              like `String`: the id owns its name. Chapter 15 opens `Arc`.
+          - lines: 35
+            token: "pub fn new(name: &str, version: u32) -> Self {"
+            kind: rust
+            body: |
+              An associated function taking borrowed text and a number.
+          - lines: 37
+            token: "name: name.into(),"
+            kind: ownership
+            body: |
+              `.into()` converts the borrowed `&str` into the owned `Arc<str>` the field needs —
+              this is where the text is copied, once, into memory the `SchemaId` owns.
+          - lines: 38
+            token: "version,"
+            kind: rust
+            body: |
+              Field-init shorthand again: `version: version`.
+          - lines: 44
+            token: "pub fn name(&self) -> &str {"
+            kind: ownership
+            body: |
+              Same shape as `Column::header`: borrow the id, return a view of its name.
+          - lines: 50
+            token: "pub const fn version(&self) -> u32 {"
+            kind: ownership
+            body: |
+              Same shape as `Column::alignment`: borrow the id, return a copy of a small `Copy`
+              value.
+          - lines: 48
+            kind: ono
+            body: |
+              "A breaking change takes the next version (spec §10.4)." The version is part of the
+              identity: `ono.process/1` and `ono.process/2` are different schemas.
+      - type: exercise
+        id: structs-methods-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          After `let h = column.header();`, what does `h` hold?
+        snippets: [c03-column]
+        choices:
+          - text: "A borrowed view into the column's own `header` string"
+            correct: true
+            feedback: |
+              Right. `header(&self) -> &str` returns `&self.header`: a reference into the
+              column's data. No text is copied, and `h` can be used only while `column` exists.
+          - text: "A new `String` with a copy of the header text"
+            feedback: |
+              A copy would need a return type of `String` and something like `to_owned()` or
+              `clone()` in the body. The signature says `&str`, a borrowed view.
+          - text: "The column itself, moved into `h`"
+            feedback: |
+              The receiver is `&self`: the method only borrows the column. The column stays with
+              the caller.
+          - text: "The column's alignment"
+            feedback: |
+              That is what `alignment()` returns. `header()` returns the header text.
+      - type: exercise
+        id: structs-methods-02-q2
+        exercise_type: predict
+        prompt: |
+          Predict the results of `SchemaId::new("ono.process", 1).name()` and
+          `SchemaId::new("ono.process", 1).version()`, including their types. Then predict whether
+          code in `ono-cli` could write `id.version = 2;` for some `SchemaId` called `id`.
+        snippets: [c03-schema-id]
+        hints:
+          - level: 1
+            body: |
+              Read the return types in lines 44 and 50.
+          - level: 2
+            body: |
+              Look for `pub` in front of the field declarations on lines 28–29.
+        solution: |
+          `name()` returns `"ono.process"` as a `&str`, a view of the text the id owns.
+          `version()` returns `1` as a `u32`, a copy.
+
+          `id.version = 2;` does **not** compile in `ono-cli`: the field `version` has no `pub`,
+          so it is private to the module `schema` in `ono-value`. (It would also need `id` to be
+          declared `mut`.) That fits the doc comment on line 48: a different version is a
+          different schema, so the only way to get one is to build a new `SchemaId`.
+      - type: exercise
+        id: structs-methods-02-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `Column` and `SchemaId` both keep their fields private and offer `&self` getters instead
+          of making the fields `pub`. Using the code and the doc comments, name what each type
+          gains from that choice.
+        hints:
+          - level: 1
+            body: |
+              Ask what outside code could do with a `pub` field that it cannot do through a
+              getter.
+          - level: 2
+            body: |
+              Look at how `Column` values are created and changed (`new`, and the omitted `align`
+              builder), and at what the doc comment on `SchemaId::version` says about versions.
+        solution: |
+          With private fields, other crates can **read** through the getters but cannot **write**
+          or construct the value except through the functions the type offers.
+
+          - `Column`: every column is built by `new` (a header, left-aligned) and adjusted only
+            through the `align` builder. Nobody can reach in and set the header of an existing
+            column to something else; the table code that uses columns can rely on that.
+          - `SchemaId`: the id is the identity of a schema. Outside code cannot quietly change
+            the name or bump the version of an existing id; per the doc comment, a new version
+            is a new schema, created with `new` (or by parsing text such as `ono.process/1`,
+            chapter 6).
+
+          The getters also hide the representation: callers see `&str`, not `Arc<str>` or
+          `String`, so the field type could change without breaking them. That last point is an
+          interpretation of the design — the source does not state it — but it follows directly
+          from what the signatures expose.
+
+  - id: structs-methods-03
+    title: "Visibility as a boundary: Fd"
+    stage: guided
+    summary: "A complete tiny module: a `u16` newtype with named constants, a public getter and a crate-private conversion that keeps raw descriptors inside `ono-process`."
+    prerequisites: [structs-methods-01]
+    concepts: [visibility, newtypes, structs, scalar-types]
+    ono_topics: [process-execution, crate-map]
+    objectives:
+      - "Compare private, `pub(super)`, `pub(crate)` and `pub`"
+      - "Explain what `pub(crate)` on `raw` prevents"
+      - "Read an integer `as` cast that cannot lose information"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          `ono-process` is "the Unix execution layer": it runs external programs, applies
+          redirections such as `2>&1`, and manages terminals and signals. In a redirection,
+          numbers name **file descriptors** — 0 is standard input, 1 standard output, 2
+          standard error. `crates/ono-process/src/fd.rs` gives those numbers a type of their own.
+      - type: code
+        snippet: c03-fd
+        caption: |
+          Lines 9–14 (a doctest) and 43–48 (printing an `Fd`) are omitted.
+        annotations:
+          - lines: 7-8
+            kind: ono
+            body: |
+              "This is a number from the command line, not a handle: no open descriptor crosses
+              this crate's boundary (ADR-0007)." An `Fd` is the `2` in `2>&1`, not an open file.
+              The crate root repeats the rule: "No `unsafe` API and no raw descriptor crosses this
+              crate's boundary."
+          - lines: 16
+            token: "pub struct Fd(u16);"
+            kind: type
+            body: |
+              A newtype around `u16` (0 to 65 535), with a private field. It derives `Copy`
+              (line 15), like the other small value types you have seen.
+          - lines: 20
+            token: "pub const STDIN: Self = Self(0);"
+            kind: rust
+            body: |
+              Named constants for the three standard descriptors, used as `Fd::STDERR`. Code that
+              writes `Fd::STDERR` says what it means; code that writes `2` does not.
+          - lines: 28
+            token: "pub const fn new(number: u16) -> Self {"
+            kind: rust
+            body: |
+              Any other descriptor number goes through `new`. Since the field is private, this is
+              the only way outside code can make an `Fd` from a number.
+          - lines: 34
+            token: "pub const fn number(self) -> u16 {"
+            kind: rust
+            body: |
+              Public: anyone may ask which number an `Fd` is — for example to print it.
+          - lines: 39
+            token: "pub(crate)"
+            kind: rust
+            body: |
+              `pub(crate)`: visible everywhere **inside `ono-process`**, invisible outside. Other
+              files of the crate call `fd.raw()` when they build the table of descriptors a child
+              process gets; `ono-cli` cannot call it at all.
+          - lines: 40
+            token: "self.0 as i32"
+            kind: type
+            body: |
+              The C interfaces for descriptors use a signed 32-bit `int`, which is `i32` in Rust.
+              Every `u16` value fits in an `i32`, so this cast never changes the number. Casting
+              in the other direction, or from a wider to a narrower type, can silently cut bits
+              off — `as` does not check.
+      - type: prose
+        kind: rust
+        title: Four levels of visibility
+        body: |
+          | Written | Visible in |
+          |---|---|
+          | (nothing) | the module where the item is declared, and that module's children |
+          | `pub(super)` | additionally the parent module and everything inside the parent |
+          | `pub(crate)` | the whole crate |
+          | `pub` | everywhere the item can be reached — for other crates, through public modules or `pub use` re-exports |
+
+          The last row matters: a `pub` item inside a private module is still not reachable from
+          outside unless something re-exports it. `fd` is a private module of `ono-process`; the
+          crate root makes the type public with `pub use fd::Fd;`, which is why the doctest can
+          write `ono_process::Fd`.
+      - type: prose
+        kind: ono
+        title: A boundary the compiler enforces
+        body: |
+          ADR-0007 keeps raw descriptors inside `ono-process`. `pub(crate)` on `raw` turns that
+          decision into a rule the compiler checks: outside the crate, an `Fd` offers `number()`
+          (the `u16` the user typed) but never the C-level `i32`. Inside the crate, the code that
+          actually opens and duplicates descriptors can use `raw()`. A reviewer does not have to
+          search other crates for misuse — there can be none.
+      - type: exercise
+        id: structs-methods-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Which of these expressions compiles when written in the crate `ono-cli`?
+        snippets: [c03-fd]
+        choices:
+          - text: "`Fd::STDERR.number()`"
+            correct: true
+            feedback: |
+              Right. `STDERR` is a `pub` constant and `number` is a `pub` method, and the type is
+              re-exported as `ono_process::Fd`.
+          - text: "`Fd::STDERR.raw()`"
+            feedback: |
+              `raw` is `pub(crate)` (line 39): callable only inside `ono-process`.
+          - text: "`Fd::STDERR.0`"
+            feedback: |
+              The tuple field has no `pub` (line 16), so it is private to the module `fd`.
+          - text: "`Fd(2)`"
+            feedback: |
+              Building a tuple struct directly requires access to its fields. The field is
+              private, so outside code must use `Fd::new(2)` or a constant.
+      - type: exercise
+        id: structs-methods-03-q2
+        exercise_type: explain-line
+        prompt: |
+          Explain line 40, `self.0 as i32`: what is converted into what, why, and could the value
+          change in the process?
+        snippets: [c03-fd]
+        hints:
+          - level: 1
+            body: |
+              Look at the field type on line 16 and the return type on line 39.
+          - level: 2
+            body: |
+              What is the largest `u16`? What is the largest `i32`?
+        solution: |
+          `self.0` is the descriptor number stored in the `Fd`, a `u16`. `as i32` casts it to a
+          signed 32-bit integer, the type the C-level descriptor functions use (the doc comment
+          on line 38 says "the number as the C API spells it"). A `u16` ranges from 0 to 65 535,
+          and every such value is representable in an `i32` (up to about 2.1 billion), so the
+          number cannot change. `as` would not warn if it could: casts that narrow a value, such
+          as `i32` to `u8`, silently drop the high bits. Here that cannot happen.
+      - type: exercise
+        id: structs-methods-03-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          Why does `ono-process` use a type `Fd` instead of passing a plain `u16` (or `i32`)
+          around? Name at least two concrete benefits visible in this file.
+        hints:
+          - level: 1
+            body: |
+              Look at what outside code can and cannot do with an `Fd`.
+          - level: 2
+            body: |
+              Think about a function taking two numbers, one a descriptor and one a count, and
+              about the doc comment on lines 5–8.
+        solution: |
+          - **Meaning in signatures.** A function that takes `Fd` cannot be handed an arbitrary
+            number by accident; a descriptor and, say, a count are different types. Redirections
+            are built from values such as `Fd::STDERR` and `Fd::STDOUT`, which read as what they
+            mean.
+          - **Named constants.** `Fd::STDIN`, `Fd::STDOUT`, `Fd::STDERR` replace magic numbers.
+          - **A controlled boundary.** Outside the crate, an `Fd` exposes only its `u16` number.
+            The conversion to the C-level `i32` is `pub(crate)`, which enforces the ADR-0007 rule
+            that no raw descriptor crosses the crate's boundary.
+          - **No cost.** The wrapper is `Copy` and holds a single `u16`, so it is as cheap to pass
+            around as the bare number.
+
+  - id: structs-methods-04
+    title: "A module of modules: the parser and pub(super)"
+    stage: guided
+    summary: "A directory module that declares eight sub-modules, a result struct with private fields, the parser's state struct with `pub(super)` fields, and a second `impl` block for the same type in another file."
+    prerequisites: [structs-methods-03, reading-rust-02]
+    concepts: [modules, visibility, impl-blocks, structs]
+    ono_topics: [parsing]
+    objectives:
+      - "Map `mod x;` inside `parser/mod.rs` to the file `parser/x.rs`"
+      - "Read `crate::`, `self::` and `super::` paths"
+      - "Explain who may use an item marked `pub(super)`"
+      - "Recognise that one type's `impl` blocks can be spread over several files"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          This is the file you located in [chapter 1](lesson:reading-rust-02):
+          `crates/ono-parser/src/parser/mod.rs`, the module that holds the parser. Its doc comment
+          states the design: "The parser never fails and never panics: it always returns a tree,
+          collecting problems as diagnostics instead of throwing them. Every construct has a
+          recovery point … so a half-typed line still produces something the editor can
+          highlight." Here you read how that code is organised; chapter 6 reads why collecting
+          diagnostics differs from returning an error.
+      - type: code
+        snippet: c03-parser-mod
+        caption: |
+          The top of the module and the public entry point `parse`. Lines 30–80 (the getters of
+          `Parsed`, which follow the `&self` pattern of lesson 2) are omitted.
+        annotations:
+          - lines: 8
+            token: "crate::"
+            kind: rust
+            body: |
+              `crate::` starts a path at the root of the current crate. `crate::ast` is the module
+              declared as `pub mod ast;` in `lib.rs`.
+          - lines: 12
+            token: "self::"
+            kind: rust
+            body: |
+              `self::` starts a path at the current module, `parser`. `self::pipelines` and
+              `self::state` are sub-modules declared a few lines below.
+          - lines: 15-22
+            token: "mod blocks;"
+            kind: rust
+            body: |
+              Eight private sub-modules. Because this file is `parser/mod.rs`, `mod blocks;` means
+              the file `parser/blocks.rs`, `mod state;` means `parser/state.rs`, and so on — the
+              directory `src/parser/` holds exactly these nine files.
+          - lines: 25-29
+            token: "#[derive(Debug, Clone, PartialEq)]"
+            kind: type
+            body: |
+              `Parsed` is the result of parsing: the syntax tree plus the list of problems found.
+              `Vec<Diagnostic>` is a growable list of diagnostics. Both fields are private; the
+              omitted lines offer `&self` getters `program()` and `diagnostics()`.
+          - lines: 82
+            token: "pub fn parse(source: &str) -> Parsed {"
+            kind: flow
+            body: |
+              The return type is `Parsed`, not something that can signal failure. This is the
+              "never fails" promise written into the signature: whatever `source` contains, the
+              caller gets a tree and a list of diagnostics.
+          - lines: 83
+            token: "let mut parser = Parser::new(source);"
+            kind: rust
+            body: |
+              `Parser` comes from `self::state` (line 13). The binding is `mut` because parsing
+              changes the parser's state — its position and its list of diagnostics — as it goes.
+          - lines: 84
+            token: "parser.parse_program()"
+            kind: rust
+            body: |
+              Treat `parse_program` as a named step: "read every statement of the source". It is
+              defined in `statements.rs`, another sub-module.
+          - lines: 85-88
+            token: "Parsed {"
+            kind: ownership
+            body: |
+              A struct literal builds the result. `program,` uses the shorthand. `diagnostics:
+              parser.diagnostics` takes the parser's list of diagnostics and puts it into the
+              result — the list is handed over, not copied (chapter 7 names this a *move*). The
+              parser itself is not needed afterwards.
+      - type: prose
+        kind: black-box
+        title: "The <'a> after Parser"
+        body: |
+          The next snippet declares `Parser<'a>` and a field `source: &'a str`. The `'a` is a
+          **lifetime parameter**. For now, read it as: "a `Parser` borrows the source text and
+          cannot outlive it". Chapter 8 reads lifetimes properly, using this very struct.
+      - type: code
+        snippet: c03-parser-state
+        caption: |
+          From `crates/ono-parser/src/parser/state.rs`.
+        annotations:
+          - lines: 12-13
+            kind: ono
+            body: |
+              "Adversarial input is a given for a shell (spec §35.6); the limit keeps a line of ten
+              thousand open parentheses a diagnostic rather than a stack overflow." A recursive
+              parser nests one function call per nesting level, so unlimited depth could exhaust
+              the stack.
+          - lines: 14
+            token: "pub(super)"
+            kind: rust
+            body: |
+              `pub(super)` makes the item visible to the **parent** module — here `parser` — and
+              everything inside it, which includes all the sibling files `blocks.rs`,
+              `statements.rs`, `diagnostics.rs` and so on. It is not visible to the crate root,
+              to `lexer`, or to other crates.
+          - lines: 16
+            token: "pub(super) struct Parser<'a> {"
+            kind: rust
+            body: |
+              The whole `Parser` type is only for the parser module family. The crate's public
+              interface is `parse` and `Parsed`; nobody outside ever sees a `Parser`.
+          - lines: 17-23
+            kind: type
+            body: |
+              Seven fields, each `pub(super)` so every sibling file can read and update them:
+              the borrowed `source` text, a byte `limit`, the current position `pos`, the
+              collected `diagnostics`, an optional recording of tokens (`Option<...>` — "maybe a
+              list of tokens"; `Option` is chapter 5), the current nesting `depth`, and a flag
+              `no_brace`.
+          - lines: 27
+            token: "pub(super) fn new(source: &'a str) -> Self {"
+            kind: rust
+            body: |
+              The constructor used by `parse` in `mod.rs`. It is `pub(super)` too: `mod.rs` is the
+              parent module, so it may call it.
+          - lines: 28-36
+            kind: rust
+            body: |
+              Every field gets a starting value: position 0, an empty list (`Vec::new()`), no
+              recording (`None`), depth 0. `limit: source.len()` means "read up to the end of the
+              text". A struct literal must give **every** field; Rust has no implicit defaults.
+      - type: prose
+        kind: rust
+        title: One type, many files
+        body: |
+          `Parser` is declared once, in `state.rs`, but its methods are written in almost every
+          file of the directory. Here is the start of `diagnostics.rs`:
+      - type: code
+        snippet: c03-parser-diagnostics-impl
+        annotations:
+          - lines: 12
+            token: "super::state::Parser"
+            kind: rust
+            body: |
+              `super::` starts at the parent module (`parser`), then goes down into its child
+              `state`. This works because `Parser` is `pub(super)`.
+          - lines: 14
+            token: "impl Parser<'_> {"
+            kind: rust
+            body: |
+              A second `impl` block for the same type, in a different file. The compiler merges
+              all `impl` blocks of a type; each file adds the methods for one concern — here, how
+              diagnostics are reported. `<'_>` means "for whatever lifetime" (chapter 8).
+          - lines: 15
+            token: "&mut self"
+            kind: ownership
+            body: |
+              `&mut self`: the method borrows the parser **to change it**. Pushing a diagnostic
+              onto the list modifies the parser's state. Chapter 9 is about this receiver.
+          - lines: 16
+            token: "self.diagnostics.push(diagnostic);"
+            kind: rust
+            body: |
+              Appends to the `Vec` field declared in `state.rs`. The field is `pub(super)`, so
+              this sibling module may use it.
+      - type: prose
+        kind: ono
+        title: Why one struct, many files
+        body: |
+          The parser's module docs describe the split: `state.rs` is "the parser's own state, and
+          the token access every other module reads the source through", and `diagnostics.rs` is
+          "diagnostic construction: how the parser says what is wrong". Keeping all parser
+          functions as methods on one `Parser` lets them share the position and the diagnostic
+          list; spreading the `impl` blocks over files keeps each file about one part of the
+          grammar or one concern. `pub(super)` lets those files cooperate while hiding all of it
+          from the rest of the crate — the only way in is `parse`.
+      - type: exercise
+        id: structs-methods-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `Parser::new` is declared `pub(super)` in `crates/ono-parser/src/parser/state.rs`. Which
+          code may call it?
+        snippets: [c03-parser-state]
+        choices:
+          - text: "Code in `parser/statements.rs`"
+            correct: true
+            feedback: |
+              Right. `statements` is a child of `parser`, the parent of `state`. `pub(super)`
+              opens the item to `parser` and everything inside it.
+          - text: "Code in `src/lexer.rs`"
+            feedback: |
+              `lexer` is a sibling of `parser` under the crate root, not inside `parser`. It
+              cannot see an item that is visible only to `parser`.
+          - text: "Code in `src/lib.rs`, the crate root"
+            feedback: |
+              `super` of `state` is `parser`, not the crate root. The root is the parent of
+              `parser`, one level too high.
+          - text: "Code in the crate `ono-cli`"
+            feedback: |
+              Other crates never see `pub(super)` items. `ono-cli` calls `ono_parser::parse`
+              instead.
+      - type: exercise
+        id: structs-methods-04-q2
+        exercise_type: predict
+        prompt: |
+          Line 20 of `parser/mod.rs` says `mod recovery;`. Predict the path of the file that
+          holds that module's code, and what the first line of code after its `use` imports is
+          likely to look like, given what you saw in `diagnostics.rs`.
+        snippets: [c03-parser-mod]
+        hints:
+          - level: 1
+            body: |
+              A module declared inside `parser/mod.rs` lives next to it, inside the directory
+              `parser/`.
+          - level: 2
+            body: |
+              Which type do the files in this directory add methods to?
+        solution: |
+          The file is `crates/ono-parser/src/parser/recovery.rs`. Like `diagnostics.rs`, it adds
+          methods to the shared parser state, so after its imports you should expect
+          `impl Parser<'_> {`. In the pinned source that is exactly what it contains (line 13 of
+          that file): the recovery logic — in its own module doc, "where the parser resumes after
+          something it could not read", such as the end of a statement at a newline or `;` — is
+          written as more methods of `Parser`.
+      - type: exercise
+        id: structs-methods-04-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 87 of `parser/mod.rs`, `diagnostics: parser.diagnostics,`. What is being
+          accessed, why is the access allowed, and where does the list end up?
+        snippets: [c03-parser-mod, c03-parser-state]
+        hints:
+          - level: 1
+            body: |
+              Line 87 is inside a struct literal. Which struct, and which field is being set?
+          - level: 2
+            body: |
+              `parser.diagnostics` is a field declared in another file. Check its visibility.
+        solution: |
+          Lines 85–88 build the `Parsed` result. Line 87 sets its `diagnostics` field to
+          `parser.diagnostics`, the `Vec<Diagnostic>` that the parser filled while reading the
+          source. That field is declared in `state.rs` as `pub(super) diagnostics:
+          Vec<Diagnostic>`; `super` of `state` is `parser`, the very module `mod.rs` defines, so
+          the access is allowed. The list is handed over into the `Parsed` value (moved, not
+          copied — chapter 7), and `parse` returns it to the caller, who reads it through
+          `Parsed::diagnostics()`.

@@ -1,0 +1,87 @@
+id: c14-raw-command
+source:
+  file: crates/ono-command/src/contract.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 971
+  end_line: 1005
+  anchor: pub(crate) struct RawCommand {
+  content_hash: sha256:4850d7ea22593546054a6302686e4bc2845645c5de5c97fe98cfc83b8d658f52
+  code: |
+    #[derive(Debug, Deserialize)]
+    pub(crate) struct RawFamily {
+        pub(crate) family: String,
+        pub(crate) commands: Vec<RawCommand>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub(crate) struct RawCommand {
+        id: String,
+        verb: String,
+        target: Option<String>,
+        summary: String,
+        #[serde(default)]
+        note: Option<String>,
+        stability: String,
+        #[serde(default)]
+        validation_required: bool,
+        #[serde(default)]
+        confirmation: Option<String>,
+        argument_mode: String,
+        input: String,
+        output: String,
+        provider_capability: Option<String>,
+        #[serde(default)]
+        selectors: Vec<RawParameter>,
+        #[serde(default)]
+        options: Vec<RawParameter>,
+        privilege: String,
+        streaming: bool,
+        #[serde(default)]
+        execution: Option<String>,
+        phase: String,
+        #[serde(default)]
+        examples: Vec<RawExample>,
+    }
+- start_line: 1048
+  end_line: 1060
+  anchor: '#[serde(rename = "type")]'
+  content_hash: sha256:51c6ab85596bdc7c7daffb9ce436701e1e03edd95ed036b943239fa3a116f520
+  code: |
+    #[derive(Debug, Deserialize)]
+    struct RawParameter {
+        name: String,
+        #[serde(rename = "type")]
+        declared_type: String,
+        doc: String,
+        #[serde(default)]
+        repeatable: bool,
+        #[serde(default)]
+        optional_value: bool,
+        #[serde(default)]
+        default: Option<RawScalar>,
+    }
+- start_line: 1092
+  end_line: 1110
+  anchor: 'pub(crate) fn into_contract(self, family: &str)'
+  content_hash: sha256:0927e41bd15fde698eba2c4e25bb4d44e4f0b8c184d743a87e575b93018de42a
+  code: |
+    impl RawCommand {
+        pub(crate) fn into_contract(self, family: &str) -> Result<CommandContract, ErrorValue> {
+            let id = self.id.clone();
+            let stability = match self.stability.as_str() {
+                "stable" => Stability::Stable,
+                "experimental" => Stability::Experimental,
+                "planned" => Stability::Planned,
+                other => return Err(contract_error(&id, format!("unknown stability `{other}`"))),
+            };
+            let argument_mode = match self.argument_mode.as_str() {
+                "words" => ArgumentMode::Words,
+                "expression" => ArgumentMode::Expression,
+                other => {
+                    return Err(contract_error(
+                        &id,
+                        format!("unknown argument mode `{other}`"),
+                    ));
+                }
+            };

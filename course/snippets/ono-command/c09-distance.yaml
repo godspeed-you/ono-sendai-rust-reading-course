@@ -1,0 +1,28 @@
+id: c09-distance
+source:
+  file: crates/ono-command/src/suggest.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 27
+  end_line: 44
+  anchor: std::mem::swap(&mut previous, &mut current);
+  content_hash: sha256:afd236261b19209c7fba751b805abb8485a13d99a3d47f320f10912672123876
+  code: |
+    /// The Levenshtein distance between two names, over characters rather than bytes.
+    fn distance(left: &str, right: &str) -> usize {
+        let right_chars: Vec<char> = right.chars().collect();
+        let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
+        let mut current = vec![0; right_chars.len() + 1];
+
+        for (row, left_char) in left.chars().enumerate() {
+            current[0] = row + 1;
+            for (column, right_char) in right_chars.iter().enumerate() {
+                let substitution = previous[column] + usize::from(left_char != *right_char);
+                let deletion = previous[column + 1] + 1;
+                let insertion = current[column] + 1;
+                current[column + 1] = substitution.min(deletion).min(insertion);
+            }
+            std::mem::swap(&mut previous, &mut current);
+        }
+        previous[right_chars.len()]
+    }

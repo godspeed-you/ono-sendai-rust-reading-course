@@ -1,0 +1,30 @@
+id: c01-span-module-header
+source:
+  file: crates/ono-core/src/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 20
+  anchor: '#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]'
+  content_hash: sha256:4a519d04bbd759e5236e4c1a299e184ea868013bb87c1882c685c4ee3cbf8c55
+  code: |
+    //! Byte ranges into a source line, used by every diagnostic.
+
+    use std::fmt;
+
+    /// A half-open byte range `[start, end)` into the source text a value came from.
+    ///
+    /// Spec §16.3 requires parse errors to point at the relevant span, so spans travel with tokens,
+    /// AST nodes and diagnostics alike. Offsets are byte offsets, not character indices, because
+    /// that is what slicing a `&str` needs and what a terminal column calculation starts from.
+    ///
+    /// ```
+    /// use ono_core::Span;
+    /// let source = "get process";
+    /// assert_eq!(Span::new(4, 11).of(source), "process");
+    /// ```
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct Span {
+        start: u32,
+        end: u32,
+    }

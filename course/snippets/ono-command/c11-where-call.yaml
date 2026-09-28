@@ -1,0 +1,17 @@
+id: c11-where-call
+source:
+  file: crates/ono-command/src/impls/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 72
+  end_line: 78
+  anchor: 'input.transform(Where::new(move |value: &Value| {'
+  content_hash: sha256:fa7bb7b4fbebb8154920332d1ae5eab69918b56a27c44bae8832d0aaa39bfdb8
+  code: |2
+                Kind::Where => {
+                    let predicate = expression(arguments, "predicate", &spelling)?;
+                    let scope = Arc::clone(&scope);
+                    input.transform(Where::new(move |value: &Value| {
+                        evaluate_to_value(&predicate, value, &scope)
+                    }))?
+                }
