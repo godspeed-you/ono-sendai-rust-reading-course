@@ -2,7 +2,7 @@ id: borrowing
 number: 8
 title: Borrowing and references
 summary: |
-  Chapter 7 showed how a value moves from one owner to the next. Most Ono-Sendai code does not
+  [Chapter 7](chapter:ownership-moves) showed how a value moves from one owner to the next. Most Ono-Sendai code does not
   move values around, though: it *looks at* them. A diagnostic points into the line you typed, a
   renderer reads the cells of a table, a resolver checks a word against a registry. All of that is
   done through **borrows**: references that let code use a value without owning it.
@@ -49,7 +49,9 @@ lessons:
 
           A span is only two numbers. It does not contain the text. To get the text back, a caller
           asks the span (or the token that holds it) to cut the right piece out of the source line.
-          Both functions in this lesson do exactly that, and neither copies a single byte.
+          Both functions in this lesson do exactly that, and neither copies a single byte. (You
+          traced the control flow of `Span::of` in [chapter 2](lesson:functions-types-03); this
+          lesson reads its signature.)
       - type: code
         snippet: c08-span-of
         caption: |
@@ -60,7 +62,7 @@ lessons:
             token: "source: &str"
             kind: ownership
             body: |
-              A **shared reference** to a string slice. The caller keeps ownership of the text;
+              A [**shared reference**](glossary:shared-reference) to a string slice. The caller keeps ownership of the text;
               `of` may only read it, and only for the duration of the borrow.
           - lines: 85
             token: "-> &str"
@@ -69,7 +71,7 @@ lessons:
               The returned `&str` is also a borrow. No lifetime is written because there is only
               one reference among the inputs (`self` is a `Copy` value, not a reference), so the
               compiler infers that the result borrows from `source`. This inference is called
-              **lifetime elision**.
+              [**lifetime elision**](glossary:lifetime-elision).
           - lines: 91
             token: "source.get(start..end)"
             kind: rust
@@ -88,7 +90,7 @@ lessons:
              one mutable reference (`&mut T`), never both.** While shared borrows exist, the value
              cannot be changed through ordinary code. (Types built for *interior mutability*, such
              as `Mutex`, are the deliberate exception, covered in
-             [chapter 15](chapter:smart-pointers); [chapter 9](chapter:mutability) is about the
+             [chapter 15](lesson:smart-pointers-02); [chapter 9](chapter:mutability) is about the
              `&mut` side.)
           2. **A reference never outlives the value it points to.** Once the owner is dropped, every
              borrow of it must already be finished.
@@ -102,7 +104,7 @@ lessons:
           bytes. Nothing is copied.
 
           Line 89 returns `""`. A string literal lives for the whole program. Its type is
-          `&'static str`, and it can stand in for a borrow of `source` because it lives at least as
+          [`&'static str`](glossary:static-lifetime), and it can stand in for a borrow of `source` because it lives at least as
           long as `source` does.
       - type: code
         snippet: c08-token-text
@@ -114,7 +116,7 @@ lessons:
             token: "<'a>"
             kind: rust
             body: |
-              A **lifetime parameter**. `'a` names "the region of the program during which `source`
+              A [**lifetime parameter**](glossary:lifetime). `'a` names "the region of the program during which `source`
               is borrowed". It appears on `source` and on the result and nowhere else, which says:
               the text returned borrows from `source`.
       - type: prose
@@ -321,7 +323,7 @@ lessons:
             token: "&[Vec<Cell>]"
             kind: type
             body: |
-              A **slice**: a borrowed view of a run of elements. `&self.rows` is a `&Vec<Vec<Cell>>`
+              A [**slice**](glossary:slice): a borrowed view of a run of elements. `&self.rows` is a `&Vec<Vec<Cell>>`
               coerced to `&[Vec<Cell>]`, in the same way as the `String` above.
           - lines: 182-183
             kind: flow
@@ -334,7 +336,7 @@ lessons:
         body: |
           | owns the data | borrowed view | what the view can do |
           |---|---|---|
-          | `String` | `&str` | read the text, slice it further |
+          | `String` | [`&str`](glossary:string-slice) | read the text, slice it further |
           | `Vec<T>` | `&[T]` | read elements, iterate, take sub-slices |
 
           A view is cheap to create (a pointer and a length) and cannot outlive its owner (the
@@ -556,7 +558,7 @@ lessons:
             token: "FieldStep<'_>"
             kind: rust
             body: |
-              `'_` is the **elided lifetime** written explicitly: "the lifetime the elision rules
+              `'_` is the [**elided lifetime**](glossary:lifetime-elision) written explicitly: "the lifetime the elision rules
               pick". With one reference input, the step borrows from `access`, in practice from the
               `String` in `access.field`. `&access.field` is a `&String` coerced to `&str`.
       - type: code
@@ -731,7 +733,7 @@ lessons:
           ADR-0011 fixes the order in which a head word such as `get` is resolved: keywords, user
           functions, aliases, then **native commands from the command registry**, then executables
           on `PATH`. `CommandRegistry::resolve` is that fourth step. The registry is loaded once
-          from contract files embedded in the binary; `CommandRegistry::embedded()` returns a
+          from [contract files](glossary:command-contract) embedded in the binary; `CommandRegistry::embedded()` returns a
           `Result<&'static CommandRegistry, ErrorValue>` (registry.rs line 89), so after `?` a
           caller holds a `&'static CommandRegistry`.
 
@@ -781,13 +783,13 @@ lessons:
             token: "&& let Some(contract)"
             kind: rust
             body: |
-              A **let chain** (edition 2024): both patterns must match for the block to run, and
+              A [**let chain**](glossary:let-chain) (edition 2024): both patterns must match for the block to run, and
               `word` from the first is usable in the second. Read it as nested `if let`s.
           - lines: 451
             token: "&arguments[1..]"
             kind: ownership
             body: |
-              A sub-slice of a slice: everything after the target word. It points into the same
+              A [sub-slice](glossary:slice) of a slice: everything after the target word. It points into the same
               `Argument`s, so it keeps the lifetime `'a`. Nothing is copied.
       - type: prose
         kind: rust

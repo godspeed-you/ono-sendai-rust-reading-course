@@ -18,7 +18,7 @@ lessons:
     title: "From the prompt to the object pipeline"
     stage: practice
     summary: "Follow one line from the REPL through the parser and the evaluator to the point where a native pipeline takes over."
-    prerequisites: [tasks-channels-04]
+    prerequisites: [tasks-channels-04, conversions-03]
     concepts: [code-navigation, result, question-mark, pattern-matching, mutable-borrowing]
     ono_topics: [evaluation, parsing, error-flow]
     objectives:
@@ -112,7 +112,7 @@ lessons:
             kind: rust
             body: |
               `From<ErrorValue> for Flow` lets `?` convert a plain `ErrorValue` into
-              `Flow::Failed` automatically (chapter 13).
+              `Flow::Failed` automatically ([chapter 13](lesson:conversions-03)).
           - lines: 73-90
             kind: flow
             body: |
@@ -152,6 +152,36 @@ lessons:
             body: |
               Without a trailing `&`, the foreground path: `native::run`. With one, the
               background job of [lesson tasks-channels-03](lesson:tasks-channels-03).
+      - type: prose
+        kind: rust
+        title: "A guard: `let _running` and `impl Drop`"
+        body: |
+          Line 114 binds a value that is never mentioned again: `let _running =
+          ForegroundRun::begin();`. It is a **guard**. Its type, defined just above `run_pipeline` in
+          the same file, implements the standard `Drop` trait:
+
+          ```rust
+          impl Drop for ForegroundRun {
+              fn drop(&mut self) {
+                  RUNNING.with(|running| running.set(running.get().saturating_sub(1)));
+              }
+          }
+          ```
+
+          `Drop::drop` is code Rust runs automatically when a value is [dropped](glossary:drop) —
+          here when `run_pipeline` returns, whether normally, through `?`, or by an early
+          `return`. `begin` counted one more running foreground pipeline; `drop` counts it down
+          again, on every path. The binding's name matters: `let _running = …` keeps the guard
+          alive until the end of the function (the leading underscore only silences the "unused"
+          warning), while `let _ = …` would not bind it at all and drop it at the end of the
+          statement.
+
+          You have met this mechanism from the outside: a `MutexGuard` unlocks, an `OwnedFd`
+          closes and a channel's `Receiver` closes the channel in their `Drop` implementations
+          ([chapter 7](lesson:ownership-moves-04), [chapter 15](lesson:smart-pointers-02),
+          [chapter 17](lesson:tasks-channels-01)). When a
+          type has an `impl Drop`, read its `drop` method as part of every function that owns such
+          a value — it is code that runs without being called.
       - type: prose
         kind: note
         title: What to skip on a first pass
@@ -314,7 +344,7 @@ lessons:
     title: "Resolve, bind, assemble: two stages become two tasks"
     stage: practice
     summary: "Follow the native engine as it segments the pipeline, binds both stages against their contracts, and assembles a producer task and a `where` task inside `block_on`."
-    prerequisites: [execution-path-01]
+    prerequisites: [execution-path-01, async-03, generics-02, borrowing-04]
     concepts: [code-navigation, trait-objects, closures, async-await, tasks]
     ono_topics: [command-registry, command-dispatch, pipeline, providers]
     objectives:
@@ -353,7 +383,7 @@ lessons:
           - lines: 177-180
             kind: crate
             body: |
-              `CommandRegistry::resolve` (crate `ono-command`) finds the contract a head word and
+              `CommandRegistry::resolve` (crate `ono-command`) finds the [contract](glossary:command-contract) a head word and
               its arguments name — for `get process`, the contract `ono.process.get` declared in
               `docs/contracts/commands/process.yaml`. Contracts are data compiled into the binary,
               and the registry is a `&'static` value built once.
@@ -434,7 +464,7 @@ lessons:
         snippet: c18-registry-snapshot
         caption: |
           `crates/ono-provider-api/src/registry.rs`: the registry picks the provider for the
-          query's target and calls its `snapshot`. [Chapter 19](chapter:provider-boundary) reads
+          query's target and calls its `snapshot`. [Chapter 19](lesson:provider-boundary-02) reads
           what `ProcessProvider::snapshot` does: list `/proc` synchronously, then return a stream
           whose producer task reads each process.
       - type: code
@@ -603,7 +633,7 @@ lessons:
             `match` on `Value` with literal patterns `Value::Bool(true)` / `Value::Bool(false)`
             and a binding `other` covers every case exhaustively.
           interpretation: |
-            With the lifetime-share fallback of [chapter 19](chapter:provider-boundary), `cpu`
+            With the lifetime-share fallback of [chapter 19](lesson:provider-boundary-03), `cpu`
             is null only when the kernel gave neither reading, so case C is rare in practice; the
             filter still handles it honestly.
       - type: exercise
@@ -648,6 +678,89 @@ lessons:
           interpretation: |
             This mirrors the pre-flight field check in `run_pipeline`: Ono-Sendai prefers to fail
             before side effects wherever the information is declarative.
+      - type: exercise
+        id: execution-path-02-q4
+        exercise_type: identify-abstraction
+        prompt: |
+          Classify the calls this lesson followed, as you would in unfamiliar code:
+          `registry.resolve(…)` in `bind_stage`, `handle.block_on(…)`,
+          `table.run(contract.id(), &mut invocation).await`, `ctx.providers().snapshot(&query)`,
+          the registry's `self.provider_for(…)?.snapshot(query)`, `Where::new(move |value| …)` and
+          `input.stage(…)` inside `Where::apply`. For each one decide:
+
+          1. Does it cross an abstraction boundary — into another crate, through a trait object,
+             or by handing a closure to code that does not know where it came from?
+          2. Is it synchronous or asynchronous, and on which thread does its work actually run?
+          3. Which external-crate API (outside Ono-Sendai and the standard library) does it rely
+             on, if any?
+
+          Finish by naming the first place you would inspect if `get process | where cpu > 20`
+          printed no rows on a busy machine.
+        hints:
+          - level: 1
+            body: |
+              A [`dyn`](glossary:trait-object) in the receiver's type marks a boundary you cannot see across from the call
+              site. A crate name in the path (`ono_command::…`) or a method on a type from another
+              crate marks the other kind.
+        solution:
+          summary: |
+            `resolve` crosses from `ono-cli` into `ono-command`, is synchronous and runs on the
+            main thread. `block_on` is the synchronous-to-asynchronous bridge (Tokio's runtime
+            `Handle`); the assembly future it runs is polled on the main thread. `table.run` crosses
+            into `ono-command` and then through `Arc<dyn CommandImpl>`; it is `async`, but for
+            both stages the default `invoke_async` has already run the synchronous `invoke`, so it
+            completes at once. `ctx.providers().snapshot` crosses into `ono-provider-api`, and the
+            registry's `snapshot` crosses again through `Arc<dyn Provider>` into whichever provider
+            answers (`ProcessProvider`, behind `TemporalProvider` in a full build); the call is
+            synchronous, but the provider spawns a Tokio task whose work runs on worker threads.
+            `Where::new` hands an evaluator closure from `ono-command` to `ono-pipeline`, which
+            stores it as `Box<dyn Predicate>`. `input.stage` spawns task B, again on the workers.
+            The external crate that matters is Tokio (runtime, `select!`, `spawn`, the bounded
+            `mpsc` channels inside `ValueStream`).
+          analysis:
+            - aspect: architecture
+              body: |
+                The route crosses crates in the direction of the crate map: `ono-cli` →
+                `ono-command` (resolution, the command table, the producer) → `ono-provider-api`
+                (the registry) → a provider crate (`ono-provider-linux`), and `ono-command` →
+                `ono-pipeline` (the `where` transform). No lower crate calls a higher one directly.
+            - aspect: traits
+              body: |
+                Three boundaries are trait objects, so the call site cannot see the code that
+                runs: `dyn CommandImpl` (which implementation serves an id), `dyn Provider` (which
+                provider answers a target) and `dyn Predicate` (the closure inside `Where`). Each
+                is "go to definition" territory: find the implementations, not the trait.
+            - aspect: async
+              body: |
+                Synchronous: `resolve`, both `snapshot` calls, `Where::new`, `input.stage` itself.
+                Asynchronous: `table.run(…)`'s future (trivially ready here) and the two spawned
+                tasks, which run on worker threads. `block_on` is where the main thread enters the
+                runtime and waits.
+            - aspect: external-apis
+              body: |
+                Tokio: `Handle::block_on`, `select!` (with `interrupted()`), `tokio::spawn` behind
+                `ValueStream::spawn`/`stage`, and `mpsc` channels between the stages. Everything
+                else on this path is Ono-Sendai or the standard library, so Tokio's documentation is
+                the only outside reference needed to follow it.
+            - aspect: next-steps
+              body: |
+                No rows means either no process passed the filter or none was produced. First read
+                `Where::apply`'s arms (a `Null` CPU is excluded and only counted), then the excluded
+                count that `report_counts` prints, then `ProcessProvider::snapshot` in
+                `crates/ono-provider-linux/src/process.rs` to see which reads it skips.
+          guarantees: |
+            The signatures guarantee the boundaries: `table.run` reaches implementations only
+            through `CommandImpl`, and the registry reaches providers only through `Provider`. The
+            `CommandImpl` doc guarantees that producers and transforms answer without awaiting.
+          semantics: |
+            A method call on `Arc<dyn Trait>` or `Box<dyn Trait>` is dynamic dispatch; a call on a
+            generic or `impl Trait` parameter is static. A synchronous function may spawn a task:
+            spawning returns at once, and the task's code runs later, elsewhere.
+          interpretation: |
+            Reading the boundaries first tells you which files a question leads to: a question
+            about *what* is produced goes through `dyn Provider` to a provider crate, a question
+            about *how* values are filtered goes through `dyn Predicate` back to the evaluator's
+            closure. That is an interpretation of the layout, not something the code states.
   - id: execution-path-03
     title: "Drain, deliver, render — and the whole path"
     stage: practice
@@ -849,7 +962,7 @@ lessons:
         exercise_type: read-subsystem
         prompt: |
           Read the whole path as one subsystem. Using the snippets of this chapter and of
-          chapter 17's driver, write your own description of what happens between pressing Enter
+          [chapter 17](lesson:tasks-channels-04)'s driver, write your own description of what happens between pressing Enter
           on `get process | where cpu > 20` and the next prompt. Cover: purpose, the important
           types that carry the command from stage to stage, control flow including the early
           exits, where concurrency starts and ends, ownership of the streams, error handling,
@@ -915,7 +1028,7 @@ lessons:
             - aspect: next-steps
               body: |
                 To go deeper: `crates/ono-provider-linux/src/process.rs` (what a record contains,
-                chapter 19); `crates/ono-command/src/invoke.rs` (`CommandTable::run`);
+                [chapter 19](lesson:provider-boundary-02)); `crates/ono-command/src/invoke.rs` (`CommandTable::run`);
                 `crates/ono-render` (the table layout); `docs/contracts/commands/process.yaml` and
                 `data.yaml` (the contracts); ADR-0013 and ADR-0014 in `docs/adr/`.
           guarantees: |

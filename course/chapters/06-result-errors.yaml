@@ -44,7 +44,7 @@ lessons:
             body: |
               `# Errors` is a standard Rust documentation convention for fallible functions: it
               lists what can come back in the `Err` case. Ono-Sendai follows it on almost every
-              public function that returns a `Result`, so look for it before reading a body.
+              public function that returns a [`Result`](glossary:result), so look for it before reading a body.
           - lines: 183
             token: "Result<bool, ErrorValue>"
             kind: type
@@ -231,10 +231,10 @@ lessons:
             token: "impl fmt::Display for Error"
             kind: rust
             body: |
-              Implementing the `Display` **trait** is how a type says "this is how I am printed
+              Implementing the `Display` [**trait**](glossary:trait) is how a type says "this is how I am printed
               for a human", for example with `{}` in `format!` or with `.to_string()`. Treat the
               `impl Trait for Type` syntax as a black box until
-              [chapter 10](concept:traits). Here the message is printed exactly as it is.
+              [chapter 10](lesson:traits-01). Here the message is printed exactly as it is.
           - lines: 70
             token: "impl std::error::Error for Error {}"
             kind: rust
@@ -359,14 +359,14 @@ lessons:
           - on `Ok(value)`, the expression evaluates to `value` and execution continues;
           - on `Err(error)`, the function immediately returns `Err(From::from(error))`.
 
-          The second step includes a **conversion**. `?` passes the error through `From::from`,
+          The second step includes a **conversion**. `?` passes the error through [`From::from`](glossary:from-into),
           so an error of type `E` can leave a function whose error type is `F`, as long as the
           conversion "`F` from `E`" exists. When `E` and `F` are the same type, as in every
           function in this lesson, the conversion does nothing: every type converts into itself.
           Ono-Sendai also uses the non-trivial case. The evaluator in `ono-cli` returns
           `Result<T, Flow>`, where the enum `Flow` says why evaluation stopped early (an error,
           but also `break`, `return` or `exit`). It declares how an `ErrorValue` becomes a
-          `Flow`, so `?` wraps value errors automatically. [Chapter 13](concept:conversions) reads that code; for now,
+          `Flow`, so `?` wraps value errors automatically. [Chapter 13](lesson:conversions-03) reads that code; for now,
           remember that `?` *returns early and converts*.
 
           `?` on an `Option` (the previous chapter) returns `None` early. The two forms do not
@@ -394,7 +394,7 @@ lessons:
             kind: rust
             body: |
               `split_literal` returns an `Option`. `ok_or_else` turns `Some(x)` into `Ok(x)`, and
-              `None` into `Err(...)` by calling the closure `|| unit_error(...)`. A closure is a
+              `None` into `Err(...)` by calling the [closure](glossary:closure) `|| unit_error(...)`. A closure is a
               small function written in place; `||` means it takes no arguments. The error is
               built only if it is needed.
           - lines: 158
@@ -443,6 +443,20 @@ lessons:
           scales the number: if it fits, the result is `Ok` with the size, and if the number
           part cannot be read as a number or the calculation overflows, the result is an error. All four failures use the same
           `type.invalid_unit` error built by `unit_error`.
+      - type: prose
+        kind: ono
+        title: Why a literal is parsed, and refused, here
+        body: |
+          The module doc of `units.rs` states what parsing buys: "Parsing normalises every unit of a
+          dimension onto one base quantity — bytes and nanoseconds — which is what makes automatic
+          conversion free." After `parse`, `3.5GiB` is a byte count, so comparing it with `512MiB`
+          needs no unit logic at all. The same doc says that the `exact` rendering "parses back to
+          the identical value", so `parse` is also the way back from text.
+
+          Every refusal is built by `unit_error`, which uses the one code `type.invalid_unit` and
+          the message `` `<text>` is not a byte size literal ``. Whatever was wrong with the text,
+          the caller sees one kind of failure naming the text the user wrote. The `?`s keep each
+          refusal to one line, so the function reads as the list of rules a byte size must meet.
       - type: code
         snippet: c06-schema-id-from-str
         caption: |
@@ -451,11 +465,11 @@ lessons:
           - lines: 55-56
             kind: rust
             body: |
-              Treat this as a black box for now: implementing `FromStr` is what makes
+              Treat this as a black box for now: implementing [`FromStr`](glossary:fromstr) is what makes
               `"ono.process/1".parse::<SchemaId>()` work, and `type Err = ErrorValue;` names the
               error type that `.parse()` returns. Traits come in
-              [chapter 10](concept:traits), and `FromStr` itself in
-              [chapter 13](concept:conversions).
+              [chapter 10](lesson:traits-01), and `FromStr` itself in
+              [chapter 13](lesson:conversions-02).
           - lines: 59
             token: "let error = || {"
             kind: rust
@@ -589,7 +603,7 @@ lessons:
             kind: rust
             body: |
               A loop over the declared fields together with their positions. The iterator
-              methods are covered in [chapter 12](concept:iterators); read this as "for each
+              methods are covered in [chapter 12](lesson:iterators-closures-01); read this as "for each
               field and its index".
           - lines: 525
             token: "unwrap_or(&Value::Null)"
@@ -666,7 +680,7 @@ lessons:
             body: |
               Reporting is just `push` onto a `Vec`. The method returns nothing and the caller
               continues parsing. `&mut self` is needed because it changes the parser's list
-              ([chapter 9](concept:mutability)).
+              ([chapter 9](lesson:mutability-02)).
           - lines: 21-25
             kind: ono
             body: |

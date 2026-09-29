@@ -43,8 +43,9 @@ terms:
     body: |
       An atomic type such as `AtomicBool` can be read and changed through a shared reference (`&self`)
       with operations the hardware performs indivisibly, so no lock is needed and no two threads can
-      see a half-written value. The `Ordering` argument (`SeqCst` in Ono-Sendai) states what other
-      memory effects the operation makes visible. [`CancelToken`](glossary:cancel-token) keeps its
+      see a half-written value. The `Ordering` argument states what other memory effects the
+      operation makes visible: `CancelToken` uses `SeqCst`, and the `SIGINT` note, whose flag is the
+      whole message, uses `Relaxed` ([lesson](lesson:tasks-channels-04)). [`CancelToken`](glossary:cancel-token) keeps its
       `cancelled` flag in an `AtomicBool`, and uses `compare_exchange` so the cancellation report is
       claimed exactly once ([lesson](lesson:smart-pointers-02)).
     examples: [smart-pointers-02, tasks-channels-02]
@@ -130,7 +131,8 @@ terms:
     term: "`CancelToken`"
     body: |
       `ono_pipeline::CancelToken` is the cancellation scope shared by every stage of one native
-      pipeline. It is an `Arc<Inner>` holding an `AtomicBool` flag and a Tokio `Notify`: cloning shares
+      pipeline. It is an `Arc<Inner>` holding two `AtomicBool` flags (cancelled, and whether the
+      cancellation has been reported) and a Tokio `Notify`: cloning shares
       the scope ("the clones are the same token, not copies of it"), and `cancel(&self)` works through a
       shared reference because the flag is [atomic](glossary:atomic). Every `StreamSink::send` races the
       token in a biased [`select!`](glossary:select), which is how Ctrl-C or an early-finishing consumer
@@ -253,8 +255,10 @@ terms:
       [`Mutex`](glossary:mutex) guard or a channel end. Drop order is deterministic: locals are dropped
       in reverse order of declaration. In Ono-Sendai dropping is also a control mechanism: dropping a
       stream receiver closes its channel, and dropping a future [cancels](glossary:cancellation) it
-      ([lesson](lesson:tasks-channels-04)).
-    examples: [ownership-moves-04, tasks-channels-04, smart-pointers-03]
+      ([lesson](lesson:tasks-channels-04)). A type can also run code of its own when dropped by
+      implementing the `Drop` trait, as the evaluator's `ForegroundRun` guard does
+      ([lesson](lesson:execution-path-01)).
+    examples: [ownership-moves-04, tasks-channels-04, execution-path-01]
   - id: dynamic-dispatch
     term: "Dynamic dispatch"
     body: |
@@ -623,7 +627,8 @@ terms:
     body: |
       A `Schema` declares the fields and types of one kind of [record](glossary:record) and gives each
       field a position, so a record can store its values in schema order. Providers declare the schemas
-      they produce, and `SchemaRegistry::register` accepts a schema once per id and returns the shared
+      they produce, and `SchemaRegistry::register` accepts one schema per id (an identical one again is
+      fine, a different one is an error) and returns the shared
       `Arc<Schema>` handle callers keep ([lesson](lesson:mutability-03)). `Schema::validate` checks a
       record against the schema and returns the first violation ([lesson](lesson:result-errors-04)).
     examples: [mutability-03, result-errors-04, ownership-moves-01]
@@ -641,8 +646,8 @@ terms:
     term: "`Send`"
     body: |
       `Send` is an automatically implemented marker trait for types whose ownership may be transferred
-      to another thread. Most types are `Send`; `Rc` and raw pointers are not. `tokio::spawn` on a
-      multi-threaded runtime requires the future to be `Send`, since the task may move between worker
+      to another thread. Most types are `Send`; `Rc` and raw pointers are not. `tokio::spawn` requires
+      the future to be `Send`, since on a multi-threaded runtime the task may move between worker
       threads at an await, which is why `ValueStream::spawn` bounds its producer with `Send + 'static`
       ([lesson](lesson:tasks-channels-01)). `OutcomeFuture` is a `dyn Future + Send` for the same
       reason. See [`Send` and `Sync`](concept:send-sync).
@@ -733,7 +738,7 @@ terms:
     body: |
       `Sync` is a marker trait for types that may be accessed through shared references from several
       threads at once; formally, `T` is `Sync` when `&T` is `Send`. `Arc<T>` is only `Send` and `Sync`
-      if `T` is `Sync`, so an `Arc` of shared mutable state needs a `Mutex` or atomics inside, which is
+      if `T` is `Send + Sync`, so an `Arc` of shared mutable state needs a `Mutex` or atomics inside, which is
       exactly what `CancelToken` and the `env` provider have ([lesson](lesson:smart-pointers-02)). The
       `Provider` and `Clock` traits require `Send + Sync` so implementations can be shared as
       `Arc<dyn ...>` ([lesson](lesson:provider-boundary-01)).

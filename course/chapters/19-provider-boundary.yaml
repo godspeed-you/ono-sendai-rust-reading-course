@@ -6,7 +6,7 @@ summary: |
   D-Bus, netlink, DNS. Every provider implements one trait, `Provider`, and the shell reaches
   every provider through one registry of `Arc<dyn Provider>`. This chapter reads that boundary
   from both sides: the trait and its honest defaults, the registry's ordered dispatch, the
-  complete `ProcessProvider` that answered `get process` in [chapter 18](chapter:execution-path),
+  complete `ProcessProvider` that answered `get process` in [chapter 18](lesson:execution-path-02),
   the injected seams that make it testable, a decorator that wraps every provider, and a
   second, much smaller implementation for comparison.
 
@@ -18,7 +18,7 @@ lessons:
     title: "The `Provider` contract and the registry"
     stage: practice
     summary: "Read the trait every provider implements — required methods, honest defaults, sync streams versus async actions — and the registry that dispatches through `Arc<dyn Provider>`."
-    prerequisites: [execution-path-03]
+    prerequisites: [execution-path-03, traits-03, traits-04]
     concepts: [traits, trait-objects, async-await, send-sync, shared-ownership]
     ono_topics: [providers, error-flow]
     objectives:
@@ -34,7 +34,7 @@ lessons:
           and the pipeline. Its module doc states the requirement that shaped it: a later plugin
           system (KUANG/11) must consume the same shapes "without special cases", so "a KUANG/11
           provider is a [`Provider`], not a special case of one". Everything above it — commands,
-          the evaluator — talks to providers only through this trait.
+          the evaluator — talks to [providers](glossary:provider) only through this trait.
       - type: code
         snippet: c19-provider-trait
         caption: |
@@ -44,7 +44,7 @@ lessons:
           - lines: 51-52
             kind: type
             body: |
-              `#[async_trait]` because `resolve` and `act` are async ([chapter 16](lesson:async-03)).
+              [`#[async_trait]`](glossary:async-trait) because `resolve` and `act` are async ([chapter 16](lesson:async-03)).
               The supertraits `Send + Sync + Debug` make `Arc<dyn Provider>` shareable between
               pipeline tasks on different worker threads.
           - lines: 55-58
@@ -85,7 +85,7 @@ lessons:
         title: "Default methods as the honest answer"
         body: |
           A trait method with a body is a default: an implementation inherits it unless it
-          overrides it. In `Provider`, every default is the answer that is *true for a provider
+          overrides it ([chapter 10](lesson:traits-03) met the temporal pair). In `Provider`, every default is the answer that is *true for a provider
           that did nothing special*: available; no identity token; cannot subscribe
           (`ProviderUnsupported`, with help); claims no temporal capability
           (`TemporalCapabilities::none()`); cannot answer about the past; answers queries only.
@@ -109,13 +109,15 @@ lessons:
           - lines: 56-61
             kind: rust
             body: |
-              Dynamic dispatch: `provider.targets()` is a call through each trait object's
+              [Dynamic dispatch](glossary:dynamic-dispatch): `provider.targets()` is a call through each trait object's
               vtable. `contains(&target)` compares `&str`s.
           - lines: 81-88
             kind: flow
             body: |
               The first claiming provider that is *available* wins; each unavailable one
-              contributes its reason.
+              contributes its reason. You traced this loop line by line in
+              [chapter 12](lesson:iterators-closures-01); here it is the dispatch side of the
+              boundary.
           - lines: 107-109
             kind: flow
             body: |
@@ -170,7 +172,7 @@ lessons:
           - text: "`snapshot` blocks the calling thread until every process is read."
             correct: false
             feedback: |
-              No. `snapshot` returns quickly with a `ValueStream`; chapter 18 showed that
+              No. `snapshot` returns quickly with a `ValueStream`; [chapter 18](lesson:execution-path-02) showed that
               assembly finishes before the values are drained.
           - text: "`snapshot` prepares the query synchronously and returns a stream whose spawned producer task does the reading and awaiting."
             correct: true
@@ -276,7 +278,7 @@ lessons:
     title: "`ProcessProvider`: one implementation, end to end"
     stage: practice
     summary: "Read the complete `impl Provider for ProcessProvider`: honest metadata, a `snapshot` that prepares synchronously and streams from a task, and the per-process reader behind it."
-    prerequisites: [provider-boundary-01]
+    prerequisites: [provider-boundary-01, smart-pointers-03]
     concepts: [traits, tasks, closures, error-types, option]
     ono_topics: [providers, system-integration, records-schemas]
     objectives:
@@ -291,7 +293,7 @@ lessons:
           `crates/ono-provider-linux/src/process.rs` answers the `process` target "from `/proc`
           alone": "Nothing here runs `ps` or reads its output, which spec §50 forbids". This is
           the provider behind stage 0 of `get process | where cpu > 20`. Read it in three parts:
-          the metadata methods, `snapshot`, and `Reader::read`, which builds one record.
+          the metadata methods, `snapshot`, and `Reader::read`, which builds one [record](glossary:record).
       - type: code
         snippet: c19-process-provider-meta
         caption: |
@@ -445,7 +447,7 @@ lessons:
           interpretation: |
             Doing the cheap, fallible, synchronous work first means a broken query fails at
             assembly time, before a task exists — the same "fail before side effects" preference
-            seen in chapter 18.
+            seen in [chapter 18](lesson:execution-path-02).
       - type: exercise
         id: provider-boundary-02-q2
         exercise_type: multiple-choice
@@ -514,7 +516,7 @@ lessons:
     title: "Reading tests to decode production code"
     stage: practice
     summary: "Learn a method for reading tests as specifications, and use it on the process provider's injected seams, its pid-reuse refusal, and a doc comment the code has outgrown."
-    prerequisites: [provider-boundary-02]
+    prerequisites: [provider-boundary-02, traits-01]
     concepts: [testing, trait-objects, shared-ownership, code-navigation]
     ono_topics: [tests-as-docs, providers, process-execution]
     objectives:
@@ -622,7 +624,7 @@ lessons:
         title: What the test tells you about the Rust
         body: |
           `Arc::clone(&signals) as Arc<dyn ono_provider_linux::Signals>` is an *unsized
-          coercion*: an `Arc` of a concrete type becomes an `Arc` of a trait object pointing at
+          coercion*: an `Arc` of a concrete type becomes an `Arc` of a [trait object](glossary:trait-object) pointing at
           the same allocation. Both `Arc`s share one `RecordingSignals`, and its `Mutex<Vec<…>>`
           lets `send(&self, …)` record through a shared reference. `#[tokio::test]` builds a
           runtime for the test so the `async fn` test body can `.await` the provider.
@@ -811,12 +813,12 @@ lessons:
           - lines: 119-127
             kind: rust
             body: |
-              The same function under `#[cfg(not(feature = "temporal"))]`: exactly one of the two
+              The same function under [`#[cfg(not(feature = "temporal"))]`](glossary:conditional-compilation): exactly one of the two
               definitions is compiled, so callers never know which build they are in.
           - lines: 169-171
             kind: type
             body: |
-              The decorator holds the thing it decorates as a trait object. It does not know or
+              The decorator holds the thing it decorates as a [trait object](glossary:trait-object). It does not know or
               care which provider is inside.
           - lines: 207-212
             kind: flow

@@ -25,7 +25,7 @@ lessons:
     title: Many streams over one connection
     stage: independent
     summary: Read how a link hands each remote stream its own queue and credit, and how the reader task routes frames to them.
-    prerequisites: [tasks-channels-01, unseen-with-solutions-01]
+    prerequisites: [tasks-channels-01, unseen-with-solutions-01, tasks-channels-02]
     concepts: [channels, tasks, shared-ownership, interior-mutability, select-cancellation]
     ono_topics: [remote-protocol, async-execution, cancellation]
     objectives:
@@ -60,7 +60,7 @@ lessons:
 
           The first snippet contains the module doc, the shared state of a link and three of its
           small methods. The second contains the per-stream handle and the task that reads
-          frames. `ValueStream`, `EventStream`, `StreamSink` and `CancelToken` are the pipeline
+          frames. `ValueStream`, `EventStream`, `StreamSink` and [`CancelToken`](glossary:cancel-token) are the pipeline
           types from [the tasks and channels chapter](chapter:tasks-channels).
           `FrameSink::send` queues a frame for the link's writer task.
       - type: code

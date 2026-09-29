@@ -65,23 +65,23 @@ lessons:
             kind: ownership
             body: |
               A stage reuses its input's capacity, clones its cancellation token (the clone is
-              the *same* token — chapter 15) and its diagnostics, then moves the input stream
+              the *same* token — [chapter 15](lesson:smart-pointers-02)) and its diagnostics, then moves the input stream
               itself (`self`) into the new task.
           - lines: 590-591
             kind: rust
             body: |
-              `mpsc::channel(n)` returns a `(Sender, Receiver)` pair with room for `n` queued
+              [`mpsc::channel(n)`](glossary:channel) returns a `(Sender, Receiver)` pair with room for `n` queued
               items. The senders go into the sink, the receivers into the stream; they end up in
               different tasks.
       - type: prose
         kind: rust
         title: What `Send + 'static` means for a task
         body: |
-          `tokio::spawn` hands a future to the runtime, which may poll it on any worker thread,
+          [`tokio::spawn`](glossary:task) hands a future to the runtime, which may poll it on any worker thread,
           pause it at an `.await`, and resume it on a different worker. The spawning function
           returns immediately, and the task may run long after it. Two bounds follow:
 
-          - **`'static`**: the future must not borrow anything that could disappear while it
+          - [**`'static`**](glossary:static-lifetime): the future must not borrow anything that could disappear while it
             runs — no references into the caller's local variables. It may own data (moved in
             with `move`), or hold `Arc`s and `'static` references.
           - **`Send`**: the future must be safe to move to another thread. A type is `Send` if
@@ -96,12 +96,12 @@ lessons:
 
           Because `ValueStream::spawn` states these bounds, producers in Ono-Sendai are written
           as `move |sink| async move { … }` over owned data — you will see the pattern in
-          the process provider in [chapter 19](chapter:provider-boundary).
+          the process provider in [chapter 19](lesson:provider-boundary-02).
       - type: prose
         kind: ono
         title: Why does Ono-Sendai do this?
         body: |
-          ADR-0013 decides that "native stages run as Tokio tasks", joined by bounded `mpsc`
+          ADR-0013 decides that "[native stages](glossary:pipeline-stage) run as Tokio tasks", joined by bounded `mpsc`
           channels. So the stages run concurrently — and, on the multi-thread runtime, possibly
           in parallel on different workers. The bounded channels
           decide how far ahead a producer may run. The rationale for 64 is on lines 38–41:
@@ -154,7 +154,7 @@ lessons:
             correct: false
             feedback: |
               Nothing requires storing it; this is real, compiling Ono-Sendai code. Keeping the
-              handle is a choice made only where the task must stay reachable (lesson 3).
+              handle is a choice made only where the task must stay reachable ([lesson 3](lesson:tasks-channels-03)).
       - type: exercise
         id: tasks-channels-01-q2
         exercise_type: read-function
@@ -240,13 +240,13 @@ lessons:
             without `move`, captures are borrows.
           interpretation: |
             This is why pipeline code in Ono-Sendai clones `Arc`s and owned values right before
-            spawning — a pattern you will recognise in `run_background` (lesson 3) and in
+            spawning — a pattern you will recognise in `run_background` ([lesson 3](lesson:tasks-channels-03)) and in
             providers.
   - id: tasks-channels-02
     title: "Backpressure and cancellation: `select!`, `biased;` and the `CancelToken`"
     stage: practice
     summary: "Read how every send waits for room and races cancellation, how the token wakes waiters without losing a wakeup, and a test that proves an infinite pipeline stops."
-    prerequisites: [tasks-channels-01]
+    prerequisites: [tasks-channels-01, smart-pointers-02]
     concepts: [select-cancellation, channels, futures, interior-mutability, testing]
     ono_topics: [pipeline, cancellation]
     objectives:
@@ -260,9 +260,9 @@ lessons:
         title: Where we are
         body: |
           A pipeline stops for two reasons. Either a consumer stops reading and drops its stream
-          (previous lesson), or something trips the pipeline's **cancellation token**: Ctrl-C,
+          (previous lesson), or something trips the pipeline's [**cancellation token**](glossary:cancel-token): Ctrl-C,
           a `try` block unwinding, or a consumer that "has seen enough" (`cancel.rs`, doc
-          comment). [Chapter 15](chapter:smart-pointers) showed the token's data: an `Arc` around
+          comment). [Chapter 15](lesson:smart-pointers-02) showed the token's data: an `Arc` around
           two `AtomicBool`s and a `Notify`. Now read how it is *awaited*, and how every send in
           the pipeline races it.
       - type: code
@@ -274,12 +274,12 @@ lessons:
             kind: ono
             body: |
               The rule this method implements: "`send` waits when the channel is full, which is
-              the backpressure spec §11.2 requires — an infinite producer runs exactly as fast as
+              the [backpressure](glossary:backpressure) spec §11.2 requires — an infinite producer runs exactly as fast as
               its consumer drains it, and no faster."
           - lines: 200-206
             kind: flow
             body: |
-              `select!` polls both branches and runs the first one whose future completes. The
+              [`select!`](glossary:select) polls both branches and runs the first one whose future completes. The
               other future is **dropped**. If cancellation wins, the pending `values.send(value)`
               future is dropped and `value` is dropped with it — it is never delivered.
           - lines: 203
@@ -492,7 +492,7 @@ lessons:
             re-checks the flag, so a cancellation racing with the registration cannot be missed."
           semantics: |
             `Arc` only shares the token; the atomics and `Notify` do the synchronization
-            (chapter 15's distinction).
+            ([chapter 15](lesson:smart-pointers-02)'s distinction).
           interpretation: |
             Because `send` creates a fresh `cancelled()` future on every call, a lost wakeup
             would not just delay one producer — it could leave it blocked on a full channel with
@@ -581,13 +581,15 @@ lessons:
         title: "Tasks versus threads, `Arc<Mutex<…>>` versus channels"
         body: |
           A thread (`std::thread::spawn`) is an operating-system thread that runs one closure to
-          the end; blocking inside it is fine. A task (`tokio::spawn`) is a future multiplexed
+          the end; blocking inside it is fine. [A task](glossary:task) (`tokio::spawn`) is a future multiplexed
           with many others over a few worker threads; it must not block. Tokio's channels have
           both kinds of ends — `send().await` for tasks, `blocking_send` for threads — so they are
-          the natural bridge.
+          the natural bridge. A third way to send, `try_send`, never waits at all: it fails at once
+          if the channel is full or its receiver is gone. Code that uses it is saying that a full
+          channel is itself an error rather than a reason to wait.
 
           The other way to hand data between threads and tasks is shared state. `Arc<T>` gives
-          several owners the same value; it does **not** make mutation safe. `Mutex<T>` does: it
+          several owners the same value; it does **not** make mutation safe. [`Mutex<T>`](glossary:mutex) does: it
           lets one holder at a time obtain `&mut T` through `lock()`. `Arc<Mutex<T>>` combines
           them: shared ownership *and* synchronized mutation. `lock()` returns `Err` if a
           previous holder panicked while holding the lock ("poisoned");
@@ -813,7 +815,7 @@ lessons:
             kind: type
             body: |
               A `static` is shared by every thread of the process, so its type must be `Sync`.
-              `AtomicBool` is, and it can be changed through that shared access; a plain
+              [`AtomicBool`](glossary:atomic) is, and it can be changed through that shared access; a plain
               `static bool` could not be changed at all without `static mut` and `unsafe`.
           - lines: 115-117
             kind: rust
@@ -892,7 +894,7 @@ lessons:
             token: "reply: tokio::sync::oneshot::Sender<BlockReply>,"
             kind: type
             body: |
-              Each request carries the sending half of a fresh `oneshot` channel — a channel
+              Each request carries the sending half of a fresh [`oneshot` channel](glossary:channel) — a channel
               for exactly one message. The answer comes back on it.
           - lines: 99-110
             kind: flow

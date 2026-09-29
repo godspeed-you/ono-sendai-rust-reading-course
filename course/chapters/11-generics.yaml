@@ -104,13 +104,13 @@ lessons:
           fn new<M: Into<Arc<str>>>(code: ErrorCode, message: M) -> Self
           ```
 
-          `M` is a **type parameter** and `Into<Arc<str>>` is its **bound**: inside the function,
+          `M` is a [**type parameter**](glossary:generic) and `Into<Arc<str>>` is its [**bound**](glossary:trait-bound): inside the function,
           only what the bound promises may be used, here the `into()` method. The caller decides
           what `M` is, simply by passing an argument.
 
           For every distinct type actually used, the compiler generates a separate copy of the
           function (`new::<&str>`, `new::<String>`, …). Each copy calls the right `into()`
-          directly: **static dispatch**, with no vtable and no run-time lookup. The cost is more
+          directly: [**static dispatch**](glossary:static-dispatch), with no vtable and no run-time lookup. The cost is more
           machine code; the benefit is that the call is as direct as a hand-written one.
 
           The sugar form has one limitation: the caller cannot name the type explicitly with
@@ -240,12 +240,12 @@ lessons:
             body: |
               Supertraits every predicate must satisfy. Read `'static` as "owns everything it uses:
               holds no borrow that could expire". `Send + Sync` allow it to be used from the
-              engine's tasks ([chapter 17](chapter:tasks-channels)).
+              engine's tasks ([chapter 17](lesson:tasks-channels-01)).
           - lines: 20
             token: "impl<F> Predicate for F"
             kind: rust
             body: |
-              A **blanket implementation**: `Predicate` is implemented for *every* type `F` that
+              A [**blanket implementation**](glossary:blanket-implementation): `Predicate` is implemented for *every* type `F` that
               meets the `where` clause below, not for one named type.
           - lines: 22
             token: "F: Fn(&Value) -> Value"
@@ -271,7 +271,7 @@ lessons:
           fn f(t: impl Transform)                  // anonymous, argument position
           ```
 
-          `where` clauses are used when bounds get long, as with the closure bound here.
+          [`where` clauses](glossary:where-clause) are used when bounds get long, as with the closure bound here.
 
           `impl<F> Predicate for F where …` applies the same idea to an `impl`: "for any `F` that
           satisfies the bounds, here is how it is a `Predicate`". So a closure
@@ -301,7 +301,7 @@ lessons:
             kind: rust
             body: |
               The constructor is generic (static dispatch), and immediately boxes its argument:
-              `Box::new(predicate)` is coerced to `Box<dyn Predicate>`. From here on, the concrete
+              [`Box::new(predicate)`](glossary:box) is coerced to `Box<dyn Predicate>`. From here on, the concrete
               closure type is erased.
       - type: code
         snippet: c11-where-call
@@ -328,7 +328,7 @@ lessons:
             kind: rust
             body: |
               `Transform::apply` takes `self: Box<Self>`, so the transform is boxed and consumed.
-              Treat that receiver as a black box until [chapter 15](chapter:smart-pointers).
+              Treat that receiver as a black box until [chapter 15](lesson:smart-pointers-04).
       - type: diagram
         kind: data-flow
         title: Static at the edges, dynamic inside
@@ -476,7 +476,7 @@ lessons:
             token: "impl ono_pipeline::KeyFn + use<>"
             kind: type
             body: |
-              **`impl Trait` in return position**: the function returns one specific type that
+              [**`impl Trait` in return position**](glossary:impl-trait): the function returns one specific type that
               implements `KeyFn`, but does not name it. Here that type is the closure on line 245,
               which has no name that could be written.
           - lines: 244
@@ -489,7 +489,7 @@ lessons:
             token: "move |value: &Value|"
             kind: ownership
             body: |
-              `move` makes the closure **own** `key` (an owned, cloned expression) and the new
+              [`move`](glossary:move-closure) makes the closure **own** `key` (an owned, cloned expression) and the new
               `scope` handle. It borrows nothing from `key_function`'s parameters.
           - lines: 93
             token: "Group::new(key)"
@@ -557,9 +557,9 @@ lessons:
             token: "<T: serde::de::DeserializeOwned>"
             kind: crate
             body: |
-              A bound from the `serde` crate: `T` can be built from serialized data without
+              A bound from the [`serde`](glossary:serde) crate: `T` can be built from serialized data without
               borrowing from it. Read `DeserializeOwned` as "can be decoded from JSON into an owned
-              value"; [chapter 14](chapter:derives-macros) shows the derives that implement it.
+              value"; [chapter 14](lesson:derives-macros-03) shows the derives that implement it.
           - lines: 554
             token: "detail: impl std::fmt::Display"
             kind: rust
@@ -719,7 +719,7 @@ lessons:
             token: "type Item"
             kind: type
             body: |
-              **Associated types**: this implementation declares what its items are and what
+              [**Associated types**](glossary:associated-type): this implementation declares what its items are and what
               iterator type `into_iter` returns.
       - type: prose
         kind: rust

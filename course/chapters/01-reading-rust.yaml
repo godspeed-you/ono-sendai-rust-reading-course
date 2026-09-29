@@ -51,6 +51,8 @@ lessons:
             purpose. The first is about the language, the second about the design of the program.
           - **Black box for now** marks a construct you may see but do not need to understand
             yet. It tells you how to read it for the moment and which chapter opens it.
+          - Terms linked like [crate](glossary:crate) open the **glossary**: a short definition,
+            with links to the lessons that show the term in real code.
           - **Exercises** come last. Some are multiple choice, with feedback for every choice.
             The others ask you to predict or explain something in your own words; the text box is
             a private scratchpad — nothing is graded or sent anywhere. Try first, then open
@@ -130,7 +132,7 @@ lessons:
         kind: rust
         title: How to read a crate root
         body: |
-          Every library crate has a **crate root**, the file `src/lib.rs`; a program has
+          Every library crate has a [**crate root**](glossary:crate), the file `src/lib.rs`; a program has
           `src/main.rs`. The crate root is the front door, and it is almost always the right first
           file to open. Read it in this order:
 
@@ -154,7 +156,7 @@ lessons:
             token: "//!"
             kind: rust
             body: |
-              `//!` starts an **inner doc comment**: documentation for the thing that *contains*
+              `//!` starts an [**inner doc comment**](glossary:doc-comment): documentation for the thing that *contains*
               it — here the whole crate. Rust's documentation tool turns these lines into the
               crate's front page. Ordinary comments start with `//` and are ignored by that tool.
           - lines: 3-5
@@ -176,7 +178,7 @@ lessons:
             token: "#![forbid(unsafe_code)]"
             kind: rust
             body: |
-              An **attribute** is an instruction to the compiler written as `#[...]`. The `!` in
+              An [**attribute**](glossary:attribute) is an instruction to the compiler written as `#[...]`. The `!` in
               `#![...]` makes it an *inner* attribute that applies to the enclosing item — here,
               the whole crate. `forbid(unsafe_code)` turns any use of `unsafe` (code that opts
               out of some compiler checks) into a hard error that nothing further down can switch
@@ -189,7 +191,7 @@ lessons:
             token: "mod diagnostic;"
             kind: rust
             body: |
-              `mod name;` declares a **module** and tells the compiler to read its contents from
+              `mod name;` declares a [**module**](glossary:module) and tells the compiler to read its contents from
               the file `src/name.rs` (or `src/name/mod.rs`). Without the `mod` line the file would
               not be compiled at all. These four modules have no `pub` in front, so they are
               **private**: another crate cannot write `ono_core::exit::...`.
@@ -247,7 +249,7 @@ lessons:
         body: |
           Line 10 mentions ``[`diagnostic!`]``, a macro defined in the private module
           `diagnostic`. You do not need it in this course's early chapters; read it as "a way to
-          print a line of commentary to standard error". Chapter 14 reads macros properly.
+          print a line of commentary to standard error". [Chapter 14](lesson:derives-macros-02) reads macros properly.
       - type: exercise
         id: reading-rust-01-q1
         exercise_type: multiple-choice
@@ -346,7 +348,7 @@ lessons:
           after `where`, `>` compares. Second: "[`parse`] never panics and always returns a
           tree. Input that is unfinished is reported as `parse.incomplete`, input that is wrong as
           `parse.syntax`, and that difference is what lets an editor tell 'still typing' from
-          'broken'." Keep that in mind; chapter 3 reads the function that keeps this promise.
+          'broken'." Keep that in mind; [chapter 3](lesson:structs-methods-04) reads the function that keeps this promise.
 
           Below the documentation, the crate's table of contents looks slightly different from
           `ono-core`'s.
@@ -368,7 +370,7 @@ lessons:
           - lines: 53-55
             kind: rust
             body: |
-              Three **private** modules: `diagnostic`, `lexer` and `parser`. Outside code cannot
+              Three [**private**](glossary:visibility) modules: `diagnostic`, `lexer` and `parser`. Outside code cannot
               write `ono_parser::lexer::...`. Whatever the crate wants to share from them is
               re-exported one name at a time in lines 66–68.
           - lines: 57
@@ -542,7 +544,7 @@ lessons:
           - lines: 11-15
             kind: rust
             body: |
-              A fenced block inside a doc comment is a **doctest**: when the project runs its
+              A fenced block inside a doc comment is a [**doctest**](glossary:doc-comment): when the project runs its
               tests, this example is compiled and executed. `assert_eq!(a, b)` stops the test
               with an error if `a` and `b` differ. So this is documentation that cannot silently
               go out of date: `Span::new(4, 11).of(source)` really returns `"process"`.
@@ -550,12 +552,12 @@ lessons:
             token: "#[derive("
             kind: rust
             body: |
-              An **outer attribute** (no `!`) applying to the item below it. `derive` asks the
+              An **outer attribute** (no `!`) applying to the item below it. [`derive`](glossary:derive) asks the
               compiler to write standard behaviour for the type automatically:
               `Debug` (printable for debugging), `Clone` and `Copy` (a span can be duplicated by
               simply copying its bits), `PartialEq`/`Eq` (`==` works), `PartialOrd`/`Ord` (`<`
               works and spans can be sorted), `Hash` (usable as a key in a hash map) and
-              `Default` (there is a default span, zero to zero). Chapter 14 opens derives
+              `Default` (there is a default span, zero to zero). [Chapter 14](lesson:derives-macros-01) opens derives
               properly; for now, read the list as "things you may do with a `Span`".
           - lines: 17
             token: "pub struct Span"
@@ -570,7 +572,7 @@ lessons:
               Two fields, `start` and `end`, both of type `u32` (an unsigned 32-bit integer).
               Neither has `pub`, so they are **private**: code outside this module cannot read or
               set them directly. It must go through the functions the module provides, such as
-              `Span::new` and `span.start()`. Chapter 3 shows why that matters.
+              `Span::new` and `span.start()`. [Chapter 3](lesson:structs-methods-01) shows why that matters.
       - type: prose
         kind: rust
         title: A reading order for module files
@@ -646,7 +648,7 @@ lessons:
         solution: |
           `#[derive(...)]` is an outer attribute: it applies to the item directly below it, the
           struct `Span`. It asks the compiler to generate standard implementations of each listed
-          trait (a *trait* is a named set of behaviour; chapter 10 introduces them). As a result,
+          trait (a *trait* is a named set of behaviour; [chapter 10](lesson:traits-01) introduces them). As a result,
           a `Span` can be printed for debugging (`Debug`), duplicated by a plain copy (`Clone`,
           `Copy`), compared with `==` (`PartialEq`, `Eq`), ordered and sorted (`PartialOrd`,
           `Ord`), used as a hash-map key (`Hash`) and created as a default value (`Default`, which
@@ -705,7 +707,7 @@ lessons:
             kind: rust
             body: |
               `fn` declares a function. This one takes no parameters (`()`) and returns nothing
-              useful (strictly, the empty value `()`, which chapter 2 explains).
+              useful (strictly, the empty value `()`, which [chapter 2](lesson:functions-types-01) explains).
               Ono-Sendai names its tests `should_<behaviour>_when_<situation>`, so the name alone
               is a sentence about the code under test.
           - lines: 8
@@ -713,7 +715,7 @@ lessons:
             kind: rust
             body: |
               `let` introduces a variable (Rust says a **binding**). `Span::new(3, 7)` calls the
-              function `new` that belongs to the type `Span` — chapter 3 explains the `::`.
+              function `new` that belongs to the type `Span` — [chapter 3](lesson:structs-methods-01) explains the `::`.
           - lines: 9
             token: "assert_eq!"
             kind: rust
@@ -739,7 +741,7 @@ lessons:
             token: "#[cfg(test)]"
             kind: rust
             body: |
-              `cfg` means **conditional compilation**: the item below is compiled only when the
+              `cfg` means [**conditional compilation**](glossary:conditional-compilation): the item below is compiled only when the
               condition holds. `test` is true only while building the tests, so this module does
               not exist in the real `ono` binary at all.
           - lines: 33
@@ -761,7 +763,7 @@ lessons:
             body: |
               `let parts: Vec<&str>` writes the type explicitly: a `Vec` (a growable list) of
               `&str` pieces of text. The right side splits `"0.6.2"` at each `.` and collects the
-              pieces into that list. How `split` and `collect` work is chapter 12; read the line as
+              pieces into that list. How `split` and `collect` work is [chapter 12](lesson:iterators-closures-01); read the line as
               "the version, cut at the dots".
           - lines: 39-43
             kind: rust
@@ -777,9 +779,9 @@ lessons:
             token: "|c| c.is_ascii_digit()"
             kind: rust
             body: |
-              Black box for now: `|c| c.is_ascii_digit()` is a **closure**, a small inline
+              Black box for now: `|c| c.is_ascii_digit()` is a [**closure**](glossary:closure), a small inline
               function, and `.chars().all(...)` asks "is this true for every character?". Read the
-              line as "every character of `part` is a digit". Closures are chapter 12.
+              line as "every character of `part` is a digit". Closures are [chapter 12](lesson:iterators-closures-03).
       - type: prose
         kind: ono
         title: What the two tests guard

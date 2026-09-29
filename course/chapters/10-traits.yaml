@@ -51,16 +51,16 @@ lessons:
             token: "pub trait Clock"
             kind: rust
             body: |
-              Declares a trait: a named contract. Any type that implements `Clock` must provide
+              Declares a [trait](glossary:trait): a named contract. Any type that implements `Clock` must provide
               every method that has no body.
           - lines: 49
             token: "Send + Sync + std::fmt::Debug"
             kind: rust
             body: |
               **Supertraits**: a type may implement `Clock` only if it also implements these three.
-              `Debug` allows printing it for diagnostics. `Send` and `Sync` say it may be moved to
+              `Debug` allows printing it for diagnostics. [`Send`](glossary:send) and `Sync` say it may be moved to
               and shared between threads; read them as a black box until
-              [chapter 17](chapter:tasks-channels).
+              [chapter 17](lesson:tasks-channels-01).
           - lines: 51
             token: "fn now_nanos(&self) -> u128;"
             kind: rust
@@ -96,9 +96,9 @@ lessons:
         body: |
           `advance(&self, …)` changes the stored time although it only has a **shared** reference.
           That is possible because `AtomicU64` is designed for exactly this: mutation through
-          `&self`, safe even across threads. It is *interior mutability*, the exception to the
+          `&self`, safe even across threads. It is [*interior mutability*](glossary:interior-mutability), the exception to the
           `&`/`&mut` split you learned in [chapter 9](chapter:mutability), and
-          [chapter 15](chapter:smart-pointers) explains it. For now: `advance` adds to a counter,
+          [chapter 15](lesson:smart-pointers-02) explains it. For now: `advance` adds to a counter,
           `now_nanos` reads it.
       - type: code
         snippet: c10-clock-seam
@@ -108,15 +108,28 @@ lessons:
             token: "Arc<dyn Clock>"
             kind: type
             body: |
-              `dyn Clock` means "a value of **some** type that implements `Clock`; which type is
+              [`dyn Clock`](glossary:trait-object) means "a value of **some** type that implements `Clock`; which type is
               decided at run time". `Arc` is a shared handle to it (see
-              [chapter 15](chapter:smart-pointers)).
+              [chapter 15](lesson:smart-pointers-01)).
           - lines: 431
             token: "self.clock.now_nanos()"
             kind: flow
             body: |
               A call through the trait object. The provider does not know whether it is talking
               to a `SystemClock` or a `TestClock`; the call is looked up at run time.
+      - type: prose
+        kind: rust
+        title: Where a trait's methods can be called
+        body: |
+          `self.clock.now_nanos()` goes through a `dyn Clock`, and a trait object always offers
+          its trait's methods. For a value of a concrete type there is one more rule, and it
+          explains many `use` lines: a trait's methods can be called with dot syntax only where
+          the trait is **in scope**. `ono-render/src/table.rs` imports
+          `use unicode_width::UnicodeWidthStr;` so that `text.width()`
+          ([chapter 2](lesson:functions-types-04)) compiles; without that line the method would
+          not be found. Some files write `use std::io::Write as _;`: the `as _` brings the trait's
+          methods (`write_all`, …) into scope without binding its name, because the name itself
+          is never used. When a method call seems to come from nowhere, look for such an import.
       - type: code
         snippet: c10-clock-test
         caption: "`ono-provider-linux/tests/process.rs`: a test that injects the test clock."
@@ -291,7 +304,7 @@ lessons:
             token: "hook.complete(command, selector, prefix)"
             kind: flow
             body: |
-              **Dynamic dispatch**: the call goes to whichever `complete` the concrete type
+              [**Dynamic dispatch**](glossary:dynamic-dispatch): the call goes to whichever `complete` the concrete type
               provides. `map_or_else(Vec::new, …)` returns an empty `Vec` when there is no hook.
       - type: prose
         kind: rust
@@ -458,7 +471,7 @@ lessons:
         kind: context
         title: The provider boundary
         body: |
-          A **provider** is where the shell meets the system it describes: `/proc` for processes,
+          A [**provider**](glossary:provider) is where the shell meets the system it describes: `/proc` for processes,
           systemd for services, DNS for names (see [providers](topic:providers)). All of them
           implement one trait, `Provider`, from the crate `ono-provider-api`. The crate doc says
           plugins are no exception: "A KUANG/11 provider is a [`Provider`], not a special case of
@@ -475,7 +488,7 @@ lessons:
             token: "#[async_trait::async_trait]"
             kind: crate
             body: |
-              An attribute macro from the `async_trait` crate. See the black box below.
+              An attribute macro from the [`async_trait`](glossary:async-trait) crate. See the black box below.
           - lines: 55
             token: "fn id(&self) -> &str;"
             kind: rust
@@ -507,7 +520,7 @@ lessons:
           `resolve` (and `act`, omitted here) are `async fn`: they return a value that is computed
           later, when awaited. The attribute `#[async_trait::async_trait]` rewrites such methods so
           that the trait can still be used as `dyn Provider`, which the registry needs. Treat both
-          as a black box until [chapter 16](lesson:async-01). Likewise, read `ValueStream` as "a
+          as a black box until [chapter 16](lesson:async-03). Likewise, read [`ValueStream`](glossary:value-stream) as "a
           stream of values that a pipeline stage consumes".
       - type: prose
         kind: rust
@@ -696,7 +709,7 @@ lessons:
         kind: context
         title: Two registries of code
         body: |
-          Ono-Sendai describes commands as data: YAML contracts under `docs/contracts/commands/`,
+          Ono-Sendai describes commands as data: [YAML contracts](glossary:command-contract) under `docs/contracts/commands/`,
           embedded into the binary. The code behind each contract is a `CommandImpl`, registered
           against a stable id such as `ono.process.get` (see
           [command dispatch](topic:command-dispatch)). Providers are collected in a similar table,
@@ -712,7 +725,7 @@ lessons:
             body: |
               A type alias for a boxed future. Its doc gives the reason for the box: "so the trait
               stays object-safe". The full meaning of `Pin<Box<dyn Future…>>` waits for
-              [chapter 16](lesson:async-01).
+              [chapter 16](lesson:async-03).
           - lines: 427
             token: "pub trait CommandImpl: Send + Sync"
             kind: rust
@@ -743,7 +756,7 @@ lessons:
         body: |
           Not every trait can be used as `dyn Trait`. A trait object only knows the vtable of the
           trait's methods, so every method must be callable **without knowing the concrete type**.
-          Roughly, a trait is *object safe* (the newer term is *dyn compatible*) when its methods:
+          Roughly, a trait is [*object safe*](glossary:object-safety) (the newer term is *dyn compatible*) when its methods:
 
           - take a receiver such as `&self`, `&mut self` or `self: Box<Self>`;
           - have no type parameters of their own (a generic method would need one vtable entry per

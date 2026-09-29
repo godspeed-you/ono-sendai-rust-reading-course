@@ -19,7 +19,7 @@ lessons:
     title: "An async function is a recipe: `collect_content`"
     stage: practice
     summary: "Read the simplest real `async fn` in Ono-Sendai, and learn what calling it does — and does not — do."
-    prerequisites: []
+    prerequisites: [smart-pointers-04, result-errors-03]
     concepts: [async-await, futures, pattern-matching, ownership]
     ono_topics: [async-execution, pipeline]
     objectives:
@@ -34,7 +34,7 @@ lessons:
         body: |
           Some commands write *content*: `write file` stores the bytes that arrive on the
           pipeline, so `… | to json | write file out.json` can save a document. The pipeline
-          arrives as a `ValueStream` — a stream of values produced by other parts of the pipeline
+          arrives as a [`ValueStream`](glossary:value-stream) — a stream of values produced by other parts of the pipeline
           while this command waits for them. `collect_content` in
           `crates/ono-command/src/impls/mutate.rs` drains that stream into one `bytes` value.
           Its caller, the provider-mutation command, uses it like this (line 135 of the same
@@ -50,8 +50,8 @@ lessons:
         kind: rust
         title: What does `async fn` mean?
         body: |
-          An `async fn` looks like an ordinary function, but calling it **does not run its
-          body**. The call returns a *future*: a value that holds the arguments and remembers
+          An [`async fn`](glossary:async-fn) looks like an ordinary function, but calling it **does not run its
+          body**. The call returns a [*future*](glossary:future): a value that holds the arguments and remembers
           where in the body it has got to. The body runs only when something *polls* that
           future, which in Ono-Sendai's code almost always means `.await`.
 
@@ -66,13 +66,13 @@ lessons:
           has no name you can write; that detail matters in [lesson 3](lesson:async-03).
 
           `.await` does two things. It drives the future until it produces its output, and it
-          marks a **potential suspension point**: if the awaited thing is not ready (here: no
+          marks a [**potential suspension point**](glossary:await-point): if the awaited thing is not ready (here: no
           value has arrived on the stream yet), the current function pauses, gives its thread
           back to the runtime so other work can run, and resumes at exactly this point later.
           Local variables such as `content` survive the pause, because they live inside the
           future, not on a thread's stack.
 
-          `?` after `.await` then works exactly as in [chapter 6](chapter:result-errors): it
+          `?` after `.await` then works exactly as in [chapter 6](lesson:result-errors-03): it
           returns early with the error, converting it via `From` where the types differ.
       - type: code
         snippet: c16-collect-content
@@ -228,7 +228,7 @@ lessons:
             order, byte for byte; any other value is refused with a help message naming
             `to json`; an upstream failure is passed on unchanged.
           semantics: |
-            Because `input` is owned, dropping it at the end is automatic (ownership, chapter 7).
+            Because `input` is owned, dropping it at the end is automatic (ownership, [chapter 7](chapter:ownership-moves)).
             Because the function is `async`, none of this runs until the caller awaits the future.
           interpretation: |
             Dropping the stream early is how a consumer tells the producers it has stopped
@@ -335,7 +335,7 @@ lessons:
           wraps the future, and only the `.await` on line 404 starts it — with the timer already
           running.
 
-          If the timer wins, `timeout` **drops** the inner future. Dropping a future is how async
+          If the timer wins, `timeout` [**drops** the inner future](glossary:cancellation). Dropping a future is how async
           Rust cancels it: the future simply stops being polled, at whichever `.await` it was
           paused on, and everything it owned is dropped. No code of the D-Bus call runs after
           that point.
@@ -489,7 +489,7 @@ lessons:
             Every call through `budgeted` finishes within `CALL_BUDGET` (10 seconds) with either
             the value or a `BusError`; it never waits indefinitely at an `.await`. (A timeout can
             only act between polls: it cannot interrupt code that blocks a thread inside a single
-            poll, which is why blocking work goes to `spawn_blocking` — lesson 4.)
+            poll, which is why blocking work goes to `spawn_blocking` — [lesson 4](lesson:async-04).)
           semantics: |
             `match` exhaustiveness forces all three outcomes to be handled; `?` propagates the
             `BusError` unchanged because `connect` returns the same error type.
@@ -554,8 +554,9 @@ lessons:
           Two traits in Ono-Sendai need async methods *and* are used as trait objects.
           `Accounts` (`crates/ono-provider-linux/src/accounts.rs`) resolves user and group ids;
           the process provider holds it as `Arc<dyn Accounts>` so a test can substitute fake
-          accounts. `CommandImpl` (`crates/ono-command/src/invoke.rs`) is the native
-          implementation of one command; the command table stores implementations as
+          accounts. `CommandImpl` (`crates/ono-command/src/invoke.rs`, first read in
+          [chapter 10](lesson:traits-04)) is the native implementation of one command; the
+          command table stores implementations as
           `Arc<dyn CommandImpl>`. The first trait uses a macro; the second spells out by hand
           what that macro generates. Reading both side by side removes the magic.
       - type: code
@@ -567,14 +568,15 @@ lessons:
           - lines: 72
             kind: rust
             body: |
-              The attribute macro `async_trait` rewrites every `async fn` in the trait (and, with
+              The attribute macro [`async_trait`](glossary:async-trait) rewrites every `async fn` in the trait (and, with
               the same attribute on each `impl`, in every implementation). It was a black box
-              until now; the rest of this lesson opens it.
+              since the `Provider` trait in [chapter 10](lesson:traits-03); the rest of this
+              lesson opens it.
           - lines: 73
             token: "Send + Sync + std::fmt::Debug"
             kind: type
             body: |
-              Supertraits: every implementation must be `Send` (may be moved to another thread),
+              Supertraits: every implementation must be [`Send`](glossary:send) (may be moved to another thread),
               `Sync` (may be *shared* between threads through `&`) and printable with `{:?}`.
               `Arc<dyn Accounts>` is shared by tasks on a multi-thread runtime, which needs
               exactly `Send + Sync`.
@@ -591,8 +593,9 @@ lessons:
           method must have **one** signature that every implementation shares. But each
           `async fn` returns its own compiler-generated future type, with its own size, and that
           type differs from implementation to implementation. Recent Rust (1.75 and later)
-          does allow `async fn` directly in traits, but such a trait is **not dyn-compatible**
-          (not usable as `dyn Trait`) for exactly this reason.
+          does allow `async fn` directly in traits, but such a trait is [**not dyn-compatible**](glossary:object-safety)
+          (not usable as `dyn Trait`) for exactly this reason — the last of the object-safety
+          rules listed in [chapter 10](lesson:traits-04).
 
           The standard way out is to return one fixed type for every implementation: a
           heap-allocated future behind a trait object.
@@ -613,7 +616,10 @@ lessons:
           - `Pin<…>`: a promise that the future will not be moved in memory once it has
             started. Futures produced by `async` code may point into themselves, so they must
             stay put. **Black box for now:** read `Pin<Box<dyn Future …>>` as "a heap-allocated
-            future of some type"; you do not need more to read Ono-Sendai.
+            future of some type"; you do not need more to read Ono-Sendai. The related marker
+            trait `Unpin`, which you may meet as a bound on I/O types (`R: AsyncRead + Unpin`),
+            marks types that are safe to move even after being pinned; read such a bound as a
+            technical requirement of the async I/O API, not as a design statement.
 
           `#[async_trait]` writes this for you. Roughly, `async fn user(&self, uid: u32) ->
           Option<UserAccount>` becomes
@@ -627,7 +633,7 @@ lessons:
           and the body becomes `Box::pin(async move { … })`. That expansion is illustrative (the
           exact generated names are the macro's business), but its shape is what you are
           reading whenever you see the attribute — including on the `Provider` trait of
-          [chapter 19](chapter:provider-boundary).
+          [chapter 19](lesson:provider-boundary-01).
       - type: code
         snippet: c16-command-impl-async
         caption: |
@@ -687,7 +693,7 @@ lessons:
 
           For `Accounts`, the doc comment names the reason for a trait at all: "so a test can
           state exactly which accounts exist — and so a lookup that never returns can be
-          exercised without a directory server." [Chapter 19](chapter:provider-boundary) reads
+          exercised without a directory server." [Chapter 19](lesson:provider-boundary-03) reads
           such a test double.
       - type: exercise
         id: async-03-q1
@@ -803,7 +809,7 @@ lessons:
             borrow: while it exists, no other access to `invocation` compiles.
           interpretation: |
             This is why the host awaits the future right away (`table.run(…).await`, seen in
-            [chapter 18](chapter:execution-path)) rather than storing it: the invocation is
+            [chapter 18](lesson:execution-path-02)) rather than storing it: the invocation is
             locked until the command has answered.
   - id: async-04
     title: "Where async starts: a lazy runtime, `block_on`, and blocking work"
@@ -824,7 +830,7 @@ lessons:
         body: |
           `fn main` in `crates/ono-cli/src/main.rs` is synchronous, and so are the REPL loop,
           the parser and the evaluator. Async code needs an *executor* to poll it. In
-          Ono-Sendai that executor is a Tokio multi-thread runtime that the `Session` builds the
+          Ono-Sendai that executor is [a Tokio multi-thread runtime](glossary:tokio-runtime) that the `Session` builds the
           first time a native pipeline or the provider registry needs it. From then on, the
           synchronous evaluator enters async code with `block_on`. This lesson reads that
           bridge, and one place where async code hands *blocking* work to a separate pool of
@@ -852,7 +858,7 @@ lessons:
             token: "runtime.block_on(crate::providers::register_async(&mut registry));"
             kind: flow
             body: |
-              The bridge. `block_on` runs the future on **this** thread until it completes,
+              The bridge. [`block_on`](glossary:block-on) runs the future on **this** thread until it completes,
               blocking the thread meanwhile. The evaluator waits here; while it waits, the
               future may use the runtime (timers, I/O, spawned tasks).
       - type: prose
@@ -867,7 +873,7 @@ lessons:
             ([next chapter](chapter:tasks-channels)). A multi-thread runtime may poll a task on
             one worker, pause it at an `.await`, and resume it on another — which is why
             spawned futures must be `Send`.
-          - **The blocking pool.** `tokio::task::spawn_blocking(f)` runs an ordinary closure on
+          - **The blocking pool.** [`tokio::task::spawn_blocking(f)`](glossary:spawn-blocking) runs an ordinary closure on
             a separate set of threads reserved for code that blocks (waits inside a system call
             without yielding). Running such code on a worker would stall every task scheduled
             on that worker.

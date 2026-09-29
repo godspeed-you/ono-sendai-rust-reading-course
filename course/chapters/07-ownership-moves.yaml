@@ -42,16 +42,16 @@ lessons:
         body: |
           Rust's ownership model, in the form this chapter uses it:
 
-          1. Every value has exactly one **owner**, a variable, a struct field, or a
+          1. Every value has exactly one [**owner**](glossary:ownership), a variable, a struct field, or a
              function parameter.
-          2. When the owner goes out of scope, the value is **dropped**.
+          2. When the owner goes out of scope, the value is [**dropped**](glossary:drop).
           3. Assigning the value, passing it as an argument by value, or storing it in a
-             struct **moves** ownership. After a move, the old name cannot be used; the
+             struct [**moves**](glossary:move) ownership. After a move, the old name cannot be used; the
              compiler rejects any later use.
 
           A move copies only the value's own bytes. For a `Vec`, those are a pointer, a length
           and a capacity, never the elements on the heap. `Copy` types are the exception to
-          rule 3; lesson 3 covers them.
+          rule 3; [lesson 3](lesson:ownership-moves-03) covers them.
       - type: code
         snippet: c07-record-builder
         caption: |
@@ -62,7 +62,7 @@ lessons:
             kind: ownership
             body: |
               Neither parameter has a `&`. Both are taken **by value**: the caller gives them up.
-              That `Arc<Schema>` is a shared handle (chapter 15) does not change anything here; the
+              That `Arc<Schema>` is a shared handle ([chapter 15](lesson:smart-pointers-01)) does not change anything here; the
               handle itself is moved like any other value.
           - lines: 136
             token: "schema.field_count()"
@@ -190,7 +190,7 @@ lessons:
           and the example keeps its own. That is also why records store an `Arc<Schema>`: the
           module doc says the `Arc` keeps a record "as cheap to clone as spec §34 needs it to
           be", and every record of `ono.process/1` can share one schema.
-          [Chapter 15](concept:shared-ownership) covers `Arc` properly.
+          [Chapter 15](lesson:smart-pointers-01) covers `Arc` properly.
 
   - id: ownership-moves-02
     title: Methods that consume self
@@ -325,7 +325,7 @@ lessons:
             body: |
               `match self` on an owned `self` lets a pattern such as `Self::NotFound(error)` move
               the payload into `error`. `Option::expect` takes its `Option` by value and returns
-              the `Some` content. `let (status, error) = ...` then destructures the tuple.
+              the `Some` content. `let (status, error) = ...` then [destructures](glossary:destructuring) the tuple.
         solution: |
           1. `resolve` builds an `Error` and moves it into the `NotFound` variant. The
              `Resolution` is returned and moved into `missing`.
@@ -364,18 +364,18 @@ lessons:
         kind: rust
         title: Copy and Clone, precisely
         body: |
-          - **`Copy`** is a marker trait. If a type is `Copy`, assigning it or passing it by value
+          - [**`Copy`**](glossary:copy) is a marker trait. If a type is `Copy`, assigning it or passing it by value
             *copies* its bytes and leaves the original usable, so no move happens. A type can be
             `Copy` only if all its fields are `Copy` and it has no custom `Drop` behaviour.
             Integers, `bool`, `char`, `f64`, shared references `&T`, and tuples and `Option`s of
             `Copy` types are all `Copy`. `String`, `Vec`, `Box` and `Arc` are not.
-          - **`Clone`** is an ordinary trait with one method, `.clone()`, that returns a new
+          - [**`Clone`**](glossary:clone) is an ordinary trait with one method, `.clone()`, that returns a new
             owned value. It is always written explicitly, and it can do anything from copying a
             byte to duplicating a large tree on the heap. What it costs depends on the type.
             Every `Copy` type is also `Clone`.
 
-          Both are usually obtained with `#[derive(...)]`, so the derive line is the first
-          place to look ([chapter 14](concept:derives) explains derives in depth).
+          Both are usually obtained with [`#[derive(...)]`](glossary:derive), so the derive line is the first
+          place to look ([chapter 14](lesson:derives-macros-01) explains derives in depth).
       - type: code
         snippet: c07-span-copy
         caption: |
@@ -384,7 +384,7 @@ lessons:
         snippet: c07-value-clone
         caption: |
           `crates/ono-value/src/value.rs`: a type that is `Clone` but not `Copy`. You read the
-          whole enum in chapter 4; only the doc, the derive and the last variants are shown.
+          whole enum in [chapter 4](lesson:enums-matching-02); only the doc, the derive and the last variants are shown.
         annotations:
           - lines: 19-21
             kind: ono
@@ -435,7 +435,7 @@ lessons:
           and free on zero). A bitwise copy would skip both.
 
           `Value` is still **cheap to clone**, by design. Cloning an `Arc` does not copy what it
-          points to; it adds one to a reference count. Cloning a scalar variant such as `Int` or
+          points to; it adds one to a [reference count](glossary:reference-counting). Cloning a scalar variant such as `Int` or
           `Bool` copies a few bytes. So `value.clone()`, which you saw in `RecordValue::access`,
           costs about the same whether the value is a number or a record with a hundred fields.
           The course's rule: a clone costs whatever that type's `Clone` does. Read the type
@@ -444,7 +444,7 @@ lessons:
         snippet: c07-field-access-require
         caption: |
           `crates/ono-value/src/record.rs`: the stricter sibling of `FieldAccess::into_value` from
-          chapter 5.
+          [chapter 5](lesson:option-02).
       - type: exercise
         id: ownership-moves-03-q2
         exercise_type: identify-abstraction
@@ -538,7 +538,7 @@ lessons:
 
           `prepare_stage` does this for one stage. It receives the stage's `Command` and the
           pipe ends connecting it to its neighbours. `OwnedFd` is the standard library's owned
-          file descriptor, and dropping an `OwnedFd` **closes** the descriptor. Here, ownership
+          file descriptor, and [dropping](glossary:drop) an `OwnedFd` **closes** the descriptor. Here, ownership
           is about open files as much as about memory.
       - type: code
         snippet: c07-prepare-stage
@@ -691,7 +691,7 @@ lessons:
               it not hold?
           - level: 2
             body: |
-              Compare `unwrap_or(value)` with `ok_or_else(closure)` from chapter 6. When is each
+              Compare `unwrap_or(value)` with `ok_or_else(closure)` from [chapter 6](lesson:result-errors-03). When is each
               argument evaluated?
         solution: |
           **Owned data.** A struct without a lifetime parameter cannot hold references at all:
@@ -700,7 +700,7 @@ lessons:
           spawn them, without the compiler having to prove that the pipeline's commands outlive
           that vector. The cost is one real copy of the argument strings and the directory per
           stage, which is small next to starting a process. (Why a struct holding a borrow would
-          need a lifetime parameter is [chapter 8](concept:lifetimes).) This is a reading of the
+          need a lifetime parameter is [chapter 8](lesson:borrowing-03).) This is a reading of the
           types, not a documented rationale; the code does not state it.
 
           **The eager fallback.** `unwrap_or((...))` takes an already-built value, so Rust

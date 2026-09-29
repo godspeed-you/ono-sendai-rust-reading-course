@@ -50,7 +50,7 @@ lessons:
             token: "pub enum ErrorKind {"
             kind: rust
             body: |
-              `enum` declares a type whose value is **exactly one** of the variants listed between
+              [`enum`](glossary:enum) declares a type whose value is **exactly one** of the variants listed between
               the braces. A value of type `ErrorKind` is `Resolution`, or `Permission`, or … — never
               two at once, never something else.
           - lines: 19
@@ -71,13 +71,13 @@ lessons:
             kind: type
             body: |
               The result is text that lives for the whole run of the program — string literals such
-              as `"resolution"` are stored in the binary, and `'static` says so. Chapter 8 explains
+              as `"resolution"` are stored in the binary, and `'static` says so. [Chapter 8](lesson:borrowing-01) explains
               the `'static` notation; read it as "a fixed piece of text".
           - lines: 67
             token: "match self {"
             kind: flow
             body: |
-              `self` is an `ErrorKind` (a copy — the type is `Copy`). The `match` picks the arm
+              `self` is an `ErrorKind` (a copy — the type is `Copy`). The [`match`](glossary:pattern-matching) picks the arm
               whose pattern equals it and produces that arm's value. The `match` is the last
               expression, so its value is returned.
           - lines: 68
@@ -111,9 +111,9 @@ lessons:
         body: |
           Right after `ErrorKind`, the file defines `ErrorCode`, with more than a hundred
           variants — but you will not find them written out as an `enum` block. A macro
-          (`macro_rules! error_codes`) generates the enum and its `match` expressions from one
+          ([`macro_rules! error_codes`](glossary:macro)) generates the enum and its `match` expressions from one
           list, "so the three can never drift apart". Read `ErrorCode` as an ordinary enum of
-          unit variants with methods `code()`, `name()` and `kind()`. Chapter 14 reads the macro.
+          unit variants with methods `code()`, `name()` and `kind()`. [Chapter 14](lesson:derives-macros-02) reads the macro.
       - type: exercise
         id: enums-matching-01-q1
         exercise_type: multiple-choice
@@ -201,7 +201,7 @@ lessons:
       - type: prose
         kind: context
         body: |
-          `Value` in `crates/ono-value/src/value.rs` is the type everything else in the course
+          [`Value`](glossary:value) in `crates/ono-value/src/value.rs` is the type everything else in the course
           builds on. Its doc comment calls it "a value flowing through a pipeline". When you type
           `get process | where cpu > 20`, every field of every process record is a `Value`, and
           so is the comparison's result. `ono-value`'s crate doc says this crate "is what makes
@@ -218,7 +218,7 @@ lessons:
               "Every compound case sits behind an `Arc`, so cloning a value is a refcount bump
               whatever it holds." The reason follows in the same comment: spec §34 budgets a
               pipeline stage in microseconds, "and a value model that copies its payload cannot
-              meet that". `Arc` is chapter 15 — for now, read `Arc<X>` as "a shared X".
+              meet that". `Arc` is [chapter 15](lesson:smart-pointers-01) — for now, read `Arc<X>` as "a shared X".
           - lines: 38
             token: "Default"
             kind: rust
@@ -262,7 +262,7 @@ lessons:
             kind: type
             body: |
               Semantic types get their own variants: a port is not just an integer, it is a `u16`
-              with its own meaning. `Duration`, `ByteSize` and `Percent` (lines 60–64, chapter 2's
+              with its own meaning. `Duration`, `ByteSize` and `Percent` (lines 60–64, [chapter 2](lesson:functions-types-02)'s
               unit types) work the same way.
           - lines: 76
             token: "List(Arc<[Value]>),"
@@ -277,7 +277,7 @@ lessons:
             kind: ono
             body: |
               "A structured error carried as data." Errors are values too, so a failure can travel
-              down a pipeline like any other value. Chapter 6 follows that path.
+              down a pipeline like any other value. [Chapter 6](lesson:result-errors-01) follows that path.
       - type: code
         snippet: c04-value-methods
         caption: |
@@ -422,7 +422,7 @@ lessons:
       - type: prose
         kind: context
         body: |
-          The parser from chapter 3 produces a syntax tree. At its top is a list of statements, and
+          The parser from [chapter 3](lesson:structs-methods-04) produces a syntax tree. At its top is a list of statements, and
           each statement is one `Statement` — an enum in `crates/ono-parser/src/ast.rs`. The
           module doc of `ast.rs` explains an important property: "The tree is total: a construct
           the parser could not read becomes an explicit error node rather than a missing branch,
@@ -480,7 +480,7 @@ lessons:
             token: "Statement::Break(span) | Statement::Continue(span) | Statement::Error(span)"
             kind: rust
             body: |
-              An **or-pattern**: `|` joins three alternatives that share one arm. Each alternative
+              An [**or-pattern**](glossary:pattern-matching): `|` joins three alternatives that share one arm. Each alternative
               binds the same name, `span`, with the same type — a rule the compiler enforces — so
               the arm can use `span` whichever variant matched.
           - lines: 136
@@ -496,7 +496,7 @@ lessons:
             kind: type
             body: |
               Black box for now: `Option<&Pipeline>` means "maybe a reference to a `Pipeline`".
-              `Some(pipeline)` is the "yes, here it is" case, `None` the "no" case. Chapter 5 is
+              `Some(pipeline)` is the "yes, here it is" case, `None` the "no" case. [Chapter 5](chapter:option) is
               entirely about `Option`.
           - lines: 147
             token: "_ => None,"
@@ -513,7 +513,7 @@ lessons:
           taken out: `node` in line 127 points at the pipeline inside the statement. This is why
           `span()` and `as_pipeline()` can use `&self`. You will see the other case — matching a
           value you own, which lets the pattern take its parts — in the test below and, in depth,
-          in chapter 7.
+          in [chapter 7](lesson:ownership-moves-02).
       - type: prose
         kind: context
         title: The same enum, seen from a test
@@ -548,7 +548,7 @@ lessons:
             token: "let Statement::Let(binding) = only("
             kind: rust
             body: |
-              **`let … else`**: a `let` whose left side is a pattern that might not match. If the
+              [**`let … else`**](glossary:let-else): a `let` whose left side is a pattern that might not match. If the
               value is a `Statement::Let`, its `LetStmt` payload is bound to `binding` and the
               function continues. Otherwise the `else` block runs. Because `only` returned an
               owned `Statement`, `binding` is the `LetStmt` itself, not a reference.
@@ -677,7 +677,7 @@ lessons:
             token: "fd: Fd,"
             kind: type
             body: |
-              The `Fd` newtype from chapter 3: which descriptor is being redirected.
+              The `Fd` newtype from [chapter 3](lesson:structs-methods-03): which descriptor is being redirected.
           - lines: 63
             token: "path: PathBuf,"
             kind: type
@@ -709,7 +709,7 @@ lessons:
             kind: rust
             body: |
               A pattern for a struct-like variant names the fields it wants: `fd` binds the field
-              `fd` (shorthand for `fd: fd`). `..` means "and the remaining fields, which I do not
+              `fd` (shorthand for `fd: fd`). [`..`](glossary:destructuring) means "and the remaining fields, which I do not
               need" — here `path`, or `from` for `Duplicate`.
           - lines: 145-147
             kind: rust
@@ -726,7 +726,7 @@ lessons:
 
           `Redirect::Duplicate { fd, from } => write!(f, " {fd}>&{from}")?,`
 
-          You will read that `match` in the first exercise. As in chapter 2, read `write!(f, …)?`
+          You will read that `match` in the first exercise. As in [chapter 2](lesson:functions-types-03), read `write!(f, …)?`
           as "append this text to the output".
       - type: prose
         kind: context
@@ -809,13 +809,13 @@ lessons:
             kind: rust
             body: |
               `eprintln!` prints to standard **error**. `{message}` inserts the bound variable.
-              `ono_core::SHORT_NAME` is the constant `"ono"` from chapter 1.
+              `ono_core::SHORT_NAME` is the constant `"ono"` from [chapter 1](lesson:reading-rust-01).
           - lines: 32
             token: "ExitStatus::USAGE"
             kind: ono
             body: |
               Status 2, "the command line could not be understood" — the Bourne-family value from
-              chapter 2, so scripts calling `ono` can tell a usage error from a failure.
+              [chapter 2](lesson:functions-types-01), so scripts calling `ono` can tell a usage error from a failure.
       - type: exercise
         id: enums-matching-04-q1
         exercise_type: predict

@@ -46,7 +46,7 @@ lessons:
             token: "Option<u8>"
             kind: type
             body: |
-              The return type is `Option<u8>`. `Option` is a generic enum from the standard
+              The return type is `Option<u8>`. [`Option`](glossary:option) is a generic enum from the standard
               library with exactly two variants: `Some(u8)` carries a value and `None` carries
               nothing. You can read the signature as "returns a `u8`, or nothing". Because
               `Option` is in every Rust file's prelude, it needs no `use`.
@@ -190,8 +190,8 @@ lessons:
         title: Where we are
         body: |
           `ono-value` is the crate that, in its own words, "makes Ono an object shell rather
-          than a text shell". Providers produce `RecordValue`s: a process, a user, a file.
-          Each record is bound to a `Schema` that declares its fields. `get process` gives you
+          than a text shell". Providers produce [`RecordValue`s](glossary:record): a process, a user, a file.
+          Each record is bound to a [`Schema`](glossary:schema) that declares its fields. `get process` gives you
           records with fields such as `pid`, `cpu` and `memory`.
 
           Reading a field sounds like a lookup that either finds something or does not. The
@@ -236,7 +236,7 @@ lessons:
             token: "pub enum FieldAccess"
             kind: rust
             body: |
-              An ordinary enum (chapter 4), used where a less careful design would return
+              An ordinary enum ([chapter 4](lesson:enums-matching-01)), used where a less careful design would return
               `Option<Value>`. It is the *result* of a field read, not something stored inside
               records.
           - lines: 23
@@ -256,19 +256,19 @@ lessons:
             kind: type
             body: |
               The normal case: the field exists and holds this `Value` (the central enum from
-              chapter 4).
+              [chapter 4](lesson:enums-matching-02)).
           - lines: 29
             token: "Failed(Arc<ErrorValue>)"
             kind: type
             body: |
               The field exists, but reading it failed, and the variant carries the structured
               error explaining why. For now, read `Arc<ErrorValue>` as "a shared handle to an
-              error value". [Chapter 15](concept:shared-ownership) explains `Arc` properly.
+              error value". [Chapter 15](lesson:smart-pointers-01) explains `Arc` properly.
           - lines: 56
             token: "into_value(self) -> Option<Value>"
             kind: ownership
             body: |
-              `self` by value: the method consumes the `FieldAccess` and hands its contents
+              `self` by value: the method consumes the [`FieldAccess`](glossary:field-access) and hands its contents
               over, so nothing is copied. The `into_` prefix is the Rust naming convention for
               "consumes the receiver" ([chapter 7](lesson:ownership-moves-02)).
           - lines: 58
@@ -321,7 +321,7 @@ lessons:
             kind: rust
             body: |
               Treat lines 474–475 as a black box for now: they walk over the schema's fields and
-              build one small map per field. [Chapter 12](concept:closures) teaches the `|field|`
+              build one small map per field. [Chapter 12](lesson:iterators-closures-03) teaches the `|field|`
               closure syntax.
           - lines: 478-479
             kind: ono
@@ -395,7 +395,7 @@ lessons:
           `None`, then `absent == unknown` and every assertion would fail. The test is written
           from the outside of the crate (it lives in `tests/`), so it documents the public
           promise: whatever changes inside `ono-value`, these three outcomes stay
-          distinguishable. [Chapter 19](concept:testing) returns to reading tests as
+          distinguishable. [Chapter 19](lesson:provider-boundary-03) returns to reading tests as
           documentation.
 
   - id: option-03
@@ -430,7 +430,7 @@ lessons:
             body: |
               "Maybe a borrowed `Value`". When the field exists, you get a reference into the
               record, not a copy. When it does not, you get `None`.
-              [Chapter 8](concept:borrowing) covers references in depth.
+              [Chapter 8](lesson:borrowing-01) covers references in depth.
           - lines: 180
             token: "self.schema.position_of(name)"
             kind: type
@@ -480,7 +480,7 @@ lessons:
             token: "if !self.declares_error(name)"
             kind: rust
             body: |
-              A **match guard**. The arm matches only if the pattern fits *and* the condition is
+              A [**match guard**](glossary:match-guard). The arm matches only if the pattern fits *and* the condition is
               true. `error` is bound as `&Arc<ErrorValue>`, a reference to the handle inside the
               record.
           - lines: 197
@@ -604,7 +604,7 @@ lessons:
         kind: context
         title: Where we are
         body: |
-          `ErrorValue` is Ono-Sendai's structured error: "exactly the record of spec §16.1",
+          [`ErrorValue`](glossary:error-value) is Ono-Sendai's structured error: "exactly the record of spec §16.1",
           carried as data (it is also the `Value::Error` variant you just saw). Several of its
           parts are optional. An error need not be *about* a particular thing, need not have a
           cause, need not come with a help line. Whether a retry could help may simply not be
@@ -663,7 +663,7 @@ lessons:
         title: The question mark on an Option
         body: |
           Code that calls several functions returning `Option` would quickly become a staircase of
-          `match`es. The `?` operator removes that. Written after an expression of type
+          `match`es. [The `?` operator](glossary:question-mark-operator) removes that. Written after an expression of type
           `Option<T>`, it means:
 
           - if the value is `Some(x)`, the whole expression evaluates to `x` and execution
@@ -690,7 +690,7 @@ lessons:
             body: |
               Maybe a pair of borrowed string slices, the number part and the unit part. Both
               point into the caller's `text`, so nothing is copied. How Rust knows they come from
-              `text` is a [chapter 8](concept:lifetimes) topic; for now, trust that they do.
+              `text` is a [chapter 8](lesson:borrowing-01) topic; for now, trust that they do.
           - lines: 591
             token: "?"
             kind: flow

@@ -16,7 +16,7 @@ lessons:
     title: "Derives: trait implementations you do not see"
     stage: practice
     summary: Read a derive list as a list of generated trait impls, and notice which derives are missing and why.
-    prerequisites: [conversions-04]
+    prerequisites: [conversions-04, reading-rust-03, ownership-moves-03]
     concepts: [derives, attributes, traits, enums]
     ono_topics: [providers, value-model]
     objectives:
@@ -50,7 +50,7 @@ lessons:
           - lines: 28
             kind: rust
             body: |
-              `#[must_use]`: the compiler warns if a caller ignores the result. Ono-Sendai puts it
+              [`#[must_use]`](glossary:attribute): the compiler warns if a caller ignores the result. Ono-Sendai puts it
               on almost every getter and constructor.
           - lines: 40-42
             kind: rust
@@ -65,7 +65,7 @@ lessons:
         kind: rust
         title: What does this Rust mean?
         body: |
-          `#[derive(Trait)]` asks the compiler (or, for traits from other crates, a procedural
+          [`#[derive(Trait)]`](glossary:derive) asks the compiler (or, for traits from other crates, a procedural
           macro) to write `impl Trait for Type` field by field or variant by variant. The derived
           code is what you would write by hand in the obvious way: `Clone` clones every field,
           `PartialEq` compares every field, `Ord` on an enum compares variants by their position
@@ -89,8 +89,9 @@ lessons:
       - type: code
         snippet: c14-value-derive-default
         caption: |
-          The start of the central `Value` enum (you will read all of it in
-          [chapter 15](chapter:smart-pointers)).
+          The start of the central `Value` enum, which you read in full in
+          [chapter 4](lesson:enums-matching-02); [chapter 15](lesson:smart-pointers-01) returns
+          to its `Arc` payloads.
         annotations:
           - lines: 38
             kind: rust
@@ -235,7 +236,7 @@ lessons:
         kind: rust
         title: How to read a declarative macro
         body: |
-          A `macro_rules!` macro is a set of rules `(matcher) => { transcriber }`. At compile time
+          A [`macro_rules!`](glossary:macro) macro is a set of rules `(matcher) => { transcriber }`. At compile time
           the compiler matches the invocation's tokens against the matchers and replaces the
           invocation with the transcriber, substituting the captured fragments. The result is
           ordinary Rust, type-checked like any other.
@@ -411,7 +412,7 @@ lessons:
             token: "Serialize, Deserialize"
             kind: crate
             body: |
-              Serde's derives generate code that writes the struct as a map of field names to
+              [Serde](glossary:serde)'s derives generate code that writes the struct as a map of field names to
               values, and reads it back. Field types must themselves be serializable: `String`,
               `PathBuf`, `jiff::Timestamp` and `Option`/`Vec` of such types all are.
           - lines: 23-24
@@ -629,7 +630,7 @@ lessons:
           - lines: 46
             kind: rust
             body: |
-              `OnceLock<T>` is a cell that can be set once, safely from any thread. As a `static`
+              [`OnceLock<T>`](glossary:oncelock) is a cell that can be set once, safely from any thread. As a `static`
               it is shared by the whole program.
           - lines: 90
             kind: flow
@@ -661,7 +662,7 @@ lessons:
           - lines: 110
             kind: rust
             body: |
-              `#[cfg(feature = "temporal")]`: this function exists only in builds with the
+              [`#[cfg(feature = "temporal")]`](glossary:conditional-compilation): this function exists only in builds with the
               `temporal` Cargo feature.
           - lines: 114
             kind: ownership

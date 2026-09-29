@@ -68,7 +68,7 @@ lessons:
         kind: rust
         title: What does this Rust mean?
         body: |
-          An iterator is a value with a `next()` method that returns `Option<Item>`: `Some(item)`
+          An [iterator](glossary:iterator) is a value with a `next()` method that returns `Option<Item>`: `Some(item)`
           while there are items, `None` at the end. Everything else is built on that one method.
 
           Read a chain in three parts:
@@ -79,12 +79,12 @@ lessons:
           | adapters | `.copied()` | wrap the iterator in another iterator that transforms, filters or combines items |
           | consumer | `.find(…)` | calls `next()` until it has its answer |
 
-          Adapters are **lazy**. `.copied()` does no work when it is called; it only returns a new
+          [Adapters](glossary:iterator-adapter) are **lazy**. `.copied()` does no work when it is called; it only returns a new
           iterator that will copy each item *when asked*. Nothing happens until a consumer such as
           `find`, `collect`, `all`, `any`, `count` or a `for` loop starts pulling. That is also why
           `find` can stop early: once it has found `MiB` it never asks for `GiB`.
 
-          The `|unit| …` syntax is a **closure**, an anonymous function. For now read it as "a
+          The `|unit| …` syntax is a [**closure**](glossary:closure), an anonymous function. For now read it as "a
           function of `unit`" that may use variables from around it. [Lesson 3](lesson:iterators-closures-03)
           looks closely at how closures capture.
       - type: prose
@@ -316,7 +316,7 @@ lessons:
         title: Comparing data, not readings
         body: |
           Two readings of the same unchanged process differ in one thing: the instant each was
-          observed, recorded in the record's provenance. Ordinary `==` on a record compares
+          observed, recorded in the record's [provenance](glossary:provenance). Ordinary `==` on a record compares
           provenance too. `diff` and `watch` need a different question — "did the *data*
           change?" — and `Value::same_data` answers it (ADR-0229, "a diff compares objects, not
           readings"). For lists and maps it walks the elements and asks the same question of
@@ -394,7 +394,7 @@ lessons:
             kind: ownership
             body: |
               `bindings()` returns an **owned** `Vec<EnvBinding>` (a clone of what the provider
-              holds, taken under a lock — see [chapter 15](chapter:smart-pointers)).
+              holds, taken under a lock — see [chapter 15](lesson:smart-pointers-02)).
               `into_iter()` consumes that vector and yields owned `EnvBinding`s, which the chain
               can move straight into the result.
           - lines: 154-155
@@ -601,7 +601,7 @@ lessons:
           - moves it (or is marked `move`) → takes ownership of it.
 
           A closure that captures references cannot outlive the variables it borrows. Writing
-          `move |…| …` forces every capture to be taken by value, which is how a closure is made
+          [`move |…| …`](glossary:move-closure) forces every capture to be taken by value, which is how a closure is made
           self-contained enough to be stored, sent to another task, or kept after the function
           that built it has returned.
 
@@ -897,7 +897,7 @@ lessons:
           - lines: 110-111
             kind: type
             body: |
-              Implementing `Iterator` means naming the item type (an **associated type**) and
+              Implementing `Iterator` means naming the item type (an [**associated type**](glossary:associated-type)) and
               writing `next`. `Attribute<'a>` holds a `payload: &'a [u8]`: every item borrows from
               the *original buffer*, not from the iterator, so an item may outlive the iterator
               that produced it.

@@ -21,7 +21,7 @@ summary: |
     exchange values through mutable borrows without cloning.
 
   This chapter builds on [borrowing](chapter:borrowing). Mutation *behind a shared reference*
-  (`Mutex`, atomics) is a different mechanism and waits for [chapter 15](chapter:smart-pointers).
+  (`Mutex`, atomics) is a different mechanism and waits for [chapter 15](lesson:smart-pointers-02).
 lessons:
   - id: mutability-01
     title: "Two ways to change a table: `mut self` and `&mut self`"
@@ -64,7 +64,7 @@ lessons:
             token: "&mut self, mut cells"
             kind: rust
             body: |
-              `&mut self` is an **exclusive borrow**: the caller keeps ownership, and the method
+              `&mut self` is an [**exclusive borrow**](glossary:mutable-reference): the caller keeps ownership, and the method
               may change the table. `mut cells` is different: the vector is moved in, and `mut`
               only makes this local binding changeable so that `resize` may be called on it. The
               caller cannot see that `mut`.
@@ -78,7 +78,8 @@ lessons:
         kind: rust
         title: A mutable binding versus a mutable borrow
         body: |
-          `mut` appears in two different roles:
+          `let mut` ([chapter 2](lesson:functions-types-04)) is only one of them. `mut` appears in
+          two different roles:
 
           | written | meaning | who owns the value |
           |---|---|---|
@@ -257,7 +258,7 @@ lessons:
             kind: ownership
             body: |
               `record` is an `Option<Vec<Token>>`. Matching on `&mut self.record` gives
-              `record: &mut Vec<Token>`, a mutable borrow of the vector **inside** the option, so
+              `record: &mut Vec<Token>`, a [mutable borrow](glossary:mutable-reference) of the vector **inside** the option, so
               `push` changes the parser's own vector. No vector is moved out.
           - lines: 61-62
             token: "&self"
@@ -472,7 +473,7 @@ lessons:
         kind: context
         title: Schemas are registered once and shared
         body: |
-          Every record carries a schema (for example `ono.process/1`). Providers declare the
+          Every record carries a [schema](glossary:schema) (for example `ono.process/1`). Providers declare the
           schemas they produce, and a `SchemaRegistry` (a `BTreeMap<SchemaId, Arc<Schema>>`)
           collects them. Its doc comment states the policy: "Registering the identical schema
           twice is accepted, so two independent providers may both declare a schema they share."
@@ -509,9 +510,9 @@ lessons:
         kind: black-box
         title: "`Arc` and `Arc::clone`"
         body: |
-          For this lesson, read `Arc<Schema>` as "a schema several owners share", and
+          For this lesson, read [`Arc<Schema>`](glossary:arc) as "a schema several owners share", and
           `Arc::clone(&handle)` as "one more handle to the same schema", which does not copy the
-          schema. [Chapter 15](chapter:smart-pointers) explains `Arc` properly.
+          schema. [Chapter 15](lesson:smart-pointers-01) explains `Arc` properly.
       - type: prose
         kind: rust
         title: Why the lines are in this order
@@ -700,6 +701,11 @@ lessons:
           `Vec` is a small header (pointer, length, capacity), so this exchanges two headers and
           touches no elements. The old `previous` contents do not need clearing, because every
           element of `current` is overwritten on the next pass.
+
+          `std::mem` has a third function of this family, which you will meet in code that empties
+          a buffer it reaches through `&mut self`: `std::mem::take(&mut slot)` returns the value in
+          `slot` and leaves the type's `Default` value (an empty `Vec`, `None`, `0`) behind. It is
+          `std::mem::replace(&mut slot, Default::default())` under a shorter name.
       - type: code
         snippet: c09-map-insert
         caption: "`ono-value/src/map.rs`. `entries` is a `Vec<(Arc<str>, Value)>`, kept in insertion order."

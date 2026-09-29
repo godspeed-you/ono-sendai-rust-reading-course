@@ -19,7 +19,7 @@ lessons:
     title: "`Arc`: cheap sharing of immutable data"
     stage: practice
     summary: Read why every compound `Value` sits behind an `Arc`, what `Arc::clone` costs, and how one struct literal moves, copies, shares and deep-clones its fields.
-    prerequisites: [derives-macros-04]
+    prerequisites: [derives-macros-04, ownership-moves-03, enums-matching-02]
     concepts: [smart-pointers, shared-ownership, copy-clone, ownership]
     ono_topics: [value-model, records-schemas, command-dispatch]
     objectives:
@@ -32,7 +32,7 @@ lessons:
         kind: context
         title: Where we are
         body: |
-          You met `Value` as an enum in [chapter 4](chapter:enums-matching). Now read its doc
+          You met `Value` as an enum in [chapter 4](lesson:enums-matching-02). Now read its doc
           comment and its payload types with ownership in mind.
       - type: code
         snippet: c15-value-arcs
@@ -67,11 +67,11 @@ lessons:
         kind: rust
         title: What does this Rust mean?
         body: |
-          `Arc<T>` ("atomically reference-counted") puts a `T` on the heap next to a counter.
+          [`Arc<T>`](glossary:arc) ("atomically reference-counted") puts a `T` on the heap next to a counter.
           Each `Arc` handle is a pointer to that allocation.
 
           - `Arc::new(t)` moves `t` into a new allocation with count 1.
-          - `Arc::clone(&a)` copies the pointer and **increments the count**. It does not copy
+          - `Arc::clone(&a)` copies the pointer and [**increments the count**](glossary:reference-counting). It does not copy
             `T`. It costs one atomic increment, regardless of how big `T` is.
           - Dropping a handle decrements the count; when it reaches zero, `T` is dropped and the
             memory freed.
@@ -84,7 +84,11 @@ lessons:
           `Rc` in its non-test code at all.
 
           So "cloning is expensive" is not a rule in Rust. Cloning a `Value` is cheap *by design*;
-          cloning a `Vec<String>` copies every string. You must look at the type.
+          cloning a `Vec<String>` copies every string. You must look at the type. This is the
+          mechanism behind two things you have taken on trust since chapter 7: a `Value`'s clone
+          is a refcount bump ([lesson ownership-moves-03](lesson:ownership-moves-03)), and
+          `Arc::clone(&schema)` makes a second handle to the same schema
+          ([lesson ownership-moves-01](lesson:ownership-moves-01)).
       - type: code
         snippet: c15-record-access
         annotations:
@@ -256,7 +260,7 @@ lessons:
     title: "Sharing is not synchronizing: `CancelToken` and the `env` provider"
     stage: practice
     summary: Read two shared objects that are mutated through `&self` — one with atomics, one with a `Mutex` — and separate what the `Arc` does from what the lock or atomic does.
-    prerequisites: [smart-pointers-01]
+    prerequisites: [smart-pointers-01, mutability-01]
     concepts: [shared-ownership, interior-mutability, send-sync, testing]
     ono_topics: [cancellation, providers, pipeline]
     objectives:
@@ -270,12 +274,12 @@ lessons:
         title: Where we are
         body: |
           When the user presses Ctrl-C, every stage of a native pipeline must stop. The
-          `CancelToken` doc: "Ctrl-C, a `try` block unwinding, or a consumer that has seen enough
+          [`CancelToken`](glossary:cancel-token) doc: "Ctrl-C, a `try` block unwinding, or a consumer that has seen enough
           all trip the same token, and every stage selects its channel against it. That is what
           makes a native pipeline stop at its next await rather than at the end of its current
           producer (spec §18.5)." Treat `Notify`, the `wake` field and the async `cancelled()`
           method (not shown) as black boxes here;
-          [chapter 17](lesson:tasks-channels-01) revisits the token from the async side.
+          [chapter 17](lesson:tasks-channels-02) revisits the token from the async side.
       - type: code
         snippet: c15-cancel-token
         annotations:
@@ -291,7 +295,7 @@ lessons:
           - lines: 29-36
             kind: type
             body: |
-              `AtomicBool` fields: booleans that can be read and written through a shared
+              [`AtomicBool`](glossary:atomic) fields: booleans that can be read and written through a shared
               reference, safely from several threads. This is the **synchronization** part.
           - lines: 47-50
             kind: rust
@@ -337,7 +341,16 @@ lessons:
           the others. Remove the atomics and `cancel(&self)` could not change anything. The two
           are independent, and the code needs both.
 
-          `Arc<T>` is `Send` and `Sync` only if `T` is `Send + Sync`; `Inner`'s fields
+          This refines two rules from earlier chapters rather than breaking them.
+          [Chapter 2](lesson:functions-types-04) said a binding without `mut` keeps its value, and
+          [chapter 9](lesson:mutability-01) that change through a borrow needs an exclusive
+          `&mut`. Both still hold for ordinary fields: `self.inner.cancelled = true` would not
+          compile through `&self`. What `AtomicBool`, `Mutex` and `Cell` add is **interior
+          mutability**: types whose own methods change their contents through `&self`, each with
+          its own rule that keeps that safe (an indivisible hardware operation, a lock, or —
+          for `Cell` — never being shared between threads).
+
+          `Arc<T>` is `Send` and [`Sync`](glossary:sync) only if `T` is `Send + Sync`; `Inner`'s fields
           (`AtomicBool`s and Tokio's `Notify`) all are, so the token can be shared across the
           runtime's threads. An `Arc` around a type that is not
           `Sync` could not be shared between threads at all — `Arc` never adds thread safety that
@@ -356,7 +369,7 @@ lessons:
             token: "Mutex<Vec<EnvBinding>>"
             kind: type
             body: |
-              A `std::sync::Mutex` around the bindings: interior mutability with a lock.
+              A [`std::sync::Mutex`](glossary:mutex) around the bindings: interior mutability with a lock.
           - lines: 114-118
             kind: rust
             body: |
@@ -570,9 +583,9 @@ lessons:
           readings. The process provider's `Reader` is described by its doc as "Everything reading
           one process needs, cheap enough to hand to a streaming task." It is cloned for every
           query, and its clones must remember CPU samples **together**, so that a second
-          `get process` can compute a rate against the first. (Chapter 19 reads this provider as a
+          `get process` can compute a rate against the first. ([Chapter 19](lesson:provider-boundary-02) reads this provider as a
           whole; here we look only at its sharing.) `Arc<dyn Clock>` is the injectable clock of
-          [chapter 10](chapter:traits).
+          [chapter 10](lesson:traits-01).
       - type: code
         snippet: c15-process-samples
         annotations:
@@ -604,7 +617,7 @@ lessons:
           - lines: 441-445
             kind: rust
             body: |
-              An edition-2024 **let chain**: `if let … && let … && cond && let …` runs the block
+              An edition-2024 [**let chain**](glossary:let-chain): `if let … && let … && cond && let …` runs the block
               only if every pattern matches and every condition holds, in order.
           - lines: 453
             kind: flow
@@ -784,7 +797,7 @@ lessons:
         kind: rust
         title: What does this Rust mean?
         body: |
-          `Box<T>` is the simplest smart pointer: **one owner**, value on the heap, freed when the
+          [`Box<T>`](glossary:box) is the simplest [smart pointer](glossary:smart-pointer): **one owner**, value on the heap, freed when the
           box is dropped. No counting and no sharing. In Ono-Sendai you meet it in three roles
           in this chapter (and a fourth, `Pin<Box<dyn Future>>`, in the next):
 
@@ -887,7 +900,7 @@ lessons:
         title: Why does Ono-Sendai do this?
         body: |
           The doc states the rule: "A redirection path is relative to the directory the command
-          will run in, as in a shell." `Cow` ("clone on write") lets the function return the
+          will run in, as in a shell." [`Cow`](glossary:cow) ("clone on write") lets the function return the
           common case — an absolute path, or no separate working directory — without allocating,
           and the uncommon case as an owned value, behind one type the caller does not need to
           inspect. `Cow` is rare in Ono-Sendai's own signatures (two functions name it at v0.6.2,

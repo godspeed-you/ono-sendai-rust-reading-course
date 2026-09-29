@@ -42,7 +42,7 @@ lessons:
             token: "Copy"
             kind: rust
             body: |
-              Among the derived abilities is `Copy`: an `ExitStatus` is duplicated by simply
+              Among the derived abilities is [`Copy`](glossary:copy): an `ExitStatus` is duplicated by simply
               copying its single byte. Keep this in mind for the methods below.
           - lines: 17
             token: "pub struct ExitStatus(u8);"
@@ -51,7 +51,7 @@ lessons:
               A **tuple struct**: a struct whose fields have no names, only positions. This one has
               a single field of type `u8`, an unsigned 8-bit integer (0 to 255) — exactly the
               range of a Unix exit status. A struct that wraps one value to give it a meaning is
-              called a **newtype**. The field is private: outside code cannot write
+              called a [**newtype**](glossary:newtype). The field is private: outside code cannot write
               `ExitStatus(42)` itself. It must use the named constants or the functions below
               (`from_code`, `from_signal`), so every status is created in one of the ways this
               file defines.
@@ -59,7 +59,7 @@ lessons:
             token: "impl ExitStatus {"
             kind: rust
             body: |
-              `impl ExitStatus { ... }` attaches constants and functions to the type. Chapter 3
+              `impl ExitStatus { ... }` attaches constants and functions to the type. [Chapter 3](lesson:structs-methods-01)
               looks at `impl` blocks in detail; for now, everything inside belongs to
               `ExitStatus`.
           - lines: 21
@@ -113,7 +113,7 @@ lessons:
             body: |
               A parameter called `self` makes this a **method**: it is called on a value,
               `status.code()`. Taking `self` (rather than `&self`, which you will meet in
-              chapter 3) means the method receives the value itself. Because `ExitStatus` is
+              [chapter 3](lesson:structs-methods-02)) means the method receives the value itself. Because `ExitStatus` is
               `Copy`, the method receives a copy and the caller's `status` stays usable.
           - lines: 51
             token: "self.0"
@@ -140,7 +140,7 @@ lessons:
           So `fn f() -> u8 { 7 }` returns 7, while `fn f() -> u8 { 7; }` does not compile: the body
           ends in a statement, its value is the empty value `()`, and `()` is not a `u8`. The
           keyword `return` exists, but idiomatic code uses it mainly to leave a function
-          **early**; you will see that in lesson 3.
+          **early**; you will see that in [lesson 3](lesson:functions-types-03).
       - type: prose
         kind: ono
         title: Why a u8 in a struct, and why saturate?
@@ -191,7 +191,7 @@ lessons:
               copying its bits. The original `status` is untouched and still usable.
           - text: "No, because `code(self)` takes ownership and `status` is gone"
             feedback: |
-              That would be true for a type that is **not** `Copy` — chapter 7 is about exactly
+              That would be true for a type that is **not** `Copy` — [chapter 7](lesson:ownership-moves-01) is about exactly
               that. `ExitStatus` derives `Copy` (line 16), so passing it by value copies it.
           - text: "Yes, because `code` only borrows `status`"
             feedback: |
@@ -240,7 +240,7 @@ lessons:
       - type: prose
         kind: context
         body: |
-          Chapter 1 quoted the README: in Ono-Sendai, a process's `memory` is "a quantity with a
+          [Chapter 1](lesson:reading-rust-01) quoted the README: in Ono-Sendai, a process's `memory` is "a quantity with a
           unit, not the string `3.21 GiB`". Those quantities live in
           `crates/ono-value/src/units.rs`. Its module doc explains the idea: "A unit-carrying value
           knows its dimension, so `512MiB > 1GiB` is a comparison and `10s + 512MiB` is an error.
@@ -264,8 +264,8 @@ lessons:
             token: "factor(self)"
             kind: rust
             body: |
-              A method on `ByteUnit`, which is an **enum**: a type whose value is one of a fixed
-              list of named variants (`B`, `KiB`, `MiB`, …). Chapter 4 is about enums; here you
+              A method on `ByteUnit`, which is an [**enum**](glossary:enum): a type whose value is one of a fixed
+              list of named variants (`B`, `KiB`, `MiB`, …). [Chapter 4](lesson:enums-matching-01) is about enums; here you
               only need to know that `self` is one of those units.
           - lines: 92
             token: "match self {"
@@ -305,7 +305,7 @@ lessons:
         snippet: c02-percent
         caption: |
           `Percent` and its first few methods. Lines 539–556 (`parse`, which can fail) are
-          omitted; failure is chapter 6.
+          omitted; failure is [chapter 6](chapter:result-errors).
         annotations:
           - lines: 515
             token: "PartialEq, PartialOrd, Default"
@@ -364,7 +364,7 @@ lessons:
         body: |
           Nothing on this page mutates anything. `plus` does not add to `self`; it returns a new
           value. In Rust, variables and parameters are **immutable unless declared otherwise**
-          (`let mut`, which you meet in lesson 4). Small value types like `Percent`, `ExitStatus`
+          (`let mut`, which you meet in [lesson 4](lesson:functions-types-04)). Small value types like `Percent`, `ExitStatus`
           and `ByteUnit` are therefore designed as values you combine into new values, much like
           numbers themselves.
       - type: exercise
@@ -450,7 +450,7 @@ lessons:
       - type: prose
         kind: context
         body: |
-          Back in `crates/ono-core/src/span.rs`. In chapter 1 you saw that a span is a pair of
+          Back in `crates/ono-core/src/span.rs`. In [chapter 1](lesson:reading-rust-03) you saw that a span is a pair of
           byte offsets and that `Span::new(4, 11).of("get process")` returns `"process"`. `of` is
           the function a diagnostic uses to print the text it complains about. Its doc comment
           sets a hard requirement.
@@ -468,10 +468,10 @@ lessons:
             token: "source: &str"
             kind: type
             body: |
-              `&str` is a **borrowed string slice**: a view of some text owned by somebody else.
+              `&str` is a [**borrowed string slice**](glossary:string-slice): a view of some text owned by somebody else.
               The function reads `source` without taking it over. It returns another `&str`, a
               view into the same text. How Rust knows the result points into `source` is a
-              lifetime question, answered in chapter 8.
+              lifetime question, answered in [chapter 8](lesson:borrowing-01).
           - lines: 86
             token: "let start = self.start as usize;"
             kind: rust
@@ -487,7 +487,7 @@ lessons:
             kind: flow
             body: |
               `||` is boolean "or". The condition is true if the span is backwards or if it ends
-              beyond the text. (`Span::new` already puts the two ends in order, as chapter 3
+              beyond the text. (`Span::new` already puts the two ends in order, as [chapter 3](lesson:structs-methods-01)
               shows, so the first half is a defensive check: `of` does not rely on it.) `source.len()` is the length of the text in **bytes**, a `usize` —
               which is why the offsets were cast to `usize` first: Rust does not compare a `u32`
               with a `usize` without an explicit conversion.
@@ -505,8 +505,8 @@ lessons:
               `start..end` is a **range**. `source.get(range)` asks for that part of the text and
               answers "here it is" or "there is none" — for example when the range would cut a
               multi-byte character in half. `.unwrap_or("")` takes the part if there is one and
-              `""` otherwise. The "maybe a value" type behind this is `Option`, the subject of
-              chapter 5. No semicolon: this is the returned value.
+              `""` otherwise. The "maybe a value" type behind this is [`Option`](glossary:option), the subject of
+              [chapter 5](chapter:option). No semicolon: this is the returned value.
       - type: prose
         kind: rust
         title: Two exits, one guarantee
@@ -528,7 +528,7 @@ lessons:
           "this is how a `Duration` is turned into text when it is printed". Inside, `write!(f,
           ...)` and `f.write_str(...)` append text to the output and report whether that worked;
           the `?` after `f.write_str("-")` on line 484 means "if writing failed, give up and pass
-          the failure on". Traits are chapter 10, `?` is chapter 6. Everything else in the
+          the failure on". Traits are [chapter 10](lesson:traits-01), `?` is [chapter 6](lesson:result-errors-03). Everything else in the
           snippet is ordinary arithmetic and control flow.
       - type: code
         snippet: c02-duration-display
@@ -716,20 +716,23 @@ lessons:
             kind: rust
             body: |
               `pub(crate)` means "public inside this crate only": the rest of `ono-render` may call
-              `shorten`, other crates may not. Chapter 3 compares all visibility levels.
+              `shorten`, other crates may not. [Chapter 3](lesson:structs-methods-03) compares all visibility levels.
           - lines: 715
             token: "-> String"
             kind: type
             body: |
-              The parameter `text: &str` is **borrowed** text; the result is a `String`, text the
+              The parameter `text: &str` is [**borrowed**](glossary:borrow) text; the result is a `String`, text the
               caller will **own**: a new piece of text that can grow. The function reads the input
               and builds a separate output.
           - lines: 716
             token: "text.width()"
             kind: crate
             body: |
-              `width()` comes from the external crate `unicode-width` (imported at the top of the
-              file): the number of terminal cells the text occupies. Read it as exactly that.
+              `width()` comes from the external crate `unicode-width`: it is a method of that
+              crate's trait `UnicodeWidthStr`, imported at the top of the file with
+              `use unicode_width::UnicodeWidthStr;`. It returns the number of terminal cells the
+              text occupies; read it as exactly that. ([Chapter 10](lesson:traits-01) explains why
+              such a method needs its `use` line.)
           - lines: 717
             token: "text.to_owned()"
             kind: ownership
@@ -779,7 +782,7 @@ lessons:
             body: |
               The cell width of one character. For a few characters (control characters) there is
               no defined width; `unwrap_or(0)` counts those as zero cells. The "maybe a value"
-              mechanism is chapter 5.
+              mechanism is [chapter 5](chapter:option).
           - lines: 735-736
             kind: flow
             body: |
@@ -796,7 +799,7 @@ lessons:
             kind: ownership
             body: |
               The last expression: the finished `String` is handed to the caller, who owns it from
-              now on. Chapter 7 explains what "handing over" means in Rust.
+              now on. [Chapter 7](lesson:ownership-moves-01) explains what "handing over" means in Rust.
       - type: prose
         kind: rust
         title: Immutable by default
@@ -805,8 +808,8 @@ lessons:
           scan: in `take_cells`, only `used` and `kept` change, and you can find every change by
           looking for them. Everything else — `text`, `width`, `cells`, `character` — is fixed once
           bound. This default is deliberate in Rust: a reader can assume that a binding without
-          `mut` keeps the value it was given. (This is a first approximation: chapter 9 adds
-          the full story, including `&mut`, and chapter 15 shows the few types that are built to
+          `mut` keeps the value it was given. (This is a first approximation: [chapter 9](lesson:mutability-01) adds
+          the full story, including `&mut`, and [chapter 15](lesson:smart-pointers-02) shows the few types that are built to
           be changed through a shared reference.)
       - type: exercise
         id: functions-types-04-q1

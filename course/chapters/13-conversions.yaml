@@ -60,7 +60,7 @@ lessons:
         kind: rust
         title: What does this Rust mean?
         body: |
-          `From<T>` is the standard trait for conversions that **always succeed**. The standard
+          [`From<T>`](glossary:from-into) is the standard trait for conversions that **always succeed**. The standard
           library contains a blanket impl: whenever `Y: From<X>`, then `X: Into<Y>`. So one impl
           gives two spellings:
 
@@ -78,7 +78,7 @@ lessons:
         kind: context
         title: The exit status at the process boundary
         body: |
-          `ExitStatus` (chapter 2) is a newtype over `u8` in `ono-core`, following the
+          `ExitStatus` ([chapter 2](lesson:functions-types-01)) is a newtype over `u8` in `ono-core`, following the
           Bourne-family conventions of ADR-0008. When the `ono` binary finishes, it must hand the
           operating system a `std::process::ExitCode`. `ono-core` implements that conversion
           itself.
@@ -203,7 +203,7 @@ lessons:
             reference-count increment, never a deep copy.
           interpretation: |
             This is the cheap-clone value model the `Value` doc describes ("cloning a value is a
-            refcount bump whatever it holds") — [chapter 15](chapter:smart-pointers) reads that
+            refcount bump whatever it holds") — [chapter 15](lesson:smart-pointers-01) reads that
             design in full.
       - type: exercise
         id: conversions-01-q3
@@ -287,13 +287,13 @@ lessons:
             token: "List(Box<DeclaredType>)"
             kind: type
             body: |
-              A variant that contains the enum itself. Without the `Box`, a `DeclaredType` would
+              A variant that contains the enum itself. Without the [`Box`](glossary:box), a `DeclaredType` would
               have to contain a whole `DeclaredType` inline — an infinitely large type. `Box` puts
               the inner value on the heap and stores only a pointer.
           - lines: 402
             kind: type
             body: |
-              `FromStr` has an **associated type** `Err`: each implementation chooses the error
+              `FromStr` has an [**associated type**](glossary:associated-type) `Err`: each implementation chooses the error
               its parse returns. Here it is the shell's structured `ErrorValue`.
           - lines: 405-407
             kind: flow
@@ -311,7 +311,7 @@ lessons:
         kind: rust
         title: What does this Rust mean?
         body: |
-          `FromStr` is the trait behind `str::parse`. Writing `"int".parse::<DeclaredType>()`, or
+          [`FromStr`](glossary:fromstr) is the trait behind `str::parse`. Writing `"int".parse::<DeclaredType>()`, or
           writing `let t: DeclaredType = text.parse()?;`, calls `DeclaredType::from_str`. The
           compiler chooses the implementation from the **requested type**, so the same `.parse()`
           call parses an integer in one place and a declared type in another.
@@ -510,7 +510,7 @@ lessons:
     title: "How `?` converts: `From<ErrorValue> for Flow`"
     stage: practice
     summary: Read the evaluator's `Flow` type, the one-line `From` impl every `?` relies on, and how loops catch only the jumps meant for them.
-    prerequisites: [conversions-02]
+    prerequisites: [conversions-02, result-errors-03]
     concepts: [question-mark, conversions, error-types, enums]
     ono_topics: [evaluation, error-flow]
     objectives:
@@ -557,7 +557,7 @@ lessons:
         kind: rust
         title: "What `?` does, exactly"
         body: |
-          [Chapter 6](chapter:result-errors) introduced `?` as "return early, converting the error
+          [Chapter 6](lesson:result-errors-03) introduced [`?`](glossary:question-mark-operator) as "return early, converting the error
           with `From`". Here is the full rule. In a function returning `Result<T, F>`, the
           expression `expr?` with `expr: Result<U, E>`:
 
@@ -797,7 +797,7 @@ lessons:
         body: |
           `ono-protocol` implements the wire protocol between an `ono` and a remote agent. Its
           own error type, `ProtocolError`, describes a peer that is not speaking the protocol
-          correctly. The rest of the shell speaks `ErrorValue`, so the crate provides the bridge.
+          correctly. The rest of the shell speaks [`ErrorValue`](glossary:error-value), so the crate provides the bridge.
       - type: code
         snippet: c13-protocol-error
         annotations:
@@ -805,7 +805,7 @@ lessons:
             token: "thiserror::Error"
             kind: crate
             body: |
-              The `thiserror` crate's derive writes the `impl std::error::Error` and, from the
+              The `thiserror` crate's [derive](glossary:derive) writes the `impl std::error::Error` and, from the
               `#[error("…")]` attributes, an `impl Display`. Treat derives as generated code; the
               [next chapter](chapter:derives-macros) reads them in detail.
           - lines: 17

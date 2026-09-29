@@ -41,7 +41,7 @@ lessons:
             kind: rust
             body: |
               A struct with **named fields**, declared between braces. Compare the tuple struct
-              `ExitStatus(u8)` from chapter 2, whose field is accessed as `.0`; here fields are
+              `ExitStatus(u8)` from [chapter 2](lesson:functions-types-01), whose field is accessed as `.0`; here fields are
               accessed by name, `self.start`.
           - lines: 22
             token: "impl Span {"
@@ -49,7 +49,7 @@ lessons:
             body: |
               An **`impl` block** attaches functions to a type. The struct declaration says what
               a `Span` *is*; the `impl` block says what you can *do* with one. A type can have
-              several `impl` blocks, even in different files — you will see that in lesson 4.
+              several `impl` blocks, even in different files — you will see that in [lesson 4](lesson:structs-methods-04).
           - lines: 28
             token: "pub const fn new(start: u32, end: u32) -> Self {"
             kind: rust
@@ -122,7 +122,7 @@ lessons:
           `self.end - self.start` on unsigned integers: if `start` could be larger than `end`,
           the subtraction would underflow. The compiler enforces the privacy; the module's own
           constructors enforce the rule. Together they make it impossible for another crate to
-          build a backwards span. (`of`, which you read in chapter 2, still checks
+          build a backwards span. (`of`, which you read in [chapter 2](lesson:functions-types-03), still checks
           `start > end` anyway, as a defensive check: rendering a diagnostic must not panic even
           if that rule were ever broken.)
       - type: exercise
@@ -217,7 +217,8 @@ lessons:
       - type: code
         snippet: c03-column
         caption: |
-          Lines 55–62 (the builder method `align`, which chapter 9 reads) are omitted.
+          Lines 55–62 (the builder method `align(mut self, …) -> Self`, the same by-value builder
+          shape as `Table::with_row` in [chapter 9](lesson:mutability-01)) are omitted.
         annotations:
           - lines: 40
             token: "#[derive(Debug, Clone)]"
@@ -245,7 +246,7 @@ lessons:
             body: |
               Black box for now: `impl Into<String>` means "any value that can be converted into a
               `String`" — typically a `&str` such as `"PID"` or an existing `String`. Line 51 does
-              the conversion with `.into()`. Chapters 11 and 13 explain the mechanism.
+              the conversion with `.into()`. [Chapters 11](lesson:generics-01) and [13](lesson:conversions-01) explain the mechanism.
           - lines: 52
             token: "align: Align::Left,"
             kind: rust
@@ -256,18 +257,18 @@ lessons:
             token: "&self"
             kind: ownership
             body: |
-              `&self` means the method **borrows** the column for reading: it gets a reference
+              `&self` means the method [**borrows**](glossary:borrow) the column for reading: it gets a reference
               to it, not the column itself and not a copy. The caller keeps its `Column` and can
               use it afterwards. Through `&self` the method can read the fields but not assign
               to them. (A few types are built to allow change through a shared reference;
-              chapter 15 reads them. `Column` has none.)
+              [chapter 15](lesson:smart-pointers-02) reads them. `Column` has none.)
           - lines: 65
             token: "-> &str"
             kind: ownership
             body: |
               The result is a `&str`: a borrowed view of text that someone else owns — here, the
               column's own `header` field. No text is copied. The view stays valid only as long as
-              the column does; chapter 8 shows how the compiler checks that.
+              the column does; [chapter 8](lesson:borrowing-02) shows how the compiler checks that.
           - lines: 66
             token: "&self.header"
             kind: rust
@@ -297,7 +298,7 @@ lessons:
           | `self` | take the value itself | has given it away — unless the type is `Copy`, in which case the method got a copy |
 
           `Span::join(self, …)` can take `self` because a span is `Copy`. A method on `Column`
-          that took `self` would *consume* the column — chapters 7 and 9 show where Ono-Sendai
+          that took `self` would *consume* the column — chapters [7](lesson:ownership-moves-02) and [9](lesson:mutability-01) show where Ono-Sendai
           does that on purpose, and `&mut self` appears in the next lessons. Getters use `&self`:
           they only need to look.
       - type: prose
@@ -314,9 +315,9 @@ lessons:
             token: "name: Arc<str>"
             kind: type
             body: |
-              Black box for now: `Arc<str>` is text that can be **shared** by many owners without
+              Black box for now: [`Arc<str>`](glossary:arc) is text that can be **shared** by many owners without
               copying it; the last owner to disappear frees it. For reading this code, treat it
-              like `String`: the id owns its name. Chapter 15 opens `Arc`.
+              like `String`: the id owns its name. [Chapter 15](lesson:smart-pointers-01) opens `Arc`.
           - lines: 35
             token: "pub fn new(name: &str, version: u32) -> Self {"
             kind: rust
@@ -421,7 +422,7 @@ lessons:
           - `SchemaId`: the id is the identity of a schema. Outside code cannot quietly change
             the name or bump the version of an existing id; per the doc comment, a new version
             is a new schema, created with `new` (or by parsing text such as `ono.process/1`,
-            chapter 6).
+            [chapter 6](lesson:result-errors-03)).
 
           The getters also hide the representation: callers see `&str`, not `Arc<str>` or
           `String`, so the field type could change without breaking them. That last point is an
@@ -463,7 +464,7 @@ lessons:
             token: "pub struct Fd(u16);"
             kind: type
             body: |
-              A newtype around `u16` (0 to 65 535), with a private field. It derives `Copy`
+              A [newtype](glossary:newtype) around `u16` (0 to 65 535), with a private field. It derives `Copy`
               (line 15), like the other small value types you have seen.
           - lines: 20
             token: "pub const STDIN: Self = Self(0);"
@@ -486,7 +487,7 @@ lessons:
             token: "pub(crate)"
             kind: rust
             body: |
-              `pub(crate)`: visible everywhere **inside `ono-process`**, invisible outside. Other
+              [`pub(crate)`](glossary:visibility): visible everywhere **inside `ono-process`**, invisible outside. Other
               files of the crate call `fd.raw()` when they build the table of descriptors a child
               process gets; `ono-cli` cannot call it at all.
           - lines: 40
@@ -611,13 +612,13 @@ lessons:
           states the design: "The parser never fails and never panics: it always returns a tree,
           collecting problems as diagnostics instead of throwing them. Every construct has a
           recovery point … so a half-typed line still produces something the editor can
-          highlight." Here you read how that code is organised; chapter 6 reads why collecting
+          highlight." Here you read how that code is organised; [chapter 6](lesson:result-errors-04) reads why collecting
           diagnostics differs from returning an error.
       - type: code
         snippet: c03-parser-mod
         caption: |
           The top of the module and the public entry point `parse`. Lines 30–80 (the getters of
-          `Parsed`, which follow the `&self` pattern of lesson 2) are omitted.
+          `Parsed`, which follow the `&self` pattern of [lesson 2](lesson:structs-methods-02)) are omitted.
         annotations:
           - lines: 8
             token: "crate::"
@@ -635,7 +636,7 @@ lessons:
             token: "mod blocks;"
             kind: rust
             body: |
-              Eight private sub-modules. Because this file is `parser/mod.rs`, `mod blocks;` means
+              Eight private [sub-modules](glossary:module). Because this file is `parser/mod.rs`, `mod blocks;` means
               the file `parser/blocks.rs`, `mod state;` means `parser/state.rs`, and so on — the
               directory `src/parser/` holds exactly these nine files.
           - lines: 25-29
@@ -670,15 +671,15 @@ lessons:
             body: |
               A struct literal builds the result. `program,` uses the shorthand. `diagnostics:
               parser.diagnostics` takes the parser's list of diagnostics and puts it into the
-              result — the list is handed over, not copied (chapter 7 names this a *move*). The
+              result — the list is handed over, not copied ([chapter 7](lesson:ownership-moves-02) names this a *move*). The
               parser itself is not needed afterwards.
       - type: prose
         kind: black-box
         title: "The <'a> after Parser"
         body: |
           The next snippet declares `Parser<'a>` and a field `source: &'a str`. The `'a` is a
-          **lifetime parameter**. For now, read it as: "a `Parser` borrows the source text and
-          cannot outlive it". Chapter 8 reads lifetimes properly, using this very struct.
+          [**lifetime parameter**](glossary:lifetime). For now, read it as: "a `Parser` borrows the source text and
+          cannot outlive it". [Chapter 8](lesson:borrowing-03) reads lifetimes properly, using this very struct.
       - type: code
         snippet: c03-parser-state
         caption: |
@@ -711,7 +712,7 @@ lessons:
               Seven fields, each `pub(super)` so every sibling file can read and update them:
               the borrowed `source` text, a byte `limit`, the current position `pos`, the
               collected `diagnostics`, an optional recording of tokens (`Option<...>` — "maybe a
-              list of tokens"; `Option` is chapter 5), the current nesting `depth`, and a flag
+              list of tokens"; `Option` is [chapter 5](chapter:option)), the current nesting `depth`, and a flag
               `no_brace`.
           - lines: 27
             token: "pub(super) fn new(source: &'a str) -> Self {"
@@ -746,13 +747,13 @@ lessons:
             body: |
               A second `impl` block for the same type, in a different file. The compiler merges
               all `impl` blocks of a type; each file adds the methods for one concern — here, how
-              diagnostics are reported. `<'_>` means "for whatever lifetime" (chapter 8).
+              diagnostics are reported. `<'_>` means "for whatever lifetime" ([chapter 8](lesson:borrowing-03)).
           - lines: 15
             token: "&mut self"
             kind: ownership
             body: |
-              `&mut self`: the method borrows the parser **to change it**. Pushing a diagnostic
-              onto the list modifies the parser's state. Chapter 9 is about this receiver.
+              `&mut self`: the method borrows the parser [**to change it**](glossary:mutable-reference). Pushing a diagnostic
+              onto the list modifies the parser's state. [Chapter 9](lesson:mutability-02) is about this receiver.
           - lines: 16
             token: "self.diagnostics.push(diagnostic);"
             kind: rust
@@ -838,5 +839,5 @@ lessons:
           source. That field is declared in `state.rs` as `pub(super) diagnostics:
           Vec<Diagnostic>`; `super` of `state` is `parser`, the very module `mod.rs` defines, so
           the access is allowed. The list is handed over into the `Parsed` value (moved, not
-          copied — chapter 7), and `parse` returns it to the caller, who reads it through
+          copied — [chapter 7](lesson:ownership-moves-02)), and `parse` returns it to the caller, who reads it through
           `Parsed::diagnostics()`.
