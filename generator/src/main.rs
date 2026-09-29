@@ -10,8 +10,9 @@ Ono-Sendai Rust Reading Course — generator and maintenance tool
 Usage: scripts/course <command> [options]
 
 Commands:
-  build [--out DIR]                 validate the course, generate the site (default: dist/)
-                                    and run the offline and link checks on it
+  build [--out DIR] [--assets DIR]  validate the course, generate the site (default: dist/)
+                                    and run the offline and link checks on it; runtime assets
+                                    are copied from --assets (default: <root>/assets)
   validate [--ono CHECKOUT]         validate the course source; with --ono also validate every
                                     snippet against an Ono-Sendai checkout at the pinned commit
   check-offline [--dir DIR]         check a generated site for external resources, network APIs,
@@ -87,8 +88,11 @@ fn main() -> ExitCode {
                 let out = args
                     .value("--out")?
                     .map_or_else(|| root.join("dist"), PathBuf::from);
+                let assets = args
+                    .value("--assets")?
+                    .map_or_else(|| root.join("assets"), PathBuf::from);
                 args.finish()?;
-                cmd_build(&root, &out)
+                cmd_build(&root, &assets, &out)
             }
             "validate" => {
                 let ono = args.value("--ono")?;
@@ -193,11 +197,11 @@ fn site_ok(course: &load::Course, dir: &Path) -> bool {
     }
 }
 
-fn cmd_build(root: &Path, out: &Path) -> Result<bool, String> {
+fn cmd_build(root: &Path, assets: &Path, out: &Path) -> Result<bool, String> {
     let Some(course) = validated(root) else {
         return Ok(false);
     };
-    render::render_site(&course, &root.join("assets"), out)?;
+    render::render_site(&course, assets, out)?;
     eprintln!("generated {}", out.display());
     Ok(site_ok(&course, out))
 }

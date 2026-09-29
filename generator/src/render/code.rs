@@ -11,11 +11,13 @@ use crate::html::escape;
 use crate::model::{Annotation, LineSpec, Snippet};
 use crate::snippet::source_lines;
 
-/// Per-page rendering state: figure ids must be unique on a page even when a snippet is shown
-/// twice.
+/// Per-page rendering state: figure ids and code region labels must be unique on a page even
+/// when a snippet is shown twice.
 #[derive(Default)]
 pub(crate) struct PageCtx {
     pub figures: usize,
+    /// Accessible names of the code regions already on the page.
+    pub region_labels: Vec<String>,
 }
 
 pub(crate) struct CodeSpec<'a> {
@@ -374,11 +376,29 @@ pub(crate) fn code_figure(
         start: snippet.first_line(),
         end: snippet.last_line(),
     };
-    out.push_str(&format!(
-        "<div class=\"code-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"Source code: {file}, {lines}{short}\">",
-        file = escape(&snippet.source.file),
+    let mut label = format!(
+        "Source code: {file}, {lines}{short}",
+        file = snippet.source.file,
         lines = lines_label(&span),
-        short = if snippet.is_shortened() { ", shortened" } else { "" },
+        short = if snippet.is_shortened() {
+            ", shortened"
+        } else {
+            ""
+        },
+    );
+    // Landmarks need unique names: a snippet shown again on the same page says so.
+    let seen = ctx
+        .region_labels
+        .iter()
+        .filter(|l| l.as_str() == label)
+        .count();
+    ctx.region_labels.push(label.clone());
+    if seen > 0 {
+        label.push_str(&format!(" (view {})", seen + 1));
+    }
+    out.push_str(&format!(
+        "<div class=\"code-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"{}\">",
+        escape(&label)
     ));
     out.push_str("<pre class=\"source\" translate=\"no\"><code>");
     out.push_str(&code);

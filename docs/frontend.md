@@ -121,7 +121,8 @@ dashed box, `recap` top rule.
   displayed source text only there.
 - Line numbers are the real source line numbers. They are drawn with CSS generated content from
   `data-n` and have `user-select: none`, so they are neither copied nor read by screen readers.
-- Figure ids `fN` count per page, so a snippet can appear twice on one page.
+- Figure ids `fN` count per page, so a snippet can appear twice on one page; the second code
+  region on a page with the same name gets " (view 2)" appended so region landmarks stay unique.
 - Highlighted lines (`.hl`) get a background **and** a left bar in the sticky gutter, so they stay
   marked while the code is scrolled horizontally. The active-annotation state (`.is-active`) uses
   a different background and a double bar.
@@ -239,9 +240,60 @@ UPDATE_GOLDEN=1 cargo test -p ono-course --test render   # after an intended mar
 Golden snapshots of representative pages are in `generator/tests/golden/`, rendered from the
 fixture course in `generator/tests/fixtures/mini/` (all five stages, a shortened snippet,
 repeated snippets, token annotations, a diagram, multiple choice, structured solutions and an
-independent lesson). Browser-level checks (Playwright + axe-core, `package.json`) cover
-interaction, overflow at 320/375/430/768/1024/1440 px, touch target sizes, storage being
-unavailable, JavaScript disabled, and automated accessibility rules in light and dark themes.
+independent lesson).
+
+### Browser tests (`tests/browser/`, Playwright + axe-core)
+
+```bash
+npm ci && npx playwright install chromium        # once; versions pinned in package-lock.json
+./scripts/course build && npx playwright test    # full suite against dist/
+RRC_DIST=/path/to/extracted/archive npx playwright test --grep @smoke   # CI: release archive
+# against the fixture course (fast, what the suite is developed with):
+cargo run -q -p ono-course -- build --root generator/tests/fixtures/mini --assets assets --out /tmp/mini
+RRC_DIST=/tmp/mini npx playwright test
+```
+
+The site under test is `$RRC_DIST` or `dist/`; pages are opened with `file://` URLs only (no web
+server). `playwright.config.ts` has one Chromium project per required width: `phone-320` (320×568),
+`phone-375` (375×667), `phone-430` (430×932) — mobile + touch — `tablet-768` (768×1024) and
+`tablet-1024` (1024×768) with touch, and `desktop-1440` (1440×900). `responsive.spec.ts` runs in
+all six; the interaction specs run on `phone-375` (touch) and `desktop-1440` (mouse/keyboard);
+viewport-independent specs, and specs that create their own phone/tablet/zoomed contexts, run
+once on `desktop-1440`.
+
+Representative pages are chosen from `course-metadata.json` and the generated HTML
+(`tests/browser/helpers.ts`), so the suite works for any course: the guided lesson with the most
+annotations, the lesson with the longest code figure, the first multiple-choice lesson, a lesson
+with two hints and a solution, the latest practice/transfer lesson with several snippets, every
+independent lesson and the final lesson.
+
+Every test runs behind a guard fixture: all non-`file://` requests are aborted and recorded, and
+the test fails if any was attempted, if a local file failed to load, on any page error or console
+error, and on any browser dialog.
+
+| Spec | Checks |
+|---|---|
+| `offline` | every generated page loads with the network blocked; no `http(s)` `src`/`href`; viewport meta allows zoom (`@smoke`) |
+| `navigation` | index → chapter → lesson, prev/next across a chapter boundary, Back/Forward, pager ends, current position (navigator, breadcrumb, kicker), prerequisite and tag links |
+| `exercises` | Hint 1, Hint 2 locked until Hint 1, solution, multiple choice wrong → right with the verdict in the `role=status` region, annotations (expand/collapse all, one, gutter marker → annotation + highlighted lines), wrap toggle; expanded state checked in Chromium's accessibility tree; keyboard-only (Tab, Enter/Space, arrow keys on radios, Escape) and touch-only (tap) flows |
+| `final` | independent lessons contain no solution/hint/answer/`data-correct`/multiple-choice markup, show the no-solution note and the checklist; the last lesson ends with "You do not need this course anymore" |
+| `responsive` | per width and representative page, with hints, solutions and annotations expanded: layout audit (below), menu toggle / full-screen navigator below 1024px, sidebar and site links from 1024px, header not clipped and ≤ 20% of the viewport height when sticky |
+| `orientation` | phone and tablet rotate portrait → landscape → portrait without reload, also with the menu open |
+| `zoom` | 200% browser zoom (640×400 CSS px at device scale 2) and 200% root text size on a phone: no page overflow, controls and the navigator reachable |
+| `hover` | `:hover` rules in the shipped CSS only change emphasis; no `title` tooltips; every marker has a `<details>` annotation; every core action by tap on a touch tablet |
+| `storage` | mark complete + reload, checklist and notes persistence, reset (only `ono-rrc:` keys, in-page confirmation, no dialogs); with `localStorage` throwing or `setItem` failing every page works and shows `.storage-note` |
+| `nojs` | with JavaScript disabled: prose and code readable, hints/solutions/answers via native `<details>`, navigator reachable |
+| `a11y` | axe-core, WCAG 2.0/2.1/2.2 A + AA tags, zero violations in light and dark themes on home, annotated lesson, answered exercise, expanded solution, late lesson, mobile navigation open (375px), independent lessons, chapter, Learn Rust, Understand Ono-Sendai, glossary, About (reset confirmation open); on every page: one `h1`, no skipped heading levels, labelled controls, landmarks; `:focus-visible` outline ≥ 2px on every kind of control |
+
+The layout audit (`tests/browser/layout.ts`) fails on: page-level horizontal overflow; code,
+diagram, command and table containers outside the viewport or wider than their box without
+scrolling themselves; controls smaller than 44×44 CSS px; overlapping controls; exercise
+controls or hint/solution/answer/checklist panels outside the viewport width; code below 14px or
+body/prose text below 16px. Target-size exemptions, per WCAG 2.2 SC 2.5.8: links inline in running
+text; gutter markers `.ann-marker` (must be ≥ 24×24, every annotation is also reachable through
+its 44px summary); native radio/checkbox inputs inside a label row that is itself ≥ 44px; the
+skip link while off-screen.
+
 For a quick visual check:
 
 ```bash

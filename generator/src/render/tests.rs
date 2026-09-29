@@ -195,6 +195,26 @@ fn omitted_ranges_are_visible_rows() {
 }
 
 #[test]
+fn repeated_snippets_get_unique_region_names() {
+    let l2 = page(&files(), "lessons/values-02.html");
+    let labels: Vec<&str> = l2
+        .split("role=\"region\" aria-label=\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect();
+    assert!(labels.len() >= 2, "values-02 shows a snippet twice");
+    let mut unique = labels.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        labels.len(),
+        "duplicate region names: {labels:?}"
+    );
+    assert!(labels.iter().any(|l| l.ends_with("(view 2)")));
+}
+
+#[test]
 fn code_lines_carry_real_numbers_highlights_and_markers() {
     let l1 = page(&files(), "lessons/values-01.html");
     assert!(l1.contains("<div class=\"code-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"Source code: crates/mini-shell/src/value.rs, lines 1–13\"><pre class=\"source\" translate=\"no\"><code>"));
