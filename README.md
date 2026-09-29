@@ -105,6 +105,7 @@ Documentation:
 - [docs/maintaining.md](docs/maintaining.md) — validation against Ono-Sendai, updating the pin, stale snippets, releasing
 - [docs/frontend.md](docs/frontend.md) — the page markup contract, responsive and accessibility expectations
 - [docs/architecture.md](docs/architecture.md) — build design and decisions
+- [docs/implementation-run-report.md](docs/implementation-run-report.md) — how version 1.0.0 was built
 - [docs/spec/ono-sendai-rust-reading-course-spec.md](docs/spec/ono-sendai-rust-reading-course-spec.md) — the product specification
 
 ### Releases
