@@ -32,9 +32,9 @@ lessons:
           A provider declares, for each capability it has, how risky it is. `Risk` is that
           declaration; its doc says spec §17.1 "computes a risk descriptor from this together with
           the number of targets, the context, the privilege level and irreversibility. This is the
-          part the provider declares." You saw a provider use it in
-          [chapter 12](chapter:iterators-closures): the `env` provider's only capability is
-          `Capability::new("env.read", Risk::Read)`.
+          part the provider declares." The `env` provider whose filtering you read in
+          [chapter 12](chapter:iterators-closures), for example, declares exactly one capability:
+          `Capability::new("env.read", Risk::Read)` (env.rs line 181).
       - type: code
         snippet: c14-risk-derives
         annotations:
@@ -75,6 +75,10 @@ lessons:
 
           - A derive only compiles if every field supports the trait. You cannot derive `Copy` for
             a struct holding a `String`, or `Eq` for one holding an `f64`.
+          - On a generic type, the standard derives add a bound on every type parameter:
+            `#[derive(Clone)] struct Wrapper<T>(T)` generates `impl<T: Clone> Clone for
+            Wrapper<T>`. The types in this lesson have no type parameters, so the question does
+            not arise here, but you will see it in generic code.
           - Derives appear in **pairs with meaning**. `Eq` promises that `==` is a full
             equivalence (every value equals itself); `Ord` promises a total order. Their absence
             is information too.
@@ -313,14 +317,14 @@ lessons:
                 types that implement `Transform`.
             - aspect: outputs
               body: |
-                `Debug` output is the transform's `&'static str` name, e.g. what `Where`'s
-                `name()` returns (`"where"`).
+                `Debug` output is the transform's `&'static str` name — for `Take`, the `"take"`
+                that its `Transform::name` returns in `slice.rs`.
           guarantees: |
             Every type listed gets a `Debug` impl, and a type that is not a `Transform` would be a
             compile error at the invocation.
           semantics: |
             Macro expansion happens before type checking; the expanded impls are checked like
-            hand-written ones. `$crate` resolves to `ono_pipeline` wherever the macro is used.
+            hand-written ones. `$crate` always names the defining crate, `ono_pipeline` — as `crate` inside it and as `::ono_pipeline` from other crates.
           interpretation: |
             The doc names the audience: "What a reader of a failed assertion wants is the
             transform's name." A test failure involving a pipeline prints readable names instead of
@@ -372,7 +376,8 @@ lessons:
           semantics: |
             `macro_rules!` repetitions `$( … )*` expand in lockstep: every repetition in the
             transcriber iterates over the same captured rows. The derived `Ord` orders codes by row
-            order, which the doc calls "numeric order".
+            (declaration) order; the doc says `ALL` is "in numeric order", which holds because the
+            rows are written in ascending number order.
           interpretation: |
             The doc's phrase "the exhaustive lists stay derived rather than restated" is the design
             principle: whenever Ono-Sendai needs several views of one closed vocabulary, it
@@ -414,7 +419,9 @@ lessons:
             body: |
               `skip_serializing_if = "Option::is_none"`: when the status is unknown, the key is
               left out rather than written as `null`. `default`: when reading, a missing key
-              becomes `None` instead of an error — so older lines without the key still parse.
+              becomes `None`, so older lines without the key still parse. (For an `Option` field
+              serde's derive already treats a missing key as `None`; here `default` states it
+              explicitly. For the `Vec` fields below it is what makes a missing key legal.)
           - lines: 29-30
             kind: crate
             body: |

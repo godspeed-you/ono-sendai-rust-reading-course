@@ -69,7 +69,7 @@ lessons:
           let b: Value = 42_i64.into();  // Into, target inferred from the annotation
           ```
 
-          `Into` is what you meet in parameters — `impl Into<String>` in [chapter 11](chapter:generics)
+          `Into` is what you meet in parameters — `impl Into<Arc<str>>` in [chapter 11](chapter:generics)
           — because it lets callers pass anything convertible. `From` is what you implement.
 
           A conversion that may fail uses `TryFrom` or `FromStr` instead and returns a `Result`
@@ -89,7 +89,8 @@ lessons:
             kind: type
             body: |
               The field `u8` is private: outside `ono-core`, nobody can build an `ExitStatus` from
-              an arbitrary number except through the named constructors, or read it except
+              a number except through the named constructors (`from_code`, `from_signal`) and
+              constants, or read it except
               through `code()` and conversions like this one.
           - lines: 71-75
             kind: rust
@@ -106,8 +107,9 @@ lessons:
       - type: code
         snippet: c13-main-exit-code
         caption: |
-          The end of `main`. Every arm of the `match` above line 146 produces an `ExitStatus`
-          named `status`.
+          The end of `main`. `status` is bound by `let status = match invocation { … };`
+          (line 18); every arm of that `match` either produces an `ExitStatus` or returns from
+          `main` early.
         annotations:
           - lines: 15
             kind: rust
@@ -236,15 +238,21 @@ lessons:
                 `ExitCode` without a helper of its own.
             - aspect: outputs
               body: |
-                `main`'s last expression is `ExitCode::from(status)`, and the early returns do the
-                same with named constants such as `ExitStatus::FAILURE`.
+                `main`'s last expression is `ExitCode::from(status)`, and most early returns do the
+                same with named constants such as `ExitStatus::FAILURE`. The exception is the
+                remote agent mode (feature `remote`), which returns the `ExitCode` that
+                `ono_remote::agent_main` or `serve_authenticated` produce.
           guarantees: |
-            The only way the `ono` binary produces its exit code is from an `ExitStatus`, so the
-            process exit value follows ADR-0008's conventions.
+            In the shell's own paths (`main`'s final line and the early returns built from
+            `ExitStatus` constants), the exit code is produced from an `ExitStatus`, so it follows
+            ADR-0008's conventions. The remote agent paths return an `ExitCode` built elsewhere
+            (`ExitCode::SUCCESS`/`FAILURE` in `ono-remote`).
           semantics: |
-            Coherence (the orphan rule) requires that either the trait or the implementing type be
-            local to the crate writing the impl. `From<ExitStatus>` mentions a local type as the
-            type parameter, which is what allows `ono-core` to write it.
+            Coherence (the orphan rule) requires that the trait, or at least one type in the impl
+            header, be local to the crate writing the impl — and that type may be a type parameter
+            of the trait, not only the implementing type. `From<ExitStatus> for ExitCode` has a
+            foreign trait and a foreign implementing type, but `ExitStatus` in `From<ExitStatus>`
+            is local to `ono-core`, which is what allows `ono-core` to write it.
           interpretation: |
             Ono-Sendai keeps its vocabulary types in `ono-core` and lets them cross into the
             standard library at exactly one seam. Reading `ExitCode::from(status)` in `main` is
@@ -455,8 +463,8 @@ lessons:
         hints:
           - level: 1
             body: |
-              There are four ways out of this function: one `return`, two `?`s before line 274,
-              and the final expression. Assign each input to one of them.
+              There are five ways out of this function: one `return`, three `?`s (lines 262, 263
+              and 273), and the final expression. Assign each input to one of them.
         solution:
           summary: |
             `count` produces the `usize` for `take`/`skip`/`tail`. `take 10` → the `Binding::Value`
@@ -478,9 +486,10 @@ lessons:
                 and a final `Result` expression that is returned as is.
             - aspect: errors
               body: |
-                All failures are `ErrorValue`s with code `TypeMismatch`, and each says what was
-                wrong in the user's words: missing count, no count expression, non-integer,
-                out-of-range count.
+                The errors `count` builds itself (missing count, empty expression list,
+                out-of-range count) all use `TypeMismatch` and say what was wrong in the user's
+                words. Errors from `evaluate` (line 263) and `as_int` (line 273, a non-integer) are
+                passed through unchanged with whatever code they carry.
             - aspect: ownership
               body: |
                 `value.clone()` copies a `Value` out of the borrowed arguments — for an integer
@@ -566,8 +575,9 @@ lessons:
           - lines: 18
             kind: type
             body: |
-              `text_of` fails with a plain `ErrorValue`: it cannot know anything about loops or
-              functions, and it is also used where no `Flow` exists.
+              `text_of` fails with a plain `ErrorValue`: turning a value into text has nothing to
+              do with loops or functions, and its failure comes straight from
+              `ono_value::canonical_text`, which knows nothing about `Flow`.
           - lines: 26
             kind: flow
             body: |
@@ -851,8 +861,9 @@ lessons:
           `remote.protocol_mismatch` (E0602)", while an unreachable link and a changed host key
           keep their own codes. A crate-local enum keeps the protocol code precise and testable
           (`PartialEq`, one variant per violation); the single `From` impl is the only place that
-          decides how those violations look to a user — the same message text for every variant,
-          plus a help line grouped by *what the user can do about it*.
+          decides how those violations look to a user — the same code (E0602) and
+          `retryable = false` for every variant, the variant's own message, and a help line
+          grouped by *what the user can do about it*.
       - type: exercise
         id: conversions-04-q1
         exercise_type: multiple-choice

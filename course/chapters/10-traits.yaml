@@ -17,8 +17,9 @@ summary: |
     written with care so that `dyn Trait` is possible at all (object safety).
 
   "A trait is like an interface" is a useful first picture, but it is not the whole story. Traits
-  also carry default behaviour, are implemented for types from other crates (`Default` for
-  `SystemClock`), and serve as **bounds** on generic code; [chapter 11](chapter:generics) shows that
+  also carry default behaviour, can be implemented for your own types even when the trait comes
+  from another crate (the standard library's `Default` for `SystemClock`), and serve as **bounds**
+  on generic code; [chapter 11](chapter:generics) shows that
   second use.
 lessons:
   - id: traits-01
@@ -131,8 +132,8 @@ lessons:
             kind: flow
             body: |
               The test decides exactly how much time passes between two snapshots. The assertion
-              further down expects exactly `50.0`: "25 ticks of 100 per second over half a second is
-              half a CPU".
+              further down expects `50.0` to within `1e-9` (the usual tolerance for a floating-point
+              result): "25 ticks of 100 per second over half a second is half a CPU".
       - type: diagram
         kind: architecture
         title: One contract, two implementations
@@ -217,7 +218,7 @@ lessons:
           The trait separates *what* the sampler needs (a monotonic nanosecond count) from *where*
           it comes from. Production code stores a `SystemClock`; a test stores a `TestClock` and
           advances it by exactly 500 ms between two snapshots, so it can assert that 25 ticks over
-          half a second is exactly `50.0` percent. Without the trait, the elapsed time would be
+          half a second is `50.0` percent, with only a floating-point tolerance of `1e-9`. Without the trait, the elapsed time would be
           whatever the test machine took, and the assertion could only be approximate or flaky.
 
           The provider's CPU code is identical in both cases: `self.clock.now_nanos()`.
@@ -431,8 +432,11 @@ lessons:
              `values.map_or_else(Vec::new, |hook| hook.complete(command, option, written))`.
           4. `hook.complete` is a **dynamic** call: the vtable in the `&dyn` reference points to
              `Users`' implementation, which filters `["root", "daemon", "deploy"]` by the prefix
-             `d`.
-          5. Back in `complete`, the candidates are sorted and deduplicated. The test expects
+             `d` and returns the candidates `daemon` and `deploy`.
+          5. `option_values` rewrites each returned candidate's text to `--user=<value>`
+             (`format!("--{name}={}", candidate.text)`), so the result replaces the whole word
+             under the cursor.
+          6. Back in `complete`, the candidates are sorted and deduplicated. The test expects
              `["--user=daemon", "--user=deploy"]`.
 
           With `None` instead of `Some(&Users)`, step 3 returns an empty `Vec` and the test expects
@@ -518,9 +522,10 @@ lessons:
           default uses `self.id()`, which is how a generic refusal still says *which* provider
           refused.
 
-          Default methods are how a trait can grow. When the temporal methods (`temporal`,
-          `history`) were added, giving them honest defaults meant existing providers did not all
-          need changes.
+          Default methods are also how a trait can grow. The crate doc records that the temporal
+          methods came with a later spec version ("Spec v0.5 §21 adds a fourth: `Provider::history`
+          …"). Because `temporal` and `history` have default bodies, a provider that never thinks
+          about time needs no code for them at all, as `MinimalProvider` below shows.
       - type: code
         snippet: c10-minimal-provider
         caption: "`ono-provider-api/tests/contract.rs`, shortened: a provider that writes only what it must, and two tests that call what it did not write."
@@ -553,8 +558,8 @@ lessons:
         body: |
           The doc comment on line 591 says the provider "overrides nothing beyond the four required
           methods", but the `impl` writes **six**: `id`, `targets`, `schemas`, `capabilities`,
-          `snapshot` and `resolve`. Those six are exactly the trait methods without a default body
-          (the crate has grown since the comment was written). When a comment and the code
+          `snapshot` and `resolve`. Those six are exactly the trait methods without a default body;
+          the comment is simply out of step with the code. When a comment and the code
           disagree, the compiler enforces the code: an `impl` that omitted `snapshot` or
           `resolve` would not compile.
       - type: diagram
@@ -666,8 +671,9 @@ lessons:
         solution: |
           - **Provider authors**: most sources keep no past (the `history` doc says "`/proc` does
             not"). With required methods, each of those providers would have to write the same
-            refusal. The default does it once, in one wording: `unsupported_history` exists "so
-            that 'cannot answer about the past' reads the same everywhere it is said".
+            refusal. The default does it once, in one wording: `unsupported_history` is one
+            function "so that 'this source cannot answer about the past' reads the same
+            everywhere it is said".
           - **Users**: the default is the honest answer, a refusal with help, not an empty or
             present-day result. A provider cannot accidentally claim coverage by forgetting a
             method; it has to override `temporal` and `history` deliberately.
@@ -711,8 +717,8 @@ lessons:
             token: "pub trait CommandImpl: Send + Sync"
             kind: rust
             body: |
-              The contract for native command code: one required method (`invoke`), `id`, and a
-              provided `invoke_async`.
+              The contract for native command code: two required methods (`id` and `invoke`) and
+              one provided method, `invoke_async`.
           - lines: 453-454
             token: "fn invoke_async"
             kind: flow

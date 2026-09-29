@@ -85,8 +85,11 @@ lessons:
           checks before the program runs:
 
           1. **At any moment, a value has either any number of shared references (`&T`) or exactly
-             one mutable reference (`&mut T`), never both.** While shared borrows exist, nobody can
-             change the value. ([Chapter 9](chapter:mutability) is about the `&mut` side.)
+             one mutable reference (`&mut T`), never both.** While shared borrows exist, the value
+             cannot be changed through ordinary code. (Types built for *interior mutability*, such
+             as `Mutex`, are the deliberate exception, covered in
+             [chapter 15](chapter:smart-pointers); [chapter 9](chapter:mutability) is about the
+             `&mut` side.)
           2. **A reference never outlives the value it points to.** Once the owner is dropped, every
              borrow of it must already be finished.
 
@@ -230,6 +233,12 @@ lessons:
           spurious in a sense (the text really lives in `source`), but the compiler can only check
           what the signature claims.
 
+          In fact the compiler would complain even earlier, inside `text` itself: its body returns
+          `self.span.of(source)`, a borrow of `source`, while the elided signature promises a
+          borrow of `self`. The two have unrelated lifetimes, so the body is rejected with
+          "lifetime may not live long enough". A wrong signature fails at the definition, not only
+          at its callers.
+
           **With the real signature** `text<'a>(&self, source: &'a str) -> &'a str` the result is
           tied to `source` only. `first_word`'s own signature has one reference input, so its output
           is elided to borrow from `source` too. The two agree, the borrow of `token` ends inside
@@ -258,7 +267,10 @@ lessons:
           character. `get` returns `None` in every such case, and `unwrap_or("")` turns that into
           the empty string.
 
-          Indexing with `&source[start..end]` would panic in both situations. The doc comment on
+          Strictly, `get` alone would already return `None` for an inverted or out-of-range range
+          too, so the `if` is not what prevents the panic; it states the out-of-bounds case
+          explicitly and returns early. What rules out a panic is that the function never uses
+          the panicking form: indexing with `&source[start..end]` would panic in both situations. The doc comment on
           line 83 states the requirement: "Rendering a diagnostic must never panic, however wrong
           the span it was handed is." The result is still a borrow of `source` (or the static
           `""`), so the check costs no allocation.
@@ -420,7 +432,8 @@ lessons:
               compiler rejects any use of it after the owner is gone.
           - text: Take ownership of the first cell with `let first = cells[0];`.
             feedback: |
-              `Cell` is not `Copy` (it derives only `Clone`), and you cannot move a value out of
+              `Cell` is not `Copy` (its derive list has `Clone` but not `Copy`, and it could not
+              be `Copy` anyway because it holds a `String`), and you cannot move a value out of
               something you merely borrow. `cells[0].clone()` would make an owned copy.
         hints:
           - level: 1
@@ -719,7 +732,8 @@ lessons:
           functions, aliases, then **native commands from the command registry**, then executables
           on `PATH`. `CommandRegistry::resolve` is that fourth step. The registry is loaded once
           from contract files embedded in the binary; `CommandRegistry::embedded()` returns a
-          `&'static CommandRegistry` (registry.rs line 89).
+          `Result<&'static CommandRegistry, ErrorValue>` (registry.rs line 89), so after `?` a
+          caller holds a `&'static CommandRegistry`.
 
           When nothing matches, the error suggests a near miss: "did you mean `get process`?". That
           comes from `closest`, whose module doc notes "The search runs only on the failure path, so
@@ -817,9 +831,12 @@ lessons:
         body: |
           Resolution runs whenever a stage head is looked up in the registry. It answers a question about
           existing data ("which contract does this head name, and which arguments remain?"), so it
-          returns references into the registry and into the parsed arguments. The only values it
-          creates are on the failure path: an `ErrorValue` with a message and a suggestion. That
-          matches the module doc of `suggest.rs`: work is done only when a name did not resolve.
+          returns references into the registry and into the parsed arguments: the `Resolved` it
+          hands back contains no new data. (The lookup itself is not entirely free: `find` builds
+          an owned `(String, Option<String>)` key to query its map, registry.rs line 347, and drops
+          it again.) The expensive extra work sits on the failure path: an `ErrorValue` with a
+          message, and the near-miss search. That matches the module doc of `suggest.rs`: "The
+          search runs only on the failure path, so a name that exists costs nothing."
       - type: exercise
         id: borrowing-04-q1
         exercise_type: multiple-choice
@@ -883,7 +900,8 @@ lessons:
                 return it with all arguments. After that, only error paths remain.
             - aspect: ownership
               body: |
-                Nothing is moved or cloned on the success paths. `contract` is a `&'r
+                No data from the registry or the stage is moved or cloned on the success paths
+                (`find` does build a temporary owned lookup key, which it drops). `contract` is a `&'r
                 CommandContract` returned by `find` (a borrow of `self.commands`); `arguments` is
                 either the original slice or a sub-slice of it, both with lifetime `'a`.
                 `first_word` is an `Option<&'a str>` into the first argument.
@@ -904,7 +922,8 @@ lessons:
             patterns match.
           interpretation: |
             Interpretation: resolution is a lookup over data the shell already holds, so it returns
-            views rather than copies, and only the failure path allocates (an error and a
-            suggestion). Returning an error instead of `None` lets the caller (the evaluator) go on
+            views rather than copies; the result never duplicates a contract or an argument, and
+            the costly work (building an error, searching for a near miss) is kept to the failure
+            path. Returning an error instead of `None` lets the caller (the evaluator) go on
             to step 5 of ADR-0011, searching `PATH`, while still holding a precise explanation of
             why the native lookup failed.

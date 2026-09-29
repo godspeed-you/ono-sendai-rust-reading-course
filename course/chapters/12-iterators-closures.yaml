@@ -414,10 +414,11 @@ lessons:
         body: |
           The module doc says the session **gives** this provider its bindings, "so what `set env`
           bound a statement ago is what `get env` lists now". Filtering inside the provider keeps
-          the answer small, but it must mean exactly what the generic `where` would: every
-          selector that is not understood here is simply not applied (`_ => None`), and the
-          binding list is already in name order, so `take` returns the *first* bindings by name —
-          the deterministic output spec §50 asks for.
+          the answer small. It applies only what it understands — a `name` selector and the
+          `--exported` option; any other selector is ignored here (`_ => None`). The binding list
+          is kept in name order ("so `get env` is the same list every time it is asked — the
+          determinism spec §50 requires of redirected output", env.rs lines 104–105), so `take`
+          returns the *first* bindings by name.
       - type: exercise
         id: iterators-closures-02-q1
         exercise_type: multiple-choice
@@ -441,8 +442,10 @@ lessons:
           - text: Each call moves `wanted`; the compiler re-creates it for the next binding.
             feedback: |
               Rust never re-creates a moved value. If `wanted` were not `Copy` (say an
-              `Option<String>`), the second call would be a "use of moved value" error — you would
-              write `wanted.as_deref().is_none_or(…)` instead.
+              `Option<String>`), calling `is_none_or` would move the captured `wanted` out of the
+              closure. `filter` needs a closure it can call again and again (`FnMut`), so the
+              compiler would reject this ("cannot move out of `wanted`, a captured variable in an
+              `FnMut` closure") — you would write `wanted.as_deref().is_none_or(…)` instead.
           - text: "`filter` clones every captured variable before each call."
             feedback: |
               No. `filter` knows nothing about the closure's captures, and Rust never clones
@@ -648,7 +651,8 @@ lessons:
         kind: context
         title: Closures the engine keeps
         body: |
-          The pipeline crate (`ono-pipeline`) knows nothing about expressions: its doc says
+          The pipeline crate (`ono-pipeline`) knows nothing about expressions: the doc of its
+          `Transform` trait says
           "`where` holds a predicate, not an expression … which is what keeps this crate — and its
           tests — free of a dependency on the parser (ADR-0005)". So something must turn the
           parsed `where cpu > 20` into a Rust function. That is `TransformCommand::invoke`. The
@@ -813,14 +817,17 @@ lessons:
           analysis:
             - aspect: inputs
               body: |
-                `&self` (only `kind` is read; `Kind` is `Copy`, so `match self.kind` copies it) and
+                `&self` (only `kind` is read; matching the place `self.kind` against unit-variant
+                patterns neither moves nor copies it) and
                 `ctx: &mut Invocation<'_>` — mutable because `take_input` removes the stream from
                 it.
             - aspect: errors
               body: |
                 `ok_or_else(…)?` fails when no stream is connected. `expression(…)?` fails when the
                 contract's selector has no expression. `transform(…)?` fails when a blocking
-                transform meets an unbounded stream (the comment at 69–70). Each `?` returns an
+                transform meets an unbounded stream (the comment at 69–70). The other arms' helpers
+                (`projection`, `Select::new`, `sort_arguments`, `count`) can fail the same way. Each
+                `?` returns an
                 `ErrorValue` from `invoke`. Errors *during* evaluation of a value are not handled
                 here; they happen later, inside the engine, per value.
             - aspect: ownership

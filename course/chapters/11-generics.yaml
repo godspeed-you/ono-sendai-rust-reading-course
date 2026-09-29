@@ -84,7 +84,9 @@ lessons:
             kind: ownership
             body: |
               The conversion happens here, inside the function, once. A `String` argument is
-              moved in and converted; a `&str` is copied into the new `Arc<str>`.
+              moved in and converted; a `&str` is copied into the new `Arc<str>`. (Even the
+              `String` case copies the bytes once: an `Arc` keeps its reference counts in the same
+              allocation as the text, so it cannot simply adopt the `String`'s buffer.)
           - lines: 134
             token: "help: impl Into<Arc<str>>"
             kind: rust
@@ -132,8 +134,8 @@ lessons:
 
           (quoted from the doc test on lines 84–86). With `impl Into<Arc<str>>`, the same chain
           works whether the message is a literal or a `format!` result. Inside, the message is
-          stored as `Arc<str>`, which makes cloning an error cheap: errors are also values and
-          travel through pipelines.
+          stored as `Arc<str>`, so cloning an `ErrorValue` shares the message text (a
+          reference-count increment) instead of copying it.
       - type: exercise
         id: generics-01-q1
         exercise_type: multiple-choice
@@ -150,7 +152,7 @@ lessons:
             feedback: |
               A `&'static str` implements `Into<Arc<str>>`. This is the most common form in the
               codebase.
-          - text: "`ErrorValue::new(code, format!(\"no field `{name}`\"))`"
+          - text: "`` ErrorValue::new(code, format!(\"no field `{name}`\")) ``"
             feedback: |
               `format!` produces a `String`, and `String` implements `Into<Arc<str>>`. The string
               is moved in and converted.
@@ -513,6 +515,14 @@ lessons:
           parameters and lifetimes the hidden type may depend on, and the empty list says: none.
           So the returned key does not borrow `arguments`, `name`, `spelling` or `scope`, and may
           outlive them. That is true of the code: the `move` closure owns everything it uses.
+
+          Why write it at all? In edition 2024 a return-position `impl Trait` is assumed, by
+          default, to capture **every** generic parameter and lifetime in scope, including the
+          elided lifetimes of the four reference parameters. Without `+ use<>`, callers would
+          have to treat the returned key as possibly borrowing all of them, even though the
+          closure does not: the borrows of `arguments`, `spelling` and `scope` at the call site
+          would have to stay alive for as long as the key is used. `use<>` narrows the promise to
+          what the code really does.
       - type: code
         snippet: c11-group-new
         caption: "`ono-pipeline/src/transforms/group.rs`: the receiving end, the same pattern as `Where::new`."
@@ -616,6 +626,12 @@ lessons:
           arguments stayed alive and unchanged. It could not be moved into the engine's `Group`
           transform, which requires a `KeyFn` that is `'static` (the trait's supertraits, like
           `Predicate`'s).
+
+          The annotation is a statement callers rely on, not decoration. In edition 2024 an
+          `impl Trait` return type without `use<…>` is assumed to capture all lifetimes in the
+          signature, so callers would have to treat the key as borrowing `arguments`, `name`,
+          `spelling` and `scope`, whatever the closure actually holds. Callers are checked against
+          the signature, not the body.
 
           The code makes `use<>` true: `expression(…)?` returns an owned `Expr` (it clones the
           expression out of the arguments), `Arc::clone(scope)` returns an owned handle, and the

@@ -125,9 +125,9 @@ lessons:
         kind: ono
         title: Why both styles exist
         body: |
-          The source states each purpose:
+          The doc comments and the call sites show each purpose:
 
-          - `with_row` is "builder style": it lets code that knows its rows write
+          - `with_row` is documented as "builder style": it lets code that knows its rows write
             `Table::new(columns).with_row(a).with_row(b)` as one expression, with no mutable
             binding at the call site. The same pair exists for trees: `TreeNode::with_child(mut
             self, …)` and `push_child(&mut self, …)` in `tree.rs`.
@@ -492,7 +492,8 @@ lessons:
             kind: ownership
             body: |
               `get` returns `Option<&Arc<Schema>>`, a **shared** borrow into the map. `existing` is
-              used only inside this `if` block, so the borrow ends when the block ends.
+              used only inside this `if` block (last on line 706), so the borrow is over before
+              anything after the block runs.
           - lines: 705
             token: "**existing == schema"
             kind: rust
@@ -536,16 +537,16 @@ lessons:
           line 704  existing = &Arc<Schema> ──shared borrow of self.schemas──┐
           line 705    compare **existing with schema                          │
           line 706    return Ok(Arc::clone(existing))   (early exit)          │
-          line 715  } ◄─────────────────────────── shared borrow ends ────────┘
+          line 715  } ◄─────────────────────────── `existing` scope ends ─────┘
           line 716  id = schema.id.clone()           schema still owned here
           line 717  handle = Arc::new(schema)        schema MOVED into the Arc
           line 718  self.schemas.insert(id, …)       &mut self.schemas (exclusive)
           line 719  Ok(handle)                       handle MOVED to the caller
         description: |
           The function starts owning `schema` and holding an exclusive borrow of the registry.
-          Line 704 takes a shared borrow into the map; it lasts until the end of the `if` block
-          at line 715, or until one of the early returns. After the block no borrow of the map is
-          active. Line 716 clones the id while `schema` is still owned. Line 717 moves the schema
+          Line 704 takes a shared borrow into the map. `existing` is last used on line 706 and goes
+          out of scope at the end of the `if` block (line 715); the compiler ends the borrow after
+          its last use, so after the block no borrow of the map is active. Line 716 clones the id while `schema` is still owned. Line 717 moves the schema
           into a new `Arc`. Line 718 uses the exclusive borrow of the registry to insert the id
           and a second handle. Line 719 moves the first handle to the caller.
       - type: code
@@ -726,9 +727,9 @@ lessons:
         kind: ono
         title: Why the map is written this way
         body: |
-          The doc of `MapValue` gives the design: keys keep insertion order "because a renderer
-          that reorders a user's keys is surprising", and re-inserting an existing key "keeps that
-          key's original position". Replacing the value in place, through `slot`, is what keeps
+          The docs give the design: `MapValue` keeps insertion order "because a renderer that
+          reorders a user's keys is surprising", and the doc of `insert` says re-inserting an
+          existing key "keeps that key's original position". Replacing the value in place, through `slot`, is what keeps
           the position: the entry is never removed and re-pushed. Returning the old value as
           `Option<Value>` follows the convention of the standard library's maps.
       - type: exercise
