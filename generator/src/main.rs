@@ -232,6 +232,7 @@ fn cmd_package(root: &Path, dist: &Path, out: &Path) -> Result<bool, String> {
         return Ok(false);
     }
     package::check_metadata(dist, &course.lock)?;
+    package::check_digest(dist, &render::content_digest(root)?)?;
     let p = package::package(dist, out, &course.lock.course.version)?;
     for f in [&p.zip, &p.tar_gz, &p.sums] {
         let size = std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);

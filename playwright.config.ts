@@ -14,8 +14,11 @@ import { defineConfig, devices } from '@playwright/test';
 
 const chromium = devices['Desktop Chrome'];
 const phone = { isMobile: true, hasTouch: true };
-// Interaction specs: run with touch (phone-375) and with mouse/keyboard (desktop-1440).
-const functional = /(navigation|exercises|final|storage|nojs|a11y)\.spec\.ts$/;
+// The learning flow (navigate, hints, solutions, multiple choice, final lessons) runs at every
+// required width (spec §97). Storage, no-JS and axe specs run with touch (phone-375) and with
+// mouse/keyboard (desktop-1440).
+const flow = /(navigation|exercises|final)\.spec\.ts$/;
+const functional = /(storage|nojs|a11y)\.spec\.ts$/;
 // Viewport-independent specs, or specs that create their own phone/tablet contexts: run once.
 const once = /(offline|orientation|zoom|hover)\.spec\.ts$/;
 
@@ -38,32 +41,32 @@ export default defineConfig({
   projects: [
     {
       name: 'phone-320',
-      testMatch: /responsive\.spec\.ts$/,
+      testMatch: [/responsive\.spec\.ts$/, flow],
       use: { viewport: { width: 320, height: 568 }, deviceScaleFactor: 2, ...phone },
     },
     {
       name: 'phone-375',
-      testMatch: [/responsive\.spec\.ts$/, functional],
+      testMatch: [/responsive\.spec\.ts$/, flow, functional],
       use: { viewport: { width: 375, height: 667 }, deviceScaleFactor: 2, ...phone },
     },
     {
       name: 'phone-430',
-      testMatch: /responsive\.spec\.ts$/,
+      testMatch: [/responsive\.spec\.ts$/, flow],
       use: { viewport: { width: 430, height: 932 }, deviceScaleFactor: 3, ...phone },
     },
     {
       name: 'tablet-768',
-      testMatch: /responsive\.spec\.ts$/,
+      testMatch: [/responsive\.spec\.ts$/, flow],
       use: { viewport: { width: 768, height: 1024 }, deviceScaleFactor: 2, hasTouch: true },
     },
     {
       name: 'tablet-1024',
-      testMatch: /responsive\.spec\.ts$/,
+      testMatch: [/responsive\.spec\.ts$/, flow],
       use: { viewport: { width: 1024, height: 768 }, deviceScaleFactor: 2, hasTouch: true },
     },
     {
       name: 'desktop-1440',
-      testMatch: [/responsive\.spec\.ts$/, functional, once],
+      testMatch: [/responsive\.spec\.ts$/, flow, functional, once],
       use: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
     },
   ],

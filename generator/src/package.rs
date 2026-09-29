@@ -165,6 +165,24 @@ pub fn sha256_file(p: &Path) -> Result<String, String> {
 
 /// Check that `dist/course-metadata.json` was generated for `lock`: a site left over from an
 /// earlier version or another pin must not be packaged under the current version's name.
+/// Refuse to package a site whose content digest differs from the current course source: the
+/// archive must contain exactly what `build` makes from the checked-out course.
+pub fn check_digest(dist: &Path, expected: &str) -> Result<(), String> {
+    let path = dist.join(crate::paths::METADATA);
+    let text = fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {e}; run `scripts/course build` first", path.display()))?;
+    let meta: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    match meta["content_digest"].as_str() {
+        Some(d) if d == expected => Ok(()),
+        got => Err(format!(
+            "{} was built from different course source (content digest {} in the site, {expected} now); run `scripts/course build` first",
+            dist.display(),
+            got.unwrap_or("absent")
+        )),
+    }
+}
+
 pub fn check_metadata(dist: &Path, lock: &crate::model::CourseLock) -> Result<(), String> {
     let path = dist.join(crate::paths::METADATA);
     let text = fs::read_to_string(&path)
@@ -424,5 +442,18 @@ mod tests {
         let t = zip_time(1_700_000_000); // 2023-11-14 22:13:20 UTC
         assert_eq!((t.year(), t.month(), t.day()), (2023, 11, 14));
         assert_eq!((t.hour(), t.minute(), t.second()), (22, 13, 20));
+    }
+    #[test]
+    fn check_digest_detects_changed_source() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(
+            d.path().join("course-metadata.json"),
+            r#"{"content_digest":"sha256:aa"}"#,
+        )
+        .unwrap();
+        assert!(check_digest(d.path(), "sha256:aa").is_ok());
+        let e = check_digest(d.path(), "sha256:bb").unwrap_err();
+        assert!(e.contains("different course source"), "{e}");
+        assert!(check_digest(tempfile::tempdir().unwrap().path(), "sha256:aa").is_err());
     }
 }
