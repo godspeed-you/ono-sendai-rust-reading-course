@@ -48,7 +48,10 @@ pub(crate) fn exercise(
     } else {
         None
     };
-    if inline_prompt.is_none() {
+    // The learner must know the question before reading the code, so an exercise that shows
+    // code always states its prompt first; a one-paragraph multiple-choice prompt is then
+    // repeated as the legend next to the choices, which may be a long scroll further down.
+    if inline_prompt.is_none() || !ex.snippets.is_empty() {
         out.push_str(&format!(
             "<div class=\"prompt\" id=\"{eid}-prompt\">\n{prompt_html}</div>\n"
         ));

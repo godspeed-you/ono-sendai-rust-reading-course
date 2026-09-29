@@ -4,7 +4,7 @@
 use super::layout::{
     concept_tags, page, stage_chip, stage_label, stage_range_text, topic_tags, Current, Page,
 };
-use super::{LessonRef, Site};
+use super::{text_html, LessonRef, Site};
 use crate::html::escape;
 use crate::model::{Lesson, Stage, Taxon};
 use crate::paths;
@@ -16,7 +16,7 @@ fn lesson_item(l: &LessonRef, root: &str, extra: &str) -> String {
         id = escape(&l.lesson.id),
         path = paths::lesson(&l.lesson.id),
         chip = stage_chip(l.lesson.stage),
-        title = escape(&l.lesson.title),
+        title = text_html(&l.lesson.title),
     )
 }
 
@@ -44,7 +44,7 @@ pub(crate) fn index(site: &Site) -> Result<String, String> {
         m.push_str(&format!(
             "<a class=\"btn btn-primary start-link\" href=\"{}\">Start with lesson 1: {}</a>\n",
             paths::lesson(&first.lesson.id),
-            escape(&first.lesson.title)
+            text_html(&first.lesson.title)
         ));
     }
     m.push_str(
@@ -97,7 +97,7 @@ pub(crate) fn index(site: &Site) -> Result<String, String> {
                 "<li class=\"chapter-card\">\n<h4><a href=\"{path}\"><span class=\"ch-num\">Chapter {n}</span> {title}</a></h4>\n<div class=\"chapter-summary\">\n{summary}</div>\n<ol class=\"lesson-list\">\n",
                 path = paths::chapter(ch.number, &ch.id),
                 n = ch.number,
-                title = escape(&ch.title),
+                title = text_html(&ch.title),
                 summary = site.md(&ch.summary, root, &format!("chapter `{}` summary", ch.id))?,
             ));
             for l in site.chapter_lessons(ci) {
@@ -160,14 +160,14 @@ pub(crate) fn chapter(site: &Site, ci: usize) -> Result<String, String> {
         n = ch.number,
         total = chapters.len(),
         stages = escape(&stage_range_text(lo, hi)),
-        title = escape(&ch.title),
+        title = text_html(&ch.title),
         summary = site.md(&ch.summary, root, &format!("chapter `{}` summary", ch.id))?,
     ));
     if let Some(first) = site.chapter_lessons(ci).next() {
         m.push_str(&format!(
             "<div class=\"home-actions\"><a class=\"btn btn-primary\" href=\"{root}{}\">Start the chapter: {}</a><p class=\"progress-summary\" hidden></p></div>\n",
             paths::lesson(&first.lesson.id),
-            escape(&first.lesson.title)
+            text_html(&first.lesson.title)
         ));
     }
     m.push_str("<section aria-labelledby=\"lessons-h\">\n<h2 id=\"lessons-h\">Lessons</h2>\n<ol class=\"lesson-cards\">\n");
@@ -178,9 +178,9 @@ pub(crate) fn chapter(site: &Site, ci: usize) -> Result<String, String> {
             id = escape(&lesson.id),
             path = paths::lesson(&lesson.id),
             k = l.index_in_chapter + 1,
-            title = escape(&lesson.title),
+            title = text_html(&lesson.title),
             stage = stage_label(lesson.stage),
-            summary = escape(&lesson.summary),
+            summary = text_html(&lesson.summary),
             concepts = concept_tags(site, &lesson.concepts, root),
             topics = topic_tags(site, &lesson.ono_topics, root),
         ));
@@ -192,7 +192,7 @@ pub(crate) fn chapter(site: &Site, ci: usize) -> Result<String, String> {
         Some(p) => m.push_str(&format!(
             "<a class=\"pager-prev\" rel=\"prev\" href=\"{root}{}\"><span class=\"pager-dir\">Previous chapter</span><span class=\"pager-title\">{}</span></a>\n",
             paths::chapter(p.number, &p.id),
-            escape(&p.title)
+            text_html(&p.title)
         )),
         None => m.push_str(&format!(
             "<a class=\"pager-prev\" href=\"{root}{}\"><span class=\"pager-dir\">Back to</span><span class=\"pager-title\">Course home</span></a>\n",
@@ -203,7 +203,7 @@ pub(crate) fn chapter(site: &Site, ci: usize) -> Result<String, String> {
         m.push_str(&format!(
             "<a class=\"pager-next\" rel=\"next\" href=\"{root}{}\"><span class=\"pager-dir\">Next chapter</span><span class=\"pager-title\">{}</span></a>\n",
             paths::chapter(n.number, &n.id),
-            escape(&n.title)
+            text_html(&n.title)
         ));
     }
     m.push_str("</nav>\n");
@@ -254,7 +254,7 @@ fn axis_page(site: &Site, a: Axis) -> Result<String, String> {
         m.push_str(&format!(
             "<li><a href=\"#{}\">{}</a></li>\n",
             (a.anchor)(&t.id),
-            escape(&t.title)
+            text_html(&t.title)
         ));
     }
     m.push_str("</ol>\n</nav>\n");
@@ -267,7 +267,7 @@ fn axis_page(site: &Site, a: Axis) -> Result<String, String> {
         m.push_str(&format!(
             "<section class=\"taxon\" id=\"{anchor}\" aria-labelledby=\"{anchor}-h\">\n<h2 id=\"{anchor}-h\">{title}</h2>\n<div class=\"taxon-summary\">\n{summary}</div>\n",
             anchor = (a.anchor)(&t.id),
-            title = escape(&t.title),
+            title = text_html(&t.title),
             summary = site.md(&t.summary, root, &format!("`{}` summary", t.id))?,
         ));
         if lessons.is_empty() {
@@ -353,7 +353,7 @@ pub(crate) fn glossary(site: &Site) -> Result<String, String> {
         m.push_str(&format!(
             "<li><a href=\"#{}\">{}</a></li>\n",
             paths::term_anchor(&t.id),
-            escape(&t.term)
+            text_html(&t.term)
         ));
     }
     m.push_str("</ol>\n</nav>\n");
@@ -361,7 +361,7 @@ pub(crate) fn glossary(site: &Site) -> Result<String, String> {
         let anchor = paths::term_anchor(&t.id);
         m.push_str(&format!(
             "<section class=\"term\" id=\"{anchor}\" aria-labelledby=\"{anchor}-h\">\n<h2 id=\"{anchor}-h\">{}</h2>\n<div class=\"term-body\">\n{}</div>\n",
-            escape(&t.term),
+            text_html(&t.term),
             site.md(&t.body, root, &format!("glossary `{}`", t.id))?
         ));
         let examples: Vec<&LessonRef> = t.examples.iter().filter_map(|e| site.lesson(e)).collect();

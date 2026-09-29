@@ -129,7 +129,16 @@
         var det = current.closest("details");
         if (det) det.open = true;
       }
-      (close || current || nav).focus();
+      (close || current || nav).focus({ preventScroll: true });
+      // Show where the learner is: the current lesson may be far down the chapter list.
+      // Only the list scrolls (scrollIntoView would also scroll the panel and hide its head).
+      var body = nav.querySelector(".nav-body") || nav;
+      body.scrollTop = 0;
+      if (current) {
+        var br = body.getBoundingClientRect();
+        var cr = current.getBoundingClientRect();
+        body.scrollTop = Math.max(0, cr.top - br.top - (br.height - cr.height) / 2);
+      }
     }
 
     function shut(restoreFocus) {
@@ -377,11 +386,37 @@
           e.preventDefault();
           d.open = true;
           var s = d.querySelector("summary");
-          if (s) {
-            s.focus({ preventScroll: true });
-            if (s.scrollIntoView) s.scrollIntoView({ block: "nearest" });
-          }
+          if (s) s.focus({ preventScroll: true });
+          // Bring the whole opened annotation into view, not just its summary line, so its
+          // text is visible right after the tap (it may be far below the code on a phone).
+          if (d.scrollIntoView) d.scrollIntoView({ block: "nearest" });
         });
+      });
+
+      // Each annotation body gets a way back to the lines it explains: on phones and tablets
+      // in portrait the annotation list sits below the code, often a long scroll away.
+      anns.forEach(function (d) {
+        var body = d.querySelector(".ann-body");
+        var range = parseLines(d.getAttribute("data-lines"));
+        if (!body || !range) return;
+        var line = fig.querySelector('.line[data-line="' + range[0] + '"]');
+        if (!line) return;
+        var back = doc.createElement("button");
+        back.type = "button";
+        back.className = "btn btn-small ann-back";
+        back.textContent = range[0] === range[1]
+          ? "Back to line " + range[0] + " in the code"
+          : "Back to lines " + range[0] + "\u2013" + range[1] + " in the code";
+        back.addEventListener("click", function () {
+          var marker = line.querySelector('.ann-marker[data-ann="' + d.getAttribute("data-ann") + '"]');
+          var target = marker || fig.querySelector(".code-scroll");
+          if (target) target.focus({ preventScroll: true });
+          if (line.scrollIntoView) line.scrollIntoView({ block: "center", inline: "nearest" });
+        });
+        var p = doc.createElement("p");
+        p.className = "ann-back-row";
+        p.appendChild(back);
+        body.appendChild(p);
       });
 
       var allBtn = fig.querySelector(".ann-all");

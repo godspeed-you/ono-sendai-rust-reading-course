@@ -3,7 +3,7 @@
 use super::code::{code_figure, CodeSpec, PageCtx};
 use super::exercise::{exercise, ExerciseCtx};
 use super::layout::{concept_tags, page, topic_tags, Current, Page};
-use super::{LessonRef, Site};
+use super::{text_html, text_plain, LessonRef, Site};
 use crate::html::escape;
 use crate::model::{ProseKind, Section, Stage};
 use crate::paths;
@@ -37,7 +37,7 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
         "<nav class=\"breadcrumb\" aria-label=\"Breadcrumb\"><ol><li><a href=\"{root}{index}\">Course home</a></li><li><a href=\"{chapter_href}\">Chapter {n}: {ct}</a></li><li><span aria-current=\"page\">Lesson {k} of {in_chapter}</span></li></ol></nav>\n",
         index = paths::INDEX,
         n = chapter.number,
-        ct = escape(&chapter.title),
+        ct = text_html(&chapter.title),
         k = l.index_in_chapter + 1,
     ));
     m.push_str(&format!(
@@ -45,8 +45,8 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
         n = chapter.number,
         k = l.index_in_chapter + 1,
         g = l.global + 1,
-        title = escape(&lesson.title),
-        summary = escape(&lesson.summary),
+        title = text_html(&lesson.title),
+        summary = text_html(&lesson.summary),
         slug = stage.slug(),
         sn = stage.number(),
         stitle = escape(stage.title()),
@@ -73,7 +73,7 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
             m.push_str(&format!(
                 "<li><a href=\"{root}{}\">{}</a> <span class=\"muted\">(Chapter {}, lesson {})</span></li>",
                 paths::lesson(p),
-                escape(&pl.lesson.title),
+                text_html(&pl.lesson.title),
                 pl.chapter.number,
                 pl.index_in_chapter + 1
             ));
@@ -100,7 +100,7 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
         match section {
             Section::Prose { kind, title, body } => {
                 let heading = match title {
-                    Some(t) => format!("<h3>{}</h3>\n", escape(t)),
+                    Some(t) => format!("<h3>{}</h3>\n", text_html(t)),
                     None => String::new(),
                 };
                 m.push_str(&format!(
@@ -139,9 +139,10 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
             } => {
                 let slug = kind.label().to_lowercase().replace(' ', "-");
                 m.push_str(&format!(
-                    "<figure class=\"diagram {slug}\">\n<figcaption><span class=\"diagram-kind\">{klabel}</span> <span class=\"diagram-title\">{title}</span></figcaption>\n<div class=\"diagram-scroll\" tabindex=\"0\" role=\"img\" aria-label=\"{klabel}: {title}. A text description follows.\"><pre class=\"diagram-art\" aria-hidden=\"true\">{art}</pre></div>\n<div class=\"diagram-text\">\n<p class=\"diagram-text-label\">Text description</p>\n{desc}</div>\n</figure>\n",
+                    "<figure class=\"diagram {slug}\">\n<figcaption><span class=\"diagram-kind\">{klabel}</span> <span class=\"diagram-title\">{title}</span></figcaption>\n<div class=\"diagram-scroll\" tabindex=\"0\" role=\"img\" aria-label=\"{klabel}: {plain_title}. A text description follows.\"><pre class=\"diagram-art\" aria-hidden=\"true\">{art}</pre></div>\n<div class=\"diagram-text\">\n<p class=\"diagram-text-label\">Text description</p>\n{desc}</div>\n</figure>\n",
                     klabel = escape(kind.label()),
-                    title = escape(title),
+                    title = text_html(title),
+                    plain_title = escape(&text_plain(title)),
                     art = escape(art.trim_end_matches('\n')),
                     desc = site.md(description, root, &sctx)?,
                 ));
@@ -181,7 +182,7 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
         m.push_str(&format!(
             "<a class=\"pager-prev\" rel=\"prev\" href=\"{root}{}\"><span class=\"pager-dir\">{dir}</span><span class=\"pager-title\">{}</span></a>\n",
             paths::lesson(&p.lesson.id),
-            escape(&p.lesson.title)
+            text_html(&p.lesson.title)
         ));
     } else {
         m.push_str(&format!(
@@ -198,7 +199,7 @@ pub(crate) fn lesson_page(site: &Site, index: usize) -> Result<String, String> {
         m.push_str(&format!(
             "<a class=\"pager-next\" rel=\"next\" href=\"{root}{}\"><span class=\"pager-dir\">{dir}</span><span class=\"pager-title\">{}</span></a>\n",
             paths::lesson(&n.lesson.id),
-            escape(&n.lesson.title)
+            text_html(&n.lesson.title)
         ));
     } else {
         m.push_str(&format!(

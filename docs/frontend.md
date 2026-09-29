@@ -48,6 +48,11 @@ the favicon, `assets/course.css`, `assets/course.js` with `defer`, a skip link t
 exactly one `<h1>`, headings that never skip a level (Markdown prose cannot contain headings), and
 a footer with the course version, Ono-Sendai version and short commit.
 
+Plain-text source fields (lesson, chapter, concept, topic and glossary titles, lesson summaries,
+prose and diagram titles) may contain Markdown-style code spans: a balanced pair of backticks is
+rendered as `<code>` (`render::text_html`) wherever the text is visible, and the backticks are
+dropped (`render::text_plain`) in `<title>`, the meta description and accessible names.
+
 | Selector | Meaning |
 |---|---|
 | `body[data-page]` | `home`, `chapter`, `lesson`, `learn-rust`, `ono-sendai`, `glossary`, `about` |
@@ -57,7 +62,9 @@ a footer with the course version, Ono-Sendai version and short commit.
 | `.nav-toggle[aria-controls=course-nav][aria-expanded]` | Menu button, `hidden` until JS runs |
 | `#course-nav.course-nav` | course navigator, after `<main>` in the DOM; `.is-open` while the panel is open |
 | `.nav-close` | Close button inside the panel (JS only) |
+| `.nav-body` | wraps the site links and chapter tree; the part of the open panel that scrolls (the `.nav-head` with Close stays fixed above it) |
 | `.nav-chapter` | `<details>` per chapter, `open` for the current chapter |
+| `.stage-chip` | compact stage marker in lesson lists: visible "S1"–"S5" (the "S" is `aria-hidden`), accessible name "Stage N: title" |
 | `[data-lesson-id]` | any list item representing a lesson (navigator, home, chapter, axis pages); JS adds `.is-done` and a `.done-mark` "Completed" label |
 | `[aria-current=page]` | current page/lesson link |
 | `.storage-note` | shown by JS when storage is unavailable |
@@ -130,7 +137,11 @@ dashed box, `recap` top rule.
   entities as one source character, and closes/reopens the `<mark>` around every tag so the
   result is always well nested.
 - Opening an annotation highlights its lines (`.is-active`); activating a gutter marker opens
-  its annotation and moves focus to its summary. Without JS the marker is a normal in-page link.
+  its annotation, moves focus to its summary and scrolls the whole annotation into view. Without
+  JS the marker is a normal in-page link.
+- With JS, every annotation body ends with `p.ann-back-row > button.ann-back` ("Back to line N in
+  the code"): it scrolls the annotated line into view and focuses its gutter marker. Below 1280px
+  the list sits under the code, often a long scroll away.
 
 ### Diagrams
 
@@ -144,7 +155,7 @@ whose `pre.diagram-art` is `aria-hidden="true"`, and an always-visible `div.diag
 <section class="exercise" id="ex-ID" data-exercise="ID" data-exercise-type="TYPE"
          data-has-solution="true|false" aria-labelledby="ex-ID-title">
   <h3 id="ex-ID-title">Exercise N  Type label</h3>
-  <div class="prompt" id="ex-ID-prompt">…</div>        (omitted when the MC prompt is the legend)
+  <div class="prompt" id="ex-ID-prompt">…</div>        (omitted only for an MC exercise without code whose prompt is the legend)
   code figures (no annotations)
   <form class="mc" data-exercise="ID" novalidate>      (multiple choice only)
     <fieldset><legend>prompt</legend>
@@ -167,6 +178,9 @@ whose `pre.diagram-art` is `aria-hidden="true"`, and an always-visible `div.diag
 </section>
 ```
 
+- The prompt always comes before the exercise's code, so the learner knows the question before
+  reading it. A one-paragraph multiple-choice prompt is also the `<legend>`, repeated next to the
+  choices (which may be a long scroll below the code).
 - `data-has-solution` is `true` when an answer can be revealed (a solution, or multiple-choice
   feedback). In `independent` lessons the renderer emits **no** hint, solution, answer or
   `data-correct` markup at all, even if the source contained some (a unit test feeds it invalid
@@ -199,9 +213,9 @@ The script uses no network API, no dynamic import, no inline handlers and no `in
 
 | Width | Layout |
 |---|---|
-| < 1024px (phones 320–430, tablet portrait 768) | single column; header has brand + Menu; the navigator is a full-screen panel (JS) or ordinary content after the lesson (no JS); code font 14px (phones) / 15px (≥768px) |
+| < 1024px (phones 320–430, tablet portrait 768) | single column; header has brand + Menu (the header wraps, Menu under the brand, when enlarged text leaves no room); the navigator is a full-screen panel (JS) that opens scrolled to the current lesson, with its Close button fixed above the scrolling list, or ordinary content after the lesson (no JS); code font 14px (phones) / 15px (≥768px); below 480px the code controls and nested exercise boxes are more compact |
 | ≥ 1024px (tablet landscape, laptop) | sticky chapter navigator sidebar (17rem) beside the content; site links in the header |
-| ≥ 1280px (desktop, 1440) | annotated code figures put the annotation list beside the code; text keeps a ~46rem measure; code keeps ≥ ~60 characters |
+| ≥ 1280px (desktop, 1440) | annotated code figures put the annotation list beside the code (a grid whose last row is `1fr`, so a panel taller or shorter than the code leaves no gap); text keeps a ~46rem measure; code keeps ≥ ~60 characters |
 
 - The page never scrolls horizontally; code, diagrams, tables and command blocks scroll inside
   their own bounded, focusable containers. Prose wraps long words and URLs (`overflow-wrap: anywhere`).

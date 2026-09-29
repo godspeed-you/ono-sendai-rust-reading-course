@@ -144,7 +144,64 @@ fn text_is_escaped_everywhere() {
     // Attribute context: the nav's data-lesson-id and the description meta.
     let index = page(&f, "index.html");
     assert!(index.contains("Start with lesson 1: The &lt;Value&gt; enum &amp; its methods"));
-    assert!(lesson.contains("<meta name=\"description\" content=\"Read an enum declaration and a method that borrows `self`."));
+    // Code spans written with backticks in plain-text fields: <code> in visible text, dropped
+    // in the meta description and <title>.
+    assert!(lesson.contains("<meta name=\"description\" content=\"Read an enum declaration and a method that borrows self."));
+    assert!(lesson.contains("<p class=\"lede\">Read an enum declaration and a method that borrows <code>self</code>.</p>"));
+}
+
+#[test]
+fn title_and_meta_description_are_plain_text() {
+    // Titles and summaries may contain `code` spans; <title> and the meta description must
+    // carry them as plain text: no backticks and no markup.
+    let f = files();
+    let mut checked = 0;
+    for (path, bytes) in &f {
+        if !path.ends_with(".html") {
+            continue;
+        }
+        let html = String::from_utf8(bytes.clone()).unwrap();
+        let title = html
+            .split("<title>")
+            .nth(1)
+            .unwrap()
+            .split("</title>")
+            .next()
+            .unwrap();
+        let meta = html
+            .split("<meta name=\"description\" content=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        for (what, text) in [("title", title), ("meta description", meta)] {
+            assert!(!text.contains('`'), "{path}: backtick in {what}: {text}");
+            assert!(!text.contains('<'), "{path}: markup in {what}: {text}");
+        }
+        checked += 1;
+    }
+    assert!(checked > 5);
+    // The fixture summary "Read a whole function that returns a `Result`." loses its backticks.
+    assert!(f.values().any(|b| String::from_utf8_lossy(b)
+        .contains("content=\"Read a whole function that returns a Result. — ")));
+}
+
+#[test]
+fn backtick_code_spans_in_plain_text_fields() {
+    use super::{text_html, text_plain};
+    assert_eq!(
+        text_html("`Arc<T>` & `Rc`"),
+        "<code>Arc&lt;T&gt;</code> &amp; <code>Rc</code>"
+    );
+    assert_eq!(text_html("no code"), "no code");
+    assert_eq!(
+        text_html("one ` tick"),
+        "one ` tick",
+        "unbalanced backticks stay literal"
+    );
+    assert_eq!(text_plain("How `?` converts"), "How ? converts");
+    assert_eq!(text_plain("one ` tick"), "one ` tick");
 }
 
 #[test]

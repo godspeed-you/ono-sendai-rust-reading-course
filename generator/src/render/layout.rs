@@ -1,6 +1,6 @@
 //! The page skeleton shared by every page: head, header, course navigator and footer.
 
-use super::{root_of, Site};
+use super::{root_of, text_html, text_plain, Site};
 use crate::html::{escape, fill};
 use crate::model::Stage;
 use crate::paths;
@@ -57,9 +57,10 @@ fn site_links(root: &str, current: &str) -> String {
 }
 
 /// A compact stage marker for lists: "S1" with the full name available to screen readers.
+/// The visible "S" keeps the chip from reading as a lesson number next to the chapter numbers.
 pub(crate) fn stage_chip(stage: Stage) -> String {
     format!(
-        "<span class=\"stage-chip stage-{slug}\"><span class=\"vh\">Stage </span>{n}<span class=\"vh\">: {title}</span></span>",
+        "<span class=\"stage-chip stage-{slug}\"><span class=\"vh\">Stage </span><span aria-hidden=\"true\">S</span>{n}<span class=\"vh\">: {title}</span></span>",
         slug = stage.slug(),
         n = stage.number(),
         title = escape(stage.title()),
@@ -96,7 +97,7 @@ fn course_nav(site: &Site, root: &str, current: Current) -> String {
     let mut out = String::new();
     out.push_str("<nav id=\"course-nav\" class=\"course-nav\" aria-label=\"Course contents\">\n");
     out.push_str("<div class=\"nav-head\"><p class=\"nav-title\">Course contents</p><button type=\"button\" class=\"btn btn-small nav-close\" hidden>Close menu</button></div>\n");
-    out.push_str("<ul class=\"nav-site\">\n");
+    out.push_str("<div class=\"nav-body\">\n<ul class=\"nav-site\">\n");
     out.push_str(&site_links(root, current.path));
     out.push_str("\n</ul>\n<ol class=\"nav-chapters\">\n");
     for (ci, chapter) in site.chapters().enumerate() {
@@ -111,7 +112,7 @@ fn course_nav(site: &Site, root: &str, current: Current) -> String {
         out.push_str(&format!(
             "<li><details class=\"nav-chapter\"{open}><summary><span class=\"nav-ch-num\">{n}</span> <span class=\"nav-ch-title\">{title}</span></summary>\n<ol class=\"nav-lessons\">\n<li class=\"nav-overview\"><a href=\"{root}{chapter_path}\"{overview_cur}>Chapter overview</a></li>\n",
             n = chapter.number,
-            title = escape(&chapter.title),
+            title = text_html(&chapter.title),
         ));
         for l in site.chapter_lessons(ci) {
             let id = &l.lesson.id;
@@ -125,12 +126,12 @@ fn course_nav(site: &Site, root: &str, current: Current) -> String {
                 eid = escape(id),
                 path = paths::lesson(id),
                 chip = stage_chip(l.lesson.stage),
-                title = escape(&l.lesson.title),
+                title = text_html(&l.lesson.title),
             ));
         }
         out.push_str("</ol>\n</details></li>\n");
     }
-    out.push_str("</ol>\n</nav>");
+    out.push_str("</ol>\n</div>\n</nav>");
     out
 }
 
@@ -153,8 +154,8 @@ pub(crate) fn page(site: &Site, p: Page) -> String {
     fill(
         PAGE_TEMPLATE,
         &[
-            ("title", &escape(&full_title)),
-            ("description", &escape(p.description)),
+            ("title", &escape(&text_plain(&full_title))),
+            ("description", &escape(&text_plain(p.description))),
             ("generator_version", &escape(super::GENERATOR_VERSION)),
             ("root", root),
             ("kind", p.kind),
@@ -178,7 +179,7 @@ pub(crate) fn tag_list(items: &[(String, String)], class: &str, label: &str) -> 
     for (href, text) in items {
         out.push_str(&format!(
             "<li><a class=\"tag\" href=\"{href}\">{}</a></li>",
-            escape(text)
+            text_html(text)
         ));
     }
     out.push_str("</ul>");

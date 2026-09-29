@@ -28,6 +28,38 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+/// HTML for a one-line plain-text field (titles, summaries). Authors write code in these fields
+/// as Markdown-style `code` spans; a balanced pair of backticks becomes `<code>`, everything else
+/// is escaped. Unbalanced backticks are shown as they are.
+pub(crate) fn text_html(s: &str) -> String {
+    let parts: Vec<&str> = s.split('`').collect();
+    if parts.len() < 3 || parts.len().is_multiple_of(2) {
+        return crate::html::escape(s);
+    }
+    let mut out = String::with_capacity(s.len() + 16);
+    for (i, part) in parts.iter().enumerate() {
+        if i % 2 == 1 {
+            out.push_str("<code>");
+            out.push_str(&crate::html::escape(part));
+            out.push_str("</code>");
+        } else {
+            out.push_str(&crate::html::escape(part));
+        }
+    }
+    out
+}
+
+/// The same field as plain text (for `<title>`, meta descriptions and accessible names):
+/// balanced code-span backticks are dropped.
+pub(crate) fn text_plain(s: &str) -> String {
+    let n = s.matches('`').count();
+    if n >= 2 && n.is_multiple_of(2) {
+        s.replace('`', "")
+    } else {
+        s.to_string()
+    }
+}
+
 /// Version of the generator that produced a site, shown on the About page and in the metadata.
 pub const GENERATOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
