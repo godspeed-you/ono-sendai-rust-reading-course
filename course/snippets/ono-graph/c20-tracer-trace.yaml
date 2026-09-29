@@ -1,0 +1,121 @@
+id: c20-tracer-trace
+source:
+  file: crates/ono-graph/src/trace.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 118
+  end_line: 122
+  anchor: 'fn wants(&self, relation: &str) -> bool {'
+  content_hash: sha256:a446a66472cb49c8f83b0685bfacfd0305370312508cba57facbb874b4342211
+  code: |2
+        fn wants(&self, relation: &str) -> bool {
+            self.relations
+                .as_ref()
+                .is_none_or(|wanted| wanted.iter().any(|name| name == relation))
+        }
+- start_line: 132
+  end_line: 136
+  anchor: pub struct Tracer {
+  content_hash: sha256:1e2673828caf8ec4bb355c8a53121bf5dfa9bd34d1812fff27e75593ba2a904e
+  code: |
+    #[derive(Debug, Default, Clone)]
+    pub struct Tracer {
+        providers: Vec<Arc<dyn RelationshipProvider>>,
+        options: TraceOptions,
+    }
+- start_line: 182
+  end_line: 248
+  anchor: 'let mut queue: VecDeque<(Node, usize)> = VecDeque::new();'
+  content_hash: sha256:55b99566b461346600736f399d96476cc159bf87ecead4dc21aa306ff8642e4e
+  code: |2
+        /// Whether this provider is asked about this object at all.
+        fn consults(&self, provider: &Arc<dyn RelationshipProvider>, subject: &Node) -> bool {
+            answers_about(provider.as_ref(), subject) && offers_wanted(provider, self)
+        }
+
+        /// Whether any provider would have been asked about this object.
+        fn can_expand(&self, subject: &Node) -> bool {
+            self.providers
+                .iter()
+                .any(|provider| self.consults(provider, subject))
+        }
+
+        /// Walks from `roots` and returns the graph.
+        ///
+        /// The walk is breadth-first, adds every object at most once and never expands an object
+        /// twice, so it terminates on a cycle. It stops at the depth and node limits of
+        /// [`TraceOptions`] and records in [`Graph::truncation`] that it did.
+        pub async fn trace(&self, roots: impl IntoIterator<Item = Node>) -> Graph {
+            let mut graph = Graph::new();
+            let mut queue: VecDeque<(Node, usize)> = VecDeque::new();
+            for root in roots {
+                if graph.insert_node(root.clone()) {
+                    queue.push_back((root, 0));
+                }
+            }
+
+            while let Some((subject, depth)) = queue.pop_front() {
+                if depth >= self.options.depth {
+                    // Only a subject somebody could have answered about was truncated. An object no
+                    // registered provider expands has no relationships left to find, and saying a
+                    // complete answer was cut short would make the warning worthless.
+                    if self.can_expand(&subject) {
+                        graph
+                            .truncation_mut()
+                            .record_depth_limit(self.options.depth);
+                    }
+                    continue;
+                }
+                for provider in &self.providers {
+                    if !self.consults(provider, &subject) {
+                        continue;
+                    }
+                    let (found, failures) = provider.relationships(&subject).await.into_parts();
+                    for failure in failures {
+                        graph.insert_failure(GraphFailure::new(subject.id().clone(), failure));
+                    }
+                    for relationship in found {
+                        let (edge, target) = relationship.into_parts();
+                        if !self.options.wants(edge.relation()) {
+                            continue;
+                        }
+                        if graph.node(target.id()).is_none() {
+                            if graph.nodes().len() >= self.options.max_nodes {
+                                graph
+                                    .truncation_mut()
+                                    .record_node_limit(self.options.max_nodes);
+                                continue;
+                            }
+                            graph.insert_node(target.clone());
+                            queue.push_back((target, depth + 1));
+                        }
+                        graph.insert_edge(edge);
+                    }
+                }
+            }
+            graph
+        }
+- start_line: 251
+  end_line: 269
+  anchor: fn offers_wanted(
+  content_hash: sha256:739fe9a40ff0448e5753fc02c644cb4c43a3032333cbdc058d1b14dfc4d35da0
+  code: |
+    /// Whether the provider answers about this kind of object.
+    fn answers_about(provider: &dyn RelationshipProvider, subject: &Node) -> bool {
+        let kind = subject.kind().to_string();
+        provider.subjects().contains(&kind.as_str())
+    }
+
+    /// Whether the provider offers any of the relations the caller asked for.
+    fn offers_wanted(provider: &Arc<dyn RelationshipProvider>, tracer: &Tracer) -> bool {
+        let Some(wanted) = tracer.options.relations() else {
+            return true;
+        };
+        // A provider that declares no relations is not saying it has none — a plugin may contribute
+        // whatever it likes — so it is still consulted and its edges are filtered afterwards.
+        provider.relations().is_empty()
+            || provider
+                .relations()
+                .iter()
+                .any(|relation| wanted.iter().any(|name| name == relation))
+    }

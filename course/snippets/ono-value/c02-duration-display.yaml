@@ -1,0 +1,43 @@
+id: c02-duration-display
+source:
+  file: crates/ono-value/src/units.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 480
+  end_line: 512
+  anchor: let day = DurationUnit::Days.nanoseconds().unsigned_abs();
+  content_hash: sha256:9561194a0d8bd0278a14a0faf7dd54e033c7acaaa388645cfa6e1a486cbe28b9
+  code: |
+    impl fmt::Display for Duration {
+        /// The human form of spec §13.4: `4d 03h`, `843ms`.
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            if self.0 < 0 {
+                f.write_str("-")?;
+            }
+            let nanos = self.0.unsigned_abs();
+            let day = DurationUnit::Days.nanoseconds().unsigned_abs();
+            let hour = DurationUnit::Hours.nanoseconds().unsigned_abs();
+            let minute = DurationUnit::Minutes.nanoseconds().unsigned_abs();
+            let second = DurationUnit::Seconds.nanoseconds().unsigned_abs();
+            let milli = DurationUnit::Milliseconds.nanoseconds().unsigned_abs();
+            let micro = DurationUnit::Microseconds.nanoseconds().unsigned_abs();
+
+            if nanos == 0 {
+                f.write_str("0s")
+            } else if nanos >= day {
+                write!(f, "{}d {:02}h", nanos / day, (nanos % day) / hour)
+            } else if nanos >= hour {
+                write!(f, "{}h {:02}m", nanos / hour, (nanos % hour) / minute)
+            } else if nanos >= minute {
+                write!(f, "{}m {:02}s", nanos / minute, (nanos % minute) / second)
+            } else if nanos >= second {
+                write!(f, "{:.2}s", nanos as f64 / second as f64)
+            } else if nanos >= milli {
+                write!(f, "{}ms", nanos / milli)
+            } else if nanos >= micro {
+                write!(f, "{}us", nanos / micro)
+            } else {
+                write!(f, "{nanos}ns")
+            }
+        }
+    }

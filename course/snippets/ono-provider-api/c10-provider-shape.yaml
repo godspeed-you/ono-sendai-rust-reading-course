@@ -1,0 +1,74 @@
+id: c10-provider-shape
+source:
+  file: crates/ono-provider-api/src/lib.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 46
+  end_line: 58
+  anchor: 'pub trait Provider: Send + Sync + std::fmt::Debug {'
+  content_hash: sha256:69c1ecfe9bd65c97c5165a429db982c87b180a1d898af9db8ca1f5e644b8dfb9
+  code: |
+    /// A source of objects, and the operations that change them.
+    ///
+    /// A provider answers about one or more targets. It never formats anything (spec §5), never
+    /// parses unstable human-readable text (spec §50), and reports what it does not know as `null`
+    /// rather than as zero (spec §35.3).
+    #[async_trait::async_trait]
+    pub trait Provider: Send + Sync + std::fmt::Debug {
+        /// The provider's stable id, such as `linux.procfs`. It appears in every record's provenance,
+        /// so a user can always ask where a value came from.
+        fn id(&self) -> &str;
+
+        /// The targets this provider answers about.
+        fn targets(&self) -> &[&str];
+- start_line: 76
+  end_line: 98
+  anchor: 'fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue>;'
+  content_hash: sha256:99404e0f796e478f04a247b0c8598badfffe26402a8a682ae168787f4d263141
+  code: |2
+        /// The schemas it produces.
+        fn schemas(&self) -> Vec<Arc<Schema>>;
+
+        /// What it must be allowed to do.
+        fn capabilities(&self) -> Vec<Capability>;
+
+        /// Whether it can answer on this machine, and why not when it cannot.
+        ///
+        /// The default is available; a provider that depends on something that may be missing —
+        /// systemd, a netlink socket, a container runtime — overrides this rather than failing later
+        /// with an empty result.
+        fn availability(&self) -> Availability {
+            Availability::Available
+        }
+
+        /// The objects matching `query`, as they are now.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error when the query cannot be answered at all. A *partial* failure —
+        /// one object that could not be read — belongs on the stream's error channel instead, so the
+        /// objects that could be read still arrive (spec §16.5).
+        fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue>;
+- start_line: 127
+  end_line: 129
+  anchor: TemporalCapabilities::none()
+  content_hash: sha256:127fd55165089c0ab2c1996ad55973bd7c4a0918ec15b59ce7509d71cfb5f2ff
+  code: |2
+        fn temporal(&self) -> TemporalCapabilities {
+            TemporalCapabilities::none()
+        }
+- start_line: 142
+  end_line: 145
+  anchor: Err(unsupported_history(self.id()))
+  content_hash: sha256:4d834e5506aa080d53b0b85aca7553e41d757e777de63a39f654b18aba25a481
+  code: |2
+        fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+            let _ = (query, window);
+            Err(unsupported_history(self.id()))
+        }
+- start_line: 152
+  end_line: 152
+  anchor: async fn resolve(
+  content_hash: sha256:772d50d27a93e7f0fedfef804426a9b4021a6aafbdbfe624018c333cf2202c7e
+  code: |2
+        async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue>;

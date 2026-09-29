@@ -1,0 +1,82 @@
+id: c14-adapter-pack-serde
+source:
+  file: crates/ono-adapter/src/contract.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 5
+  anchor: Parsing fails closed on unknown fields
+  content_hash: sha256:9c46619323b3cfbac041cdaef9681a024d47a94d90287c9f7b63892c94d56d6e
+  code: |
+    //! The adapter pack contract of `docs/contracts/adapters/schema.yaml` (spec v0.3 §1.44, ADR-0055).
+    //!
+    //! A pack is data: what an executable family looks like, which invocations are adapted, how
+    //! the output decodes and onto which canonical schema. Parsing fails closed on unknown fields;
+    //! `validate` checks everything parsing cannot — schema ids, capability grants, fixtures.
+- start_line: 193
+  end_line: 254
+  anchor: '#[serde(rename = "process.exec")]'
+  content_hash: sha256:9e9591873916cd172bc498a96f26cc6c58f4cae494f46a71257ab413660eabff
+  code: |
+    /// A pack of adapters: one executable grant, several adapters.
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct AdapterPack {
+        format: String,
+        package: Package,
+        roles: Vec<String>,
+        capabilities: Capabilities,
+        adapters: Vec<Adapter>,
+    }
+
+    /// Identity and tier of a pack.
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Package {
+        id: String,
+        name: String,
+        version: String,
+        publisher: String,
+        tier: Tier,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Capabilities {
+        #[serde(rename = "process.exec")]
+        process_exec: ProcessExec,
+    }
+
+    /// The `process.exec` grant of spec v0.3 §1.22.
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct ProcessExec {
+        executables: Vec<String>,
+        argv_policy: String,
+    }
+
+    /// One adapter: an executable family, one schema, one decoder, several invocations.
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Adapter {
+        id: String,
+        summary: String,
+        executable: Executable,
+        tier: StrategyTier,
+        output_demand: Vec<DemandKind>,
+        fallback: Fallback,
+        schema: String,
+        decoder: Decoder,
+        fields: BTreeMap<String, FieldMap>,
+        #[serde(default)]
+        literals: BTreeMap<String, serde_yaml_ng::Value>,
+        invocations: Vec<Invocation>,
+        limits: Vec<String>,
+        fixtures: String,
+        #[serde(default)]
+        temporal: Option<HistoricalPlan>,
+        #[serde(skip)]
+        pack_id: String,
+        #[serde(skip)]
+        pack_version: String,
+    }

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Read a whole function that returns a Result. — Stage 3 of 5: Code-reading exercises">
+<meta name="generator" content="ono-course 1.0.0">
+<title>Evaluating a word · Mini Reading Course</title>
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/course.css">
+<script src="../assets/course.js" defer></script>
+</head>
+<body class="page page-lesson" data-page="lesson" data-lesson="eval-01" data-stage="practice">
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="site-header">
+<div class="header-inner">
+<a class="brand" href="../index.html"><svg class="brand-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="7" class="brand-mark-bg"/><path d="M9 11l6 5-6 5" class="brand-mark-fg"/><path d="M17 22h7" class="brand-mark-fg"/></svg><span class="brand-text"><span class="brand-name">Ono-Sendai</span> <span class="brand-sub">Rust Reading Course</span></span></a>
+<nav class="site-links" aria-label="Site">
+<ul>
+<li><a href="../index.html">Course home</a></li>
+<li><a href="../learn-rust.html">Learn Rust</a></li>
+<li><a href="../ono-sendai.html">Understand Ono-Sendai</a></li>
+<li><a href="../glossary.html">Glossary</a></li>
+<li><a href="../about.html">About</a></li>
+</ul>
+</nav>
+<a class="nav-jump" href="#course-nav">Contents</a>
+<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="course-nav" hidden>Menu</button>
+</div>
+</header>
+<div class="layout">
+<main id="main" tabindex="-1">
+<p class="storage-note" role="note" hidden>This browser does not let the course store anything, so progress, ticked checklists and notes are kept only until you leave this page. Everything else works normally.</p>
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="../index.html">Course home</a></li><li><a href="../chapters/02-evaluation.html">Chapter 2: Evaluation</a></li><li><span aria-current="page">Lesson 1 of 3</span></li></ol></nav>
+<header class="page-head lesson-head">
+<p class="kicker">Chapter 2 · Lesson 1 of 3 <span class="kicker-overall">· Lesson 3 of 5 in the course</span></p>
+<h1>Evaluating a word</h1>
+<p class="lede">Read a whole function that returns a <code>Result</code>.</p>
+<div class="stage-badge stage-practice" data-stage="practice"><p class="stage-badge-name">Stage 3 of 5 · <strong>Code-reading exercises</strong></p><p class="stage-badge-support">Whole functions. Optional hints, worked analysis after your attempt.</p></div>
+</header>
+<section class="lesson-overview" aria-labelledby="overview-h">
+<h2 id="overview-h">In this lesson</h2>
+<dl class="overview">
+<dt>You will learn to</dt>
+<dd><ul class="objectives">
+<li>Read a complete function and describe its control flow</li>
+</ul></dd>
+<dt>Before this lesson</dt>
+<dd><ul class="prereqs"><li><a href="../lessons/values-02.html">A shortened view of methods</a> <span class="muted">(Chapter 1, lesson 2)</span></li></ul></dd>
+<dt>Rust concepts</dt>
+<dd><ul class="tags tags-concepts" aria-label="Rust concepts"><li><a class="tag" href="../learn-rust.html#concept-error-handling">Error handling</a></li><li><a class="tag" href="../learn-rust.html#concept-pattern-matching">Pattern matching</a></li></ul></dd>
+<dt>Ono-Sendai topics</dt>
+<dd><ul class="tags tags-topics" aria-label="Ono-Sendai topics"><li><a class="tag" href="../ono-sendai.html#topic-evaluation">Evaluation</a></li></ul></dd>
+</dl>
+</section>
+<section class="lesson-body" aria-labelledby="reading-h">
+<h2 id="reading-h">Reading</h2>
+<figure class="code-figure" id="f1" data-snippet="eval-word" style="--ln-digits:2">
+<div class="code-head">
+<p class="provenance"><span class="prov-ono">Ono-Sendai v0.1.0</span> · <span class="prov-file"><code>crates/mini-shell/src/eval.rs</code>:10–22</span> · <span class="prov-commit">commit <code>0123456</code></span></p>
+<details class="source-details"><summary>Source details</summary>
+<dl class="source-meta">
+<dt>File</dt><dd><code>crates/mini-shell/src/eval.rs</code></dd>
+<dt>Lines shown</dt><dd>10–22</dd>
+<dt>Commit</dt><dd><code class="hash">0123456789abcdef0123456789abcdef01234567</code></dd>
+<dt>Ono-Sendai version</dt><dd>v0.1.0</dd>
+<dt>Snippet id</dt><dd><code>eval-word</code></dd>
+<dt>Segments</dt><dd><ul class="segments"><li>Lines 10–22 · anchor <code>pub fn eval_word</code> · <code class="hash">sha256:33830cb774a8f9e997635d18d23492b1e0d73343ae94e8cdafd7cf3910b758a2</code></li></ul></dd>
+</dl>
+<p class="exact-note">The code is quoted exactly from this commit. Line numbers are the real line numbers in the file.</p>
+</details>
+</div>
+<div class="code-tools" hidden><button type="button" class="btn btn-small code-wrap" aria-pressed="false">Wrap long lines</button></div>
+<div class="code-scroll" tabindex="0" role="region" aria-label="Source code: crates/mini-shell/src/eval.rs, lines 10–22"><pre class="source" translate="no"><code><span class="line" data-line="10"><span class="gut"><span class="ln" data-n="10" aria-hidden="true"></span></span><span class="lc"><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Context</span> {</span></span><span class="line" data-line="11"><span class="gut"><span class="ln" data-n="11" aria-hidden="true"></span></span><span class="lc">    <span class="tok-kw">pub</span> vars: <span class="tok-ty">HashMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">Value</span>&gt;,</span></span><span class="line" data-line="12"><span class="gut"><span class="ln" data-n="12" aria-hidden="true"></span></span><span class="lc">}</span></span><span class="line" data-line="13"><span class="gut"><span class="ln" data-n="13" aria-hidden="true"></span></span><span class="lc"></span></span><span class="line" data-line="14"><span class="gut"><span class="ln" data-n="14" aria-hidden="true"></span></span><span class="lc"><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> eval_word(ctx: &amp;<span class="tok-ty">Context</span>, word: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Value</span>, <span class="tok-ty">EvalError</span>&gt; {</span></span><span class="line" data-line="15"><span class="gut"><span class="ln" data-n="15" aria-hidden="true"></span></span><span class="lc">    <span class="tok-kw">if</span> <span class="tok-kw">let</span> <span class="tok-ty">Some</span>(name) = word.strip_prefix(<span class="tok-str">&#39;$&#39;</span>) {</span></span><span class="line" data-line="16"><span class="gut"><span class="ln" data-n="16" aria-hidden="true"></span></span><span class="lc">        <span class="tok-kw">return</span> <span class="tok-ty">Ok</span>(ctx.vars.get(name).cloned().unwrap_or(<span class="tok-ty">Value</span>::<span class="tok-ty">Nothing</span>));</span></span><span class="line" data-line="17"><span class="gut"><span class="ln" data-n="17" aria-hidden="true"></span></span><span class="lc">    }</span></span><span class="line" data-line="18"><span class="gut"><span class="ln" data-n="18" aria-hidden="true"></span></span><span class="lc">    <span class="tok-kw">match</span> word.parse::&lt;<span class="tok-ty">i64</span>&gt;() {</span></span><span class="line" data-line="19"><span class="gut"><span class="ln" data-n="19" aria-hidden="true"></span></span><span class="lc">        <span class="tok-ty">Ok</span>(n) =&gt; <span class="tok-ty">Ok</span>(<span class="tok-ty">Value</span>::<span class="tok-ty">Int</span>(n)),</span></span><span class="line" data-line="20"><span class="gut"><span class="ln" data-n="20" aria-hidden="true"></span></span><span class="lc">        <span class="tok-ty">Err</span>(_) =&gt; <span class="tok-ty">Ok</span>(<span class="tok-ty">Value</span>::<span class="tok-ty">Text</span>(word.to_string())),</span></span><span class="line" data-line="21"><span class="gut"><span class="ln" data-n="21" aria-hidden="true"></span></span><span class="lc">    }</span></span><span class="line" data-line="22"><span class="gut"><span class="ln" data-n="22" aria-hidden="true"></span></span><span class="lc">}</span></span></code></pre></div>
+</figure>
+<section class="exercise" id="ex-eval-01-q1" data-exercise="eval-01-q1" data-exercise-type="read-function" data-has-solution="true" aria-labelledby="ex-eval-01-q1-title">
+<h3 id="ex-eval-01-q1-title"><span class="ex-number">Exercise 1</span> <span class="ex-type">Read the function</span></h3>
+<div class="prompt" id="ex-eval-01-q1-prompt">
+<p>Describe what <code>eval_word</code> does for <code>$x</code>, <code>42</code> and <code>hello</code>.</p>
+</div>
+<div class="scratchpad">
+<label for="ex-eval-01-q1-notes">Private notes — stay in this browser and are never graded</label>
+<textarea id="ex-eval-01-q1-notes" class="notes" data-exercise="eval-01-q1" rows="5" spellcheck="false"></textarea>
+<p class="notes-status" aria-live="polite"></p>
+</div>
+<div class="hints">
+<details class="hint" data-level="1"><summary><span class="hint-title">Hint 1</span></summary>
+<div class="hint-body">
+<p>There is an early <code>return</code>.</p>
+</div>
+</details>
+<details class="hint" data-level="2"><summary><span class="hint-title">Hint 2</span><span class="hint-lock" hidden> — open Hint 1 first</span></summary>
+<div class="hint-body">
+<p><code>parse::&lt;i64&gt;()</code> can fail.</p>
+</div>
+</details>
+</div>
+<details class="solution"><summary>I have made my attempt — show the worked analysis</summary>
+<div class="solution-body">
+<div class="sol-part sol-summary">
+<h4>Short answer</h4>
+<p>Variables are looked up, numbers parsed, everything else becomes text.</p>
+</div>
+<div class="sol-part sol-analysis">
+<h4>Analysis</h4>
+<dl class="analysis">
+<dt>Purpose</dt>
+<dd>
+<p>Turn one word into a <code>Value</code>.</p>
+</dd>
+<dt>Inputs</dt>
+<dd>
+<p>A borrowed context and a borrowed word.</p>
+</dd>
+<dt>Control flow</dt>
+<dd>
+<p>An early return for variables, then a <code>match</code> on the parse result.</p>
+</dd>
+</dl>
+</div>
+<div class="sol-part sol-guarantees">
+<h4>What the code explicitly guarantees</h4>
+<p class="sol-note">Stated by the code itself: signatures, types, checks and returns.</p>
+<p>The function never returns <code>Err</code>, although its signature allows it.</p>
+</div>
+<div class="sol-part sol-semantics">
+<h4>What follows from Rust semantics</h4>
+<p class="sol-note">Consequences of the language rules, whether or not the code spells them out.</p>
+<p><code>cloned()</code> copies the stored value, so the context keeps its own.</p>
+</div>
+<div class="sol-part sol-interpretation">
+<h4>Architectural interpretation</h4>
+<p class="sol-note">An interpretation of the design — reasoned from the code, but not guaranteed by it.</p>
+<p>Returning <code>Result</code> leaves room for future failure modes.</p>
+</div>
+</div>
+</details>
+</section>
+</section>
+<div class="lesson-end">
+<div class="complete" hidden><button type="button" class="btn mark-complete" data-lesson="eval-01" aria-pressed="false">Mark lesson complete</button><p class="complete-status" role="status"></p></div>
+<nav class="pager" aria-label="Previous and next lesson">
+<a class="pager-prev" rel="prev" href="../lessons/values-02.html"><span class="pager-dir">Previous lesson · Chapter 1</span><span class="pager-title">A shortened view of methods</span></a>
+<a class="pager-next" rel="next" href="../lessons/eval-02.html"><span class="pager-dir">Next lesson</span><span class="pager-title">Summing values</span></a>
+</nav>
+</div>
+</main>
+<nav id="course-nav" class="course-nav" aria-label="Course contents">
+<div class="nav-head"><p class="nav-title">Course contents</p><button type="button" class="btn btn-small nav-close" hidden>Close menu</button></div>
+<div class="nav-body">
+<ul class="nav-site">
+<li><a href="../index.html">Course home</a></li>
+<li><a href="../learn-rust.html">Learn Rust</a></li>
+<li><a href="../ono-sendai.html">Understand Ono-Sendai</a></li>
+<li><a href="../glossary.html">Glossary</a></li>
+<li><a href="../about.html">About</a></li>
+</ul>
+<ol class="nav-chapters">
+<li><details class="nav-chapter"><summary><span class="nav-ch-num">1</span> <span class="nav-ch-title">Values &amp; variants</span></summary>
+<ol class="nav-lessons">
+<li class="nav-overview"><a href="../chapters/01-values.html">Chapter overview</a></li>
+<li data-lesson-id="values-01"><a href="../lessons/values-01.html"><span class="stage-chip stage-guided"><span class="vh">Stage </span><span aria-hidden="true">S</span>1<span class="vh">: Guided reading</span></span><span class="nav-l-title">The &lt;Value&gt; enum &amp; its methods</span></a></li>
+<li data-lesson-id="values-02"><a href="../lessons/values-02.html"><span class="stage-chip stage-assisted"><span class="vh">Stage </span><span aria-hidden="true">S</span>2<span class="vh">: Assisted interpretation</span></span><span class="nav-l-title">A shortened view of methods</span></a></li>
+</ol>
+</details></li>
+<li><details class="nav-chapter" open><summary><span class="nav-ch-num">2</span> <span class="nav-ch-title">Evaluation</span></summary>
+<ol class="nav-lessons">
+<li class="nav-overview"><a href="../chapters/02-evaluation.html">Chapter overview</a></li>
+<li data-lesson-id="eval-01"><a href="../lessons/eval-01.html" aria-current="page"><span class="stage-chip stage-practice"><span class="vh">Stage </span><span aria-hidden="true">S</span>3<span class="vh">: Code-reading exercises</span></span><span class="nav-l-title">Evaluating a word</span></a></li>
+<li data-lesson-id="eval-02"><a href="../lessons/eval-02.html"><span class="stage-chip stage-transfer"><span class="vh">Stage </span><span aria-hidden="true">S</span>4<span class="vh">: Unseen code, with solutions</span></span><span class="nav-l-title">Summing values</span></a></li>
+<li data-lesson-id="eval-03"><a href="../lessons/eval-03.html"><span class="stage-chip stage-independent"><span class="vh">Stage </span><span aria-hidden="true">S</span>5<span class="vh">: Independent reading</span></span><span class="nav-l-title">Reading on your own</span></a></li>
+</ol>
+</details></li>
+</ol>
+</div>
+</nav>
+</div>
+<footer class="site-footer">
+<div class="footer-inner">
+<p class="footer-versions">Ono-Sendai Rust Reading Course <strong>0.9.0</strong> · reads Ono-Sendai <strong>v0.1.0</strong> at commit <code>0123456</code></p>
+<p class="footer-contract">Static. Offline. No server. No account. No LLM. · <a href="../about.html">About this build</a></p>
+</div>
+</footer>
+</body>
+</html>

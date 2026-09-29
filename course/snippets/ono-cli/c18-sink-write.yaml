@@ -1,0 +1,59 @@
+id: c18-sink-write
+source:
+  file: crates/ono-cli/src/sink.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 104
+  end_line: 152
+  anchor: layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation)
+  content_hash: sha256:882eddf3943663aff38197919e3aeace151d1211565a0536283b03e0cb764298
+  code: |2
+        /// Writes already-collected values.
+        ///
+        /// Rendering a table needs to know its widest cell, so a table is necessarily collected
+        /// first. That is a property of tables, not of the pipeline: `to json` and the other
+        /// serialising views stream, and a future in-place `watch` renderer (spec §18.3) will too.
+        pub fn write(&self, values: &[Value]) {
+            let lines = self.render(values);
+            if lines.is_empty() {
+                return;
+            }
+            let mut out = std::io::stdout().lock();
+            for line in lines {
+                let _ = writeln!(out, "{line}");
+            }
+            let _ = out.flush();
+        }
+
+        /// The lines this sink would write, for a caller that sends them somewhere else.
+        #[must_use]
+        pub fn render(&self, values: &[Value]) -> Vec<String> {
+            if values.is_empty() {
+                return Vec::new();
+            }
+            // A graph never renders as a table (spec §13.6): its record revives and draws as the
+            // trees it holds, wherever it came from — a live trace, a file, a pipe.
+            if let [value] = values
+                && let Ok(record) = value.as_record()
+                && record.schema_id().to_string() == "ono.graph/1"
+                && let Ok(graph) = ono_graph::Graph::from_record(record)
+            {
+                let layout = Layout::new(self.width);
+                return graph
+                    .trees()
+                    .iter()
+                    .flat_map(|tree| layout.render_tree_styled(tree, &self.theme, self.presentation))
+                    .collect();
+            }
+            #[cfg(feature = "spatial")]
+            if let Some(lines) = self.render_tier_view(values) {
+                return lines;
+            }
+            let renderer = Renderer::new();
+            let mut layout = Layout::new(self.width);
+            if let Some(max_rows) = self.max_rows {
+                layout = layout.max_rows(max_rows);
+            }
+
+            layout.render_view_styled(&renderer, values, self.view, &self.theme, self.presentation)
+        }

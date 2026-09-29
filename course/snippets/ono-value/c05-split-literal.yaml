@@ -1,0 +1,20 @@
+id: c05-split-literal
+source:
+  file: crates/ono-value/src/units.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 588
+  end_line: 597
+  anchor: 'let split = trimmed.find(|c: char| c.is_ascii_alphabetic())?;'
+  content_hash: sha256:feb3f6c006b2e3626dccd63a395d713c10216eb1f777f89c75147855c556210b
+  code: |
+    /// Splits `3.5GiB` into `("3.5", "GiB")`, or reports that there is no unit suffix at all.
+    fn split_literal(text: &str) -> Option<(&str, &str)> {
+        let trimmed = text.trim();
+        let split = trimmed.find(|c: char| c.is_ascii_alphabetic())?;
+        let number = trimmed[..split].trim();
+        if number.is_empty() {
+            return None;
+        }
+        Some((number, trimmed[split..].trim()))
+    }

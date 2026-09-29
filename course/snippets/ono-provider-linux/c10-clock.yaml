@@ -1,0 +1,46 @@
+id: c10-clock
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 45
+  end_line: 80
+  anchor: fn now_nanos(&self) -> u128;
+  content_hash: sha256:3bb85f41920d0df203190514aac4ed6fb649abf63bef17aef4c0e37880c26929
+  code: |
+    /// The monotonic clock the CPU sampler measures its interval against.
+    ///
+    /// Injectable because a rate is a quotient of two measurements, and a test that cannot state the
+    /// denominator cannot assert the quotient.
+    pub trait Clock: Send + Sync + std::fmt::Debug {
+        /// Nanoseconds since an arbitrary but fixed point, never going backwards.
+        fn now_nanos(&self) -> u128;
+    }
+
+    /// The machine's own monotonic clock.
+    #[derive(Debug)]
+    pub struct SystemClock {
+        base: Instant,
+    }
+
+    impl Default for SystemClock {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl SystemClock {
+        /// A clock counting from now.
+        #[must_use]
+        pub fn new() -> Self {
+            Self {
+                base: Instant::now(),
+            }
+        }
+    }
+
+    impl Clock for SystemClock {
+        fn now_nanos(&self) -> u128 {
+            self.base.elapsed().as_nanos()
+        }
+    }

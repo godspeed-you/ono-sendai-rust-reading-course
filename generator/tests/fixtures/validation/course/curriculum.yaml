@@ -1,0 +1,28 @@
+title: Validation Fixture Course
+tagline: The smallest course that exercises every validation rule.
+chapters:
+  - chapters/01-basics.yaml
+  - chapters/02-deeper.yaml
+concepts:
+  - id: borrowing
+    title: Borrowing
+    summary: Reading `&T` parameters.
+  - id: control-flow
+    title: Control flow
+    summary: Loops, `match` and early exits.
+  - id: enums
+    title: Enums
+    summary: Types with several variants.
+ono_topics:
+  - id: text-handling
+    title: Text handling
+    summary: How the demo crate works with strings.
+  - id: evaluation
+    title: Evaluation
+    summary: How words become values.
+checklists:
+  independent-reading:
+    title: Independent-reading checklist
+    items:
+      - I can summarize the purpose of this code.
+      - I can name its inputs and outputs.

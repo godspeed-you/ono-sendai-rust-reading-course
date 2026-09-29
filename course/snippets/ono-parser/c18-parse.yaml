@@ -1,0 +1,28 @@
+id: c18-parse
+source:
+  file: crates/ono-parser/src/parser/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 72
+  end_line: 89
+  anchor: let parsed = ono_parser::parse("get process | where cpu > 20");
+  content_hash: sha256:2661ad48d98d35cf8ae0cdfdc785c7f7c7225385ac35b98d88fea0354fdb52ef
+  code: |
+    /// Parses a source into a tree and a list of diagnostics.
+    ///
+    /// The call never panics and always returns a tree, whatever it is handed.
+    ///
+    /// ```
+    /// let parsed = ono_parser::parse("get process | where cpu > 20");
+    /// assert!(parsed.diagnostics().is_empty());
+    /// assert_eq!(parsed.program().statements.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn parse(source: &str) -> Parsed {
+        let mut parser = Parser::new(source);
+        let program = parser.parse_program();
+        Parsed {
+            program,
+            diagnostics: parser.diagnostics,
+        }
+    }

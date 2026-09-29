@@ -1,0 +1,70 @@
+id: c14-tokens-macro
+source:
+  file: crates/ono-render/src/theme.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 15
+  end_line: 74
+  anchor: macro_rules! tokens {
+  content_hash: sha256:748b47f61278d8bbb7e2e916f5d1ec62dc54d1595ee89e21b6b2f796a665f069
+  code: |
+    /// Builds [`Token`] together with the name spec §44 gives it.
+    macro_rules! tokens {
+        ($( $variant:ident => $name:literal, $doc:literal; )*) => {
+            /// A semantic role a piece of output plays, from spec §44.
+            ///
+            /// Output asks for a token; the theme decides what that looks like. Nothing in the shell
+            /// names a colour.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            #[non_exhaustive]
+            pub enum Token {
+                $( #[doc = $doc] $variant, )*
+            }
+
+            impl Token {
+                /// Every token of spec §44, in the order it lists them.
+                pub const ALL: &'static [Token] = &[ $( Token::$variant, )* ];
+
+                /// The token's name, spelled as spec §44 spells it.
+                #[must_use]
+                pub const fn name(self) -> &'static str {
+                    match self { $( Token::$variant => $name, )* }
+                }
+            }
+        };
+    }
+
+    tokens! {
+        Foreground => "ui.fg", "Ordinary values and prose.";
+        Dim => "ui.dim", "Metadata, provenance and secondary columns.";
+        Accent => "ui.accent", "The selected object, the active link, a relationship edge.";
+        Success => "ui.success", "A completed state change worth confirming.";
+        Warning => "ui.warning", "A degraded or risky state.";
+        Danger => "ui.danger", "A destructive action, privilege escalation, a critical error.";
+        Border => "ui.border", "Rules and frames.";
+        Selection => "ui.selection", "The interactive selection cursor.";
+        PromptLink => "ui.prompt.link", "The machine that will execute native operations.";
+        PromptContext => "ui.prompt.context", "The selected system object in the prompt.";
+        PromptRoot => "ui.prompt.root", "An elevated identity, which must be impossible to miss.";
+        TableHeader => "ui.table.header", "A column header.";
+        TableKey => "ui.table.key", "A field name in a stacked record.";
+        ValueString => "ui.value.string", "A string value.";
+        ValueNumber => "ui.value.number", "A numeric value.";
+        ValueUnit => "ui.value.unit", "The unit part of a semantic scalar.";
+        ValueNull => "ui.value.null", "An unknown value — never an empty string (spec §10.5).";
+        ErrorCode => "ui.error.code", "The stable error code of spec §43.";
+        ErrorHint => "ui.error.hint", "The help line of a structured error.";
+        GraphNode => "ui.graph.node", "A node in a relationship graph.";
+        GraphEdge => "ui.graph.edge", "An observed relationship.";
+        GraphEdgeInferred => "ui.graph.edge_inferred", "An inferred relationship (spec §22.2).";
+        Path => "ui.value.path", "A filesystem path.";
+        Timestamp => "ui.value.timestamp", "A point in time.";
+    }
+
+    impl Token {
+        /// Resolves a token from its name, as a theme file names it.
+        #[must_use]
+        pub fn from_name(name: &str) -> Option<Self> {
+            Self::ALL.iter().copied().find(|token| token.name() == name)
+        }
+    }

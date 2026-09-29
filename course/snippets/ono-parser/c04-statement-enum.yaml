@@ -1,0 +1,33 @@
+id: c04-statement-enum
+source:
+  file: crates/ono-parser/src/ast.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 89
+  end_line: 95
+  anchor: pub enum Statement {
+  content_hash: sha256:f4d7f178c2508f568ae0e760376659f07903ed818ce628a74464fd99d8498834
+  code: |
+    /// One statement of a program or block.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Statement {
+        /// A pipeline, possibly chained on exit status and possibly backgrounded.
+        Pipeline(Pipeline),
+        /// `let name = pipeline`, the only binding form (ADR-0009).
+        Let(LetStmt),
+- start_line: 110
+  end_line: 120
+  anchor: Error(Span),
+  content_hash: sha256:0e1934e737a79d43ead6fb276cb68db1899edf4abed7a3d37d5aa5bd87da3eb0
+  code: |2
+        /// `return expr?`.
+        Return(ReturnStmt),
+        /// `break`.
+        Break(Span),
+        /// `continue`.
+        Continue(Span),
+        /// `use module`.
+        Use(UseStmt),
+        /// A statement the parser could not read; a diagnostic describes why.
+        Error(Span),
+    }

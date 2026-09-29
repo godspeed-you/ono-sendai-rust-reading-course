@@ -1,0 +1,26 @@
+id: c19-register-linux
+source:
+  file: crates/ono-provider-linux/src/lib.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 119
+  end_line: 134
+  anchor: registry.register(Arc::new(ProcessProvider::new()));
+  content_hash: sha256:4271c96d7efce2f695349a73513804de596c23b315c6756f1dcfc23ed2c78797
+  code: |
+    /// The same providers, with an `env` provider the caller keeps a handle on — so the session can
+    /// [`EnvProvider::publish`] its bindings as they change.
+    pub fn register_with_env(registry: &mut ProviderRegistry, env: Arc<EnvProvider>) {
+        registry.register(Arc::new(ProcessProvider::new()));
+        registry.register(Arc::new(FileProvider::new()));
+        registry.register(Arc::new(IdentityProvider::new()));
+        registry.register(env);
+        registry.register(Arc::new(StorageProvider::new()));
+        registry.register(Arc::new(DeviceProvider::new()));
+        // Both package databases are registered on every machine, and the registry answers with
+        // the first that is available: dpkg on Debian, rpm on Red Hat and SUSE, and where neither is
+        // present each says what it looked for rather than either claiming there are no packages
+        // (spec §35.3, ADR-0422).
+        registry.register(Arc::new(PackageProvider::new()));
+        registry.register(Arc::new(RpmPackageProvider::new()));
+    }

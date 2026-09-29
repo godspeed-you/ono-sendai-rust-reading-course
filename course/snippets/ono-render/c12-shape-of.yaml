@@ -1,0 +1,65 @@
+id: c12-shape-of
+source:
+  file: crates/ono-render/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 337
+  end_line: 391
+  anchor: 'fn of(values: &[Value]) -> Self {'
+  content_hash: sha256:c259597767a64003adc9f52c55a7c121bd4c6a23c232420c785ad0ba939a96ef
+  code: |
+    /// What a stream of values has in common, which is what decides the table's columns.
+    enum Shape {
+        Empty,
+        Records(std::sync::Arc<Schema>),
+        Maps(Vec<String>),
+        Scalars,
+        Mixed,
+    }
+
+    impl Shape {
+        fn of(values: &[Value]) -> Self {
+            let Some(first) = values.first() else {
+                return Shape::Empty;
+            };
+            match first {
+                Value::Record(record) => {
+                    let schema = std::sync::Arc::clone(record.schema());
+                    let same = values.iter().all(|value| {
+                        value
+                            .as_record()
+                            .is_ok_and(|other| other.schema_id() == schema.id())
+                    });
+                    if same {
+                        Shape::Records(schema)
+                    } else {
+                        Shape::Mixed
+                    }
+                }
+                Value::Map(map) => {
+                    let keys: Vec<String> = map.keys().map(str::to_owned).collect();
+                    let same = values.iter().all(|value| {
+                        value.as_map().is_ok_and(|other| {
+                            other.len() == keys.len()
+                                && other.keys().zip(keys.iter()).all(|(a, b)| a == b)
+                        })
+                    });
+                    if same {
+                        Shape::Maps(keys)
+                    } else {
+                        Shape::Mixed
+                    }
+                }
+                _ => {
+                    if values
+                        .iter()
+                        .all(|value| !matches!(value, Value::Record(_) | Value::Map(_)))
+                    {
+                        Shape::Scalars
+                    } else {
+                        Shape::Mixed
+                    }
+                }
+            }
+        }
+    }

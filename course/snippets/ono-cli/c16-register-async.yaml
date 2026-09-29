@@ -1,0 +1,33 @@
+id: c16-register-async
+source:
+  file: crates/ono-cli/src/providers.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 129
+  end_line: 151
+  anchor: let (systemd, logind) = tokio::join!(
+  content_hash: sha256:d94eba1761325f0ffb44829541b8ec99e148f1d14ffbe5959c7b6d2d06037f14
+  code: |
+    /// Adds the providers that have to be reached asynchronously.
+    ///
+    /// systemd is behind D-Bus, so building its provider is an `await`. It is registered separately
+    /// rather than being made synchronous, because pretending an I/O-bound constructor is not one is
+    /// how a shell acquires a hang at startup.
+    #[cfg_attr(not(feature = "systemd"), allow(clippy::unused_async))]
+    pub async fn register_async(registry: &mut ProviderRegistry) {
+        #[cfg(not(feature = "systemd"))]
+        let _ = registry;
+        #[cfg(feature = "systemd")]
+        {
+            // Two connections to the same bus, each a handshake and a round trip to its manager, and
+            // neither waiting on the other: opened side by side, they cost one of them (spec §34).
+            // Registration order is what decides which provider answers a target (see `registry`), and
+            // it is kept.
+            let (systemd, logind) = tokio::join!(
+                ono_provider_systemd::SystemdProvider::connect(),
+                ono_provider_systemd::SessionProvider::connect(),
+            );
+            registry.register(Arc::new(TemporalProvider::new(Arc::new(systemd))));
+            registry.register(Arc::new(TemporalProvider::new(Arc::new(logind))));
+        }
+    }

@@ -1,0 +1,935 @@
+id: traits
+number: 10
+title: Traits as behaviour contracts
+summary: |
+  A **trait** names a set of methods and says what a type must provide to take part in some job.
+  Ono-Sendai uses traits at every seam where one part of the shell must work with code it does not
+  know in advance: a clock that tests can replace, a completion hook only the binary can fill in,
+  the providers that answer `get process` or `get service`, and the native implementations behind
+  each command contract.
+
+  Four lessons, from small to large:
+
+  - `Clock`: a one-method trait, two implementations, and the reason it exists (testability);
+  - `ValueCompleter`: a trait used as an optional `&dyn` hook, and what dynamic dispatch means;
+  - a first look at the `Provider` trait's shape, with **default methods** exercised by a test;
+  - `CommandTable` and `ProviderRegistry`: collections of trait objects, and why some traits are
+    written with care so that `dyn Trait` is possible at all (object safety).
+
+  "A trait is like an interface" is a useful first picture, but it is not the whole story. Traits
+  also carry default behaviour, can be implemented for your own types even when the trait comes
+  from another crate (the standard library's `Default` for `SystemClock`), and serve as **bounds**
+  on generic code; [chapter 11](chapter:generics) shows that
+  second use.
+lessons:
+  - id: traits-01
+    title: "A contract with one method: `Clock`"
+    stage: assisted
+    summary: How a trait declares behaviour, how two types implement it, and how `Arc<dyn Clock>` lets a provider use either.
+    prerequisites: [mutability-01]
+    concepts: [traits, trait-objects, testing]
+    ono_topics: [providers, tests-as-docs]
+    objectives:
+      - Read a trait declaration with a required method and a supertrait list.
+      - Read `impl Trait for Type` blocks, including one for a standard-library trait.
+      - Explain why the CPU sampler depends on `dyn Clock` instead of on the system clock directly.
+    sections:
+      - type: prose
+        kind: context
+        title: Measuring a rate needs two readings
+        body: |
+          `get process` shows a `cpu` column: the share of a CPU a process used. A share is a
+          rate, and a rate is "work done" divided by "time passed". The Linux process provider
+          reads the work from `/proc` and the time from a monotonic clock. That clock is not
+          called directly: it is reached through a trait, and the trait's doc comment gives the
+          reason.
+      - type: code
+        snippet: c10-clock
+        caption: "`ono-provider-linux/src/process.rs`. `Instant` is the standard library's monotonic time point."
+        annotations:
+          - lines: 49
+            token: "pub trait Clock"
+            kind: rust
+            body: |
+              Declares a [trait](glossary:trait): a named contract. Any type that implements `Clock` must provide
+              every method that has no body.
+          - lines: 49
+            token: "Send + Sync + std::fmt::Debug"
+            kind: rust
+            body: |
+              **Supertraits**: a type may implement `Clock` only if it also implements these three.
+              `Debug` allows printing it for diagnostics. [`Send`](glossary:send) and `Sync` say it may be moved to
+              and shared between threads; read them as a black box until
+              [chapter 17](lesson:tasks-channels-01).
+          - lines: 51
+            token: "fn now_nanos(&self) -> u128;"
+            kind: rust
+            body: |
+              A **required method**: only a signature, ending in `;`. Each implementation supplies
+              its own body.
+          - lines: 60
+            token: "impl Default for SystemClock"
+            kind: rust
+            body: |
+              `Default` is a trait from the standard library. Implementing it lets generic code
+              (and `#[derive(Default)]` on structs that contain a `SystemClock`) create one with
+              `SystemClock::default()`. Here it simply delegates to `new`.
+          - lines: 76
+            token: "impl Clock for SystemClock"
+            kind: rust
+            body: |
+              The implementation: `SystemClock` fulfils the contract by measuring the time since its
+              own creation. `now_nanos` takes `&self`: reading the clock does not change it.
+      - type: code
+        snippet: c10-test-clock
+        caption: "`ono-provider-linux/tests/common/mod.rs`: a second implementation, used only by tests."
+        annotations:
+          - lines: 376
+            token: "impl Clock for TestClock"
+            kind: rust
+            body: |
+              Same contract, different behaviour: this clock stands still until a test calls
+              `advance`.
+      - type: prose
+        kind: black-box
+        title: "`AtomicU64` in `TestClock`"
+        body: |
+          `advance(&self, …)` changes the stored time although it only has a **shared** reference.
+          That is possible because `AtomicU64` is designed for exactly this: mutation through
+          `&self`, safe even across threads. It is [*interior mutability*](glossary:interior-mutability), the exception to the
+          `&`/`&mut` split you learned in [chapter 9](chapter:mutability), and
+          [chapter 15](lesson:smart-pointers-02) explains it. For now: `advance` adds to a counter,
+          `now_nanos` reads it.
+      - type: code
+        snippet: c10-clock-seam
+        caption: "`process.rs` again: where the provider stores its clock, and where it reads it."
+        annotations:
+          - lines: 251
+            token: "Arc<dyn Clock>"
+            kind: type
+            body: |
+              [`dyn Clock`](glossary:trait-object) means "a value of **some** type that implements `Clock`; which type is
+              decided at run time". `Arc` is a shared handle to it (see
+              [chapter 15](lesson:smart-pointers-01)).
+          - lines: 431
+            token: "self.clock.now_nanos()"
+            kind: flow
+            body: |
+              A call through the trait object. The provider does not know whether it is talking
+              to a `SystemClock` or a `TestClock`; the call is looked up at run time.
+      - type: prose
+        kind: rust
+        title: Where a trait's methods can be called
+        body: |
+          `self.clock.now_nanos()` goes through a `dyn Clock`, and a trait object always offers
+          its trait's methods. For a value of a concrete type there is one more rule, and it
+          explains many `use` lines: a trait's methods can be called with dot syntax only where
+          the trait is **in scope**. `ono-render/src/table.rs` imports
+          `use unicode_width::UnicodeWidthStr;` so that `text.width()`
+          ([chapter 2](lesson:functions-types-04)) compiles; without that line the method would
+          not be found. Some files write `use std::io::Write as _;`: the `as _` brings the trait's
+          methods (`write_all`, …) into scope without binding its name, because the name itself
+          is never used. When a method call seems to come from nowhere, look for such an import.
+      - type: code
+        snippet: c10-clock-test
+        caption: "`ono-provider-linux/tests/process.rs`: a test that injects the test clock."
+        annotations:
+          - lines: 158
+            token: "as Arc<dyn ono_provider_linux::Clock>"
+            kind: rust
+            body: |
+              Converts the test's `Arc<TestClock>` into an `Arc<dyn Clock>`. The test keeps its own
+              handle, `clock`, so it can still call `advance` after the provider has its copy.
+          - lines: 182
+            token: "clock.advance"
+            kind: flow
+            body: |
+              The test decides exactly how much time passes between two snapshots. The assertion
+              further down expects `50.0` to within `1e-9` (the usual tolerance for a floating-point
+              result): "25 ticks of 100 per second over half a second is half a CPU".
+      - type: diagram
+        kind: architecture
+        title: One contract, two implementations
+        art: |2
+                          trait Clock { fn now_nanos(&self) -> u128; }
+                               ▲                          ▲
+                   impl Clock  │                          │  impl Clock
+                  ┌────────────┴───────┐       ┌──────────┴──────────┐
+                  │ SystemClock        │       │ TestClock           │
+                  │ base: Instant      │       │ nanos: AtomicU64    │
+                  │ (production)       │       │ (tests, moved by    │
+                  └────────────────────┘       │  hand with advance) │
+                            ▲                  └─────────────────────┘
+                            │ default                    ▲ with_clock(…)
+          ProcessProvider ─ reader.clock: Arc<dyn Clock> ┘
+                            │
+                            └─ cpu(): let now = self.clock.now_nanos();
+        description: |
+          The trait `Clock` declares one method, `now_nanos`. Two types implement it:
+          `SystemClock`, which wraps the machine's monotonic `Instant`, and `TestClock`, which holds
+          a counter a test advances by hand. The process provider stores its clock as
+          `Arc<dyn Clock>`. `ProcessProvider::rooted` puts a `SystemClock` there; a test replaces it
+          with a `TestClock` through `with_clock`. The CPU calculation calls `now_nanos` through
+          the trait and works the same with either.
+      - type: prose
+        kind: ono
+        title: Why the clock is a trait
+        body: |
+          The doc comment says it: the clock is "Injectable because a rate is a quotient of two
+          measurements, and a test that cannot state the denominator cannot assert the quotient."
+
+          With the real clock, the time between two snapshots in a test would vary from run to run,
+          so the CPU share could only be checked approximately. With the trait, the test states
+          the denominator (500 ms) and can assert an exact result. The provider's code does not
+          change between production and test; only the value behind `Arc<dyn Clock>` does.
+          [Chapter 19](lesson:provider-boundary-01) looks at the provider's other injected
+          seams.
+      - type: exercise
+        id: traits-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A new type `FrozenClock { at: u128 }` should be usable as a `Clock`. Besides writing
+          `impl Clock for FrozenClock { fn now_nanos(&self) -> u128 { self.at } }`, what else does
+          the trait require? Decide first.
+        choices:
+          - text: "It must also implement `Debug`; `Send` and `Sync` hold automatically for a struct of a `u128`."
+            correct: true
+            feedback: |
+              Correct. The supertraits must hold. `Debug` is usually derived
+              (`#[derive(Debug)]`, as on `SystemClock`). `Send` and `Sync` are **auto traits**: the
+              compiler implements them for any type whose fields all have them, and `u128` does.
+          - text: Nothing else; supertraits are only documentation.
+            feedback: |
+              Supertraits are enforced. Without `Debug`, the `impl Clock for FrozenClock` block is
+              rejected.
+          - text: It must also implement `Default`, because `SystemClock` does.
+            feedback: |
+              `Default` is implemented for `SystemClock` by choice; it is not part of `Clock`'s
+              declaration on line 49.
+          - text: It must write `impl Send for FrozenClock` and `impl Sync for FrozenClock` by hand.
+            feedback: |
+              `Send` and `Sync` are implemented automatically when all fields have them. Writing
+              them by hand requires `unsafe`, which the workspace denies.
+        hints:
+          - level: 1
+            body: Read line 49 again, after the colon.
+          - level: 2
+            body: Some of those traits are implemented by the compiler for you when the fields allow it.
+      - type: exercise
+        id: traits-01-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          Why does `ProcessProvider` hold an `Arc<dyn Clock>` instead of calling `Instant::now()`
+          where it needs the time? Answer in terms of what the code and its tests can do, and
+          name the trade-off.
+        hints:
+          - level: 1
+            body: Look at the test's assertion and the comment next to `clock.advance`.
+          - level: 2
+            body: Which line of the provider would have to change to make the test deterministic without the trait?
+        solution: |
+          The trait separates *what* the sampler needs (a monotonic nanosecond count) from *where*
+          it comes from. Production code stores a `SystemClock`; a test stores a `TestClock` and
+          advances it by exactly 500 ms between two snapshots, so it can assert that 25 ticks over
+          half a second is `50.0` percent, with only a floating-point tolerance of `1e-9`. Without the trait, the elapsed time would be
+          whatever the test machine took, and the assertion could only be approximate or flaky.
+
+          The provider's CPU code is identical in both cases: `self.clock.now_nanos()`.
+
+          The trade-off is small: one indirection per call (a dynamic dispatch through `dyn Clock`)
+          and an `Arc` allocation per provider, in exchange for a seam the doc comment calls
+          necessary: "a test that cannot state the denominator cannot assert the quotient".
+      - type: exercise
+        id: traits-01-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 158:
+          `.with_clock(Arc::clone(&clock) as Arc<dyn ono_provider_linux::Clock>);`
+          What is `clock` before the line, what does the provider receive, and what does the test
+          still hold afterwards?
+        hints:
+          - level: 1
+            body: "`TestClock::new()` returns `Arc<Self>`."
+          - level: 2
+            body: "`with_clock` takes `Arc<dyn Clock>`, and `Arc::clone` makes a second handle to the same value."
+        solution: |
+          `clock` is an `Arc<TestClock>` (from `TestClock::new()`). `Arc::clone(&clock)` makes a
+          second handle to the **same** `TestClock`; nothing is copied except a reference count.
+          `as Arc<dyn Clock>` converts that handle to a trait-object handle: the provider will know
+          only that it has "some `Clock`". The converted handle is moved into `with_clock`, which
+          stores it in the provider's reader.
+
+          The test still owns its original `Arc<TestClock>` and can call `clock.advance(…)`,
+          which is a `TestClock` method, not a `Clock` method. Because both handles point at the
+          same clock, the provider sees the advanced time on its next snapshot.
+
+  - id: traits-02
+    title: "An optional hook: `ValueCompleter` and `&dyn`"
+    stage: assisted
+    summary: "A trait lets a lower crate call code written in a higher one: `Option<&dyn ValueCompleter>` and dynamic dispatch."
+    prerequisites: [traits-01]
+    concepts: [trait-objects, traits, option]
+    ono_topics: [command-registry, crate-map]
+    objectives:
+      - Read `&dyn Trait` as a borrowed trait object and explain what a call through it does at run time.
+      - Recognise the coercion from `&Concrete` to `&dyn Trait`.
+      - Explain why `ono-command` needs a trait to use completions that only `ono-cli` can compute.
+    sections:
+      - type: prose
+        kind: context
+        title: Completing `get user ro<TAB>`
+        body: |
+          Tab completion starts in `ono-command`, which knows the command contracts: verbs,
+          targets, options and closed sets of values. But the users on this machine or the services
+          on this host are not in any contract; only a provider can list them. `ono-command` sits
+          below the binary `ono-cli` in the [crate map](topic:crate-map), so it cannot call the
+          CLI's provider code directly. The trait in this lesson is how it asks anyway.
+      - type: code
+        snippet: c10-value-completer
+        caption: "`ono-command/src/complete.rs`, shortened: the trait, the public entry point, and the one place a hook is called for selectors."
+        annotations:
+          - lines: 368-371
+            kind: ono
+            body: |
+              The doc comment calls the trait "the seam": the registry "offers what metadata knows
+              and stops there; this hook is where the caller adds the rest".
+          - lines: 396
+            token: "Option<&dyn ValueCompleter>"
+            kind: type
+            body: |
+              An **optional, borrowed trait object**. `None` means "no hook". `Some(hook)` is a
+              reference to a value of some type implementing `ValueCompleter`; which type is not
+              known here.
+          - lines: 583
+            token: "hook.complete(command, selector, prefix)"
+            kind: flow
+            body: |
+              [**Dynamic dispatch**](glossary:dynamic-dispatch): the call goes to whichever `complete` the concrete type
+              provides. `map_or_else(Vec::new, …)` returns an empty `Vec` when there is no hook.
+      - type: prose
+        kind: rust
+        title: What a `&dyn Trait` is
+        body: |
+          `&dyn ValueCompleter` is a **trait object** reference. It is a "wide" reference made of
+          two pointers: one to the data (the concrete value), and one to a table of function
+          pointers for that concrete type's implementation of the trait (a *vtable*). A call such
+          as `hook.complete(…)` reads the right function from the table and calls it. This is
+          decided at run time, which is what *dynamic dispatch* means.
+
+          Two consequences for reading:
+
+          - Code that receives `&dyn Trait` can only call the trait's methods. It cannot see the
+            concrete type's other methods or fields.
+          - A `&Users` or `&ProviderValues` converts to `&dyn ValueCompleter` automatically where
+            the target type is known (an **unsizing coercion**), or explicitly with `as`.
+
+          The alternative is a generic parameter (`fn complete<V: ValueCompleter>(…)`), resolved at
+          compile time. [Chapter 11](lesson:generics-02) compares the two.
+      - type: code
+        snippet: c10-completer-test
+        caption: "`ono-command/tests/completion.rs`: a test that defines its own completer inside the test function."
+        annotations:
+          - lines: 126
+            token: "impl ono_command::ValueCompleter for Users"
+            kind: rust
+            body: |
+              Any crate may implement a public trait for its own types. Here a unit struct declared
+              inside the test implements it, which is enough to plug into `complete`.
+          - lines: 129
+            token: "_command"
+            kind: rust
+            body: |
+              A leading underscore marks a parameter the implementation does not use. The signature
+              must still match the trait exactly.
+          - lines: 142
+            token: "Some(&Users)"
+            kind: type
+            body: |
+              `&Users` is coerced to `&dyn ValueCompleter` because `complete`'s parameter type asks
+              for it.
+      - type: code
+        snippet: c10-repl-values
+        caption: "`ono-cli/src/repl.rs`: the shell's own completer passes its provider-backed hook."
+        annotations:
+          - lines: 186
+            token: "values as &dyn ono_command::ValueCompleter"
+            kind: type
+            body: |
+              `self.values` is an `Option<ProviderValues>`. `as_ref()` gives
+              `Option<&ProviderValues>`, and the `as` cast turns each `&ProviderValues` into a trait
+              object reference. At the head of a stage (`is_head`) no hook is passed at all.
+      - type: diagram
+        kind: architecture
+        title: A lower crate calling up through a trait
+        art: |2
+          ono-cli  (the binary; depends on ono-command)
+          ┌────────────────────────────────────────────────────────────┐
+          │ struct ProviderValues { … }                                  │
+          │ impl ValueCompleter for ProviderValues { fn complete(…) }    │
+          │ ShellCompleter::complete:                                    │
+          │   ono_command::complete(registry, &context, Some(&pv as &dyn))│
+          └──────────────────────────────┬─────────────────────────────┘
+                                         │ &dyn ValueCompleter
+                                         ▼
+          ono-command  (knows nothing about ono-cli)
+          ┌────────────────────────────────────────────────────────────┐
+          │ trait ValueCompleter { fn complete(…) -> Vec<Candidate>; }   │
+          │ complete(…, values: Option<&dyn ValueCompleter>)             │
+          │   └─ selector_values: hook.complete(…)  ──vtable──► back up  │
+          │                                              into ono-cli    │
+          └────────────────────────────────────────────────────────────┘
+        description: |
+          `ono-cli` depends on `ono-command`, never the other way round (a dependency cycle is
+          impossible in Cargo). `ono-command` defines the trait `ValueCompleter` and accepts an
+          optional `&dyn ValueCompleter`. `ono-cli` implements the trait for its own
+          `ProviderValues` type and passes a reference when it calls `ono_command::complete`. When
+          `ono-command` needs values for a selector without a closed set, it calls
+          `hook.complete(…)`, and dynamic dispatch runs the code in `ono-cli`. A test in
+          `ono-command` does the same with its own `Users` type.
+      - type: prose
+        kind: ono
+        title: Why this is a trait and why it is optional
+        body: |
+          The trait is how the registry crate stays independent of providers and still gives the
+          shell provider-aware completion ("Spec §15.1 wants completion to be provider-aware, and
+          this is the seam").
+
+          `Option` makes the hook genuinely optional. The test documents both behaviours by name,
+          `should_leave_provider_backed_value_completion_to_the_caller`: with the hook, `--user=d`
+          completes to `daemon` and `deploy`; without it, "the registry offers nothing it cannot
+          know". Completion never invents values it has no source for.
+      - type: exercise
+        id: traits-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Inside `selector_values`, `hook` has type `&dyn ValueCompleter`. Which of these can the
+          code do with `hook`?
+        choices:
+          - text: "Call `hook.complete(…)`, and nothing that is specific to `ProviderValues`."
+            correct: true
+            feedback: |
+              Correct. A trait object exposes exactly the trait's methods. The concrete type's own
+              methods, such as `ProviderValues::budgets`, are invisible through it.
+          - text: "Call `hook.budgets()`, because at run time the value is a `ProviderValues`."
+            feedback: |
+              Which methods may be called is decided at compile time, from the type
+              `&dyn ValueCompleter`. The concrete type (which might also be a test's `Users`) is
+              not known there.
+          - text: "Move the completer out with `let owned = *hook;`."
+            feedback: |
+              `hook` is a shared borrow, and a `dyn` value has no size known at compile time, so it
+              cannot be moved into a local variable.
+        hints:
+          - level: 1
+            body: What does the code in `ono-command` know about the value behind `hook`?
+          - level: 2
+            body: Remember that the same function also receives the test's `Users`.
+      - type: exercise
+        id: traits-02-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Trace the call made by the test on line 142, for the line `get process --user=d`, from
+          `ono_command::complete` to the returned candidates. Which `complete` method runs, and how
+          is it chosen? You may assume `--user` has no closed set of values.
+        hints:
+          - level: 1
+            body: There are two functions called `complete` in play. Which one is a free function and which one is a trait method?
+          - level: 2
+            body: The option path goes through `option_values`, which calls the hook in the same way as line 583.
+        solution: |
+          1. `ono_command::complete(registry(), &context, Some(&Users))`: `&Users` is coerced to
+             `&dyn ValueCompleter` and passed as `values`.
+          2. The free function `complete` calls `gather` with `values`. The cursor is in an option
+             value (`--user=d`), so `gather` goes to `option_values(command, "user", "d", values)`.
+          3. `--user` has no closed set, so `option_values` calls
+             `values.map_or_else(Vec::new, |hook| hook.complete(command, option, written))`.
+          4. `hook.complete` is a **dynamic** call: the vtable in the `&dyn` reference points to
+             `Users`' implementation, which filters `["root", "daemon", "deploy"]` by the prefix
+             `d` and returns the candidates `daemon` and `deploy`.
+          5. `option_values` rewrites each returned candidate's text to `--user=<value>`
+             (`format!("--{name}={}", candidate.text)`), so the result replaces the whole word
+             under the cursor.
+          6. Back in `complete`, the candidates are sorted and deduplicated. The test expects
+             `["--user=daemon", "--user=deploy"]`.
+
+          With `None` instead of `Some(&Users)`, step 3 returns an empty `Vec` and the test expects
+          no candidates at all.
+
+  - id: traits-03
+    title: "Default methods, and a first look at `Provider`"
+    stage: assisted
+    summary: "The provider contract separates what every provider must say from what it may leave to a default, and a test holds the defaults to account."
+    prerequisites: [traits-02]
+    concepts: [traits, testing, trait-objects]
+    ono_topics: [providers, tests-as-docs]
+    objectives:
+      - Distinguish required methods from provided (default) methods in a trait.
+      - Explain how a default body can call another method of the same trait.
+      - Read a test that implements only the required methods in order to exercise the defaults.
+    sections:
+      - type: prose
+        kind: context
+        title: The provider boundary
+        body: |
+          A [**provider**](glossary:provider) is where the shell meets the system it describes: `/proc` for processes,
+          systemd for services, DNS for names (see [providers](topic:providers)). All of them
+          implement one trait, `Provider`, from the crate `ono-provider-api`. The crate doc says
+          plugins are no exception: "A KUANG/11 provider is a [`Provider`], not a special case of
+          one."
+
+          This lesson looks only at the trait's *shape*: which methods a provider must write and
+          which it gets for free. [Chapter 19](lesson:provider-boundary-01) reads the trait,
+          the registry and a real implementation in depth.
+      - type: code
+        snippet: c10-provider-shape
+        caption: "`ono-provider-api/src/lib.rs`, heavily shortened. The omitted lines are mostly doc comments and three more default methods."
+        annotations:
+          - lines: 51
+            token: "#[async_trait::async_trait]"
+            kind: crate
+            body: |
+              An attribute macro from the [`async_trait`](glossary:async-trait) crate. See the black box below.
+          - lines: 55
+            token: "fn id(&self) -> &str;"
+            kind: rust
+            body: |
+              Required: every provider states its id, such as `linux.procfs`. The returned `&str`
+              borrows from the provider (in practice, usually a string literal).
+          - lines: 87-89
+            token: "fn availability(&self)"
+            kind: rust
+            body: |
+              A **provided** (default) method: it has a body. A provider that says nothing is
+              `Available`; one that depends on systemd or netlink overrides it.
+          - lines: 98
+            token: "fn snapshot"
+            kind: rust
+            body: |
+              Required, and the heart of the trait: the objects matching a query, as a stream.
+          - lines: 142-145
+            token: "fn history"
+            kind: flow
+            body: |
+              A default that **refuses**. `let _ = (query, window);` marks the parameters as
+              deliberately unused. The body calls `self.id()`, a required method, so the error
+              names the provider that refused.
+      - type: prose
+        kind: black-box
+        title: "`#[async_trait]`, `async fn` and `ValueStream`"
+        body: |
+          `resolve` (and `act`, omitted here) are `async fn`: they return a value that is computed
+          later, when awaited. The attribute `#[async_trait::async_trait]` rewrites such methods so
+          that the trait can still be used as `dyn Provider`, which the registry needs. Treat both
+          as a black box until [chapter 16](lesson:async-03). Likewise, read [`ValueStream`](glossary:value-stream) as "a
+          stream of values that a pipeline stage consumes".
+      - type: prose
+        kind: rust
+        title: Required and provided methods
+        body: |
+          A trait method **without** a body is *required*: every `impl` must write it. A method
+          **with** a body is *provided*: an `impl` may override it, and if it does not, the
+          trait's body is used for that type.
+
+          A default body is ordinary code with one special property: it can call the trait's other
+          methods on `self`, because every implementor is guaranteed to have them. `history`'s
+          default uses `self.id()`, which is how a generic refusal still says *which* provider
+          refused.
+
+          Default methods are also how a trait can grow. The crate doc records that the temporal
+          methods came with a later spec version ("Spec v0.5 §21 adds a fourth: `Provider::history`
+          …"). Because `temporal` and `history` have default bodies, a provider that never thinks
+          about time needs no code for them at all, as `MinimalProvider` below shows.
+      - type: code
+        snippet: c10-minimal-provider
+        caption: "`ono-provider-api/tests/contract.rs`, shortened: a provider that writes only what it must, and two tests that call what it did not write."
+        annotations:
+          - lines: 596
+            token: "struct MinimalProvider;"
+            kind: rust
+            body: |
+              A **unit struct**: no fields at all. It exists only to carry a trait implementation.
+          - lines: 603-604
+            token: "&[&str]"
+            kind: ownership
+            body: |
+              `&["gadget"]` borrows an array of string literals that lives for the whole program,
+              so returning it from `&self` is always valid.
+          - lines: 627
+            token: "MinimalProvider.temporal()"
+            kind: flow
+            body: |
+              Calls a method the `impl` never wrote. The trait's default body runs, and the test
+              checks that it claims nothing.
+          - lines: 643
+            token: "Arc::new(MinimalProvider)"
+            kind: type
+            body: |
+              `register` takes `Arc<dyn Provider>`; the `Arc<MinimalProvider>` is coerced to it.
+      - type: prose
+        kind: note
+        title: Read the code, not only the comment
+        body: |
+          The doc comment on line 591 says the provider "overrides nothing beyond the four required
+          methods", but the `impl` writes **six**: `id`, `targets`, `schemas`, `capabilities`,
+          `snapshot` and `resolve`. Those six are exactly the trait methods without a default body;
+          the comment is simply out of step with the code. When a comment and the code
+          disagree, the compiler enforces the code: an `impl` that omitted `snapshot` or
+          `resolve` would not compile.
+      - type: diagram
+        kind: control-flow
+        title: Where the refusal comes from
+        art: |2
+          test: registry.history(&Query::target("gadget"), &window)
+            │
+            ▼
+          ProviderRegistry::history
+            └─ self.provider_for("gadget")?      → &Arc<dyn Provider>  (MinimalProvider)
+                 .history(query, window)          dynamic call through the vtable
+                    │
+                    ▼  MinimalProvider wrote no `history`
+          Provider::history  (default body in the trait)
+            ├─ let _ = (query, window);
+            └─ Err(unsupported_history(self.id()))
+                                        │ dynamic call
+                                        ▼
+                         MinimalProvider::id → "test.minimal"
+            ▼
+          Err(ErrorValue { code: TemporalUnsupportedSource,
+                           message: "test.minimal cannot answer about the past",
+                           help: Some("a provider that keeps history says so …") })
+        description: |
+          The test asks the registry for history of the target `gadget`. The registry finds
+          `MinimalProvider` (the only provider claiming `gadget`) and calls `history` on it through
+          the trait object. Because `MinimalProvider` did not write `history`, the trait's default
+          body runs. It ignores its parameters and returns the error built by
+          `unsupported_history`, passing `self.id()`, which calls back into `MinimalProvider`'s own
+          `id` and yields `test.minimal`. The error has the code `TemporalUnsupportedSource`, a
+          message naming the provider, and a non-empty help text, which is what the test asserts.
+      - type: prose
+        kind: ono
+        title: Why the defaults refuse
+        body: |
+          The crate doc sets the rule for the temporal methods: "Both default to the truthful answer
+          for a provider that has never thought about time — it claims nothing, and refuses." The
+          doc of `temporal` adds that "nothing downstream may read its silence as coverage".
+
+          A friendlier-looking default, such as returning the current snapshot when asked about
+          the past, would silently present "now" as "then". The test file turns that rule into
+          executable documentation: `MinimalProvider` "exists so the *defaults* of the trait can
+          be exercised as a contract rather than assumed". Test names like
+          `should_refuse_a_historical_query_when_the_source_keeps_no_history` read as sentences
+          about intended behaviour; reading them is often the fastest way to learn what a trait
+          promises.
+      - type: exercise
+        id: traits-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          You write a new provider and implement only `id`, `targets`, `schemas`, `capabilities`
+          and `snapshot`. What happens?
+        choices:
+          - text: "It does not compile: `resolve` has no default body, so it is required."
+            correct: true
+            feedback: |
+              Correct. `async fn resolve` on line 152 ends in `;`, so every implementation must
+              write it. `MinimalProvider` writes it and returns an empty list.
+          - text: "It compiles; `resolve` falls back to a default that returns an error."
+            feedback: |
+              `act` has such a default (it refuses with `provider.unsupported`), but `resolve` does
+              not. Look for a body after its signature.
+          - text: "It compiles, but calling `resolve` panics at run time."
+            feedback: |
+              Rust checks trait implementations at compile time. A missing required method is a
+              compile error, not a run-time failure.
+        hints:
+          - level: 1
+            body: Look at how the signature on line 152 ends.
+          - level: 2
+            body: Compare it with `availability` on lines 87–89.
+      - type: exercise
+        id: traits-03-q2
+        exercise_type: predict
+        prompt: |
+          A provider called `demo.snap` overrides `temporal()` to claim `historical_query: true`,
+          but does **not** override `history`. A user asks it about the past. Predict what the
+          registry returns and which code produced it. Then say what this tells you about the
+          relationship between the two defaults.
+        hints:
+          - level: 1
+            body: Overriding one default method does not change any other.
+          - level: 2
+            body: Which body runs for `history` when the `impl` does not contain one?
+        solution: |
+          The registry forwards to the provider's `history`. The `impl` has none, so the trait's
+          default body runs and returns `Err(unsupported_history("demo.snap"))`: code
+          `temporal.unsupported_source`, message "demo.snap cannot answer about the past", plus
+          the help text.
+
+          The claim in `temporal()` and the behaviour of `history()` are separate methods; the
+          compiler does not connect them. Keeping them consistent is the provider author's job
+          (the crate doc says `temporal` "states what the provider can honestly answer about the
+          past before anybody asks it"). The defaults are consistent with each other (claim
+          nothing, refuse), which is why a provider that overrides neither is always honest.
+      - type: exercise
+        id: traits-03-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          The temporal methods could have been required methods, forcing every provider to write
+          them. Why are they provided methods with refusing defaults instead? Give one benefit for
+          provider authors and one for users, using the docs quoted in this lesson.
+        hints:
+          - level: 1
+            body: Most providers (for example `/proc`) have no history at all.
+          - level: 2
+            body: What would each of those providers have written in its own `history`?
+        solution: |
+          - **Provider authors**: most sources keep no past (the `history` doc says "`/proc` does
+            not"). With required methods, each of those providers would have to write the same
+            refusal. The default does it once, in one wording: `unsupported_history` is one
+            function "so that 'this source cannot answer about the past' reads the same
+            everywhere it is said".
+          - **Users**: the default is the honest answer, a refusal with help, not an empty or
+            present-day result. A provider cannot accidentally claim coverage by forgetting a
+            method; it has to override `temporal` and `history` deliberately.
+          - The test with `MinimalProvider` pins this contract down, so a later change to a default
+            that made it less honest would fail the test suite.
+
+  - id: traits-04
+    title: "Many implementations behind one type: `CommandTable` and `ProviderRegistry`"
+    stage: assisted
+    summary: "Collections of `Arc<dyn Trait>`, dynamic dispatch in a loop, and why these traits are written so that `dyn` is possible (object safety)."
+    prerequisites: [traits-03]
+    concepts: [trait-objects, traits, collections]
+    ono_topics: [command-dispatch, providers]
+    objectives:
+      - Read `BTreeMap<String, Arc<dyn CommandImpl>>` and `Vec<Arc<dyn Provider>>` as tables of interchangeable implementations.
+      - Explain object safety (dyn compatibility) at a reading level and connect it to `OutcomeFuture` and `#[async_trait]`.
+      - Compare the replacement policy of `CommandTable::register` with the ordering policy of `ProviderRegistry`.
+    sections:
+      - type: prose
+        kind: context
+        title: Two registries of code
+        body: |
+          Ono-Sendai describes commands as data: [YAML contracts](glossary:command-contract) under `docs/contracts/commands/`,
+          embedded into the binary. The code behind each contract is a `CommandImpl`, registered
+          against a stable id such as `ono.process.get` (see
+          [command dispatch](topic:command-dispatch)). Providers are collected in a similar table,
+          `ProviderRegistry`. Both tables hold values of *different* concrete types side by side.
+          That is only possible with trait objects.
+      - type: code
+        snippet: c10-command-impl
+        caption: "`ono-command/src/invoke.rs`, shortened."
+        annotations:
+          - lines: 421
+            token: "OutcomeFuture"
+            kind: type
+            body: |
+              A type alias for a boxed future. Its doc gives the reason for the box: "so the trait
+              stays object-safe". The full meaning of `Pin<Box<dyn Future…>>` waits for
+              [chapter 16](lesson:async-03).
+          - lines: 427
+            token: "pub trait CommandImpl: Send + Sync"
+            kind: rust
+            body: |
+              The contract for native command code: two required methods (`id` and `invoke`) and
+              one provided method, `invoke_async`.
+          - lines: 453-454
+            token: "fn invoke_async"
+            kind: flow
+            body: |
+              The default answers with the result of the synchronous `invoke`, wrapped as an
+              already-finished future. Commands that never wait for anything inherit this.
+          - lines: 471
+            token: "BTreeMap<String, Arc<dyn CommandImpl>>"
+            kind: type
+            body: |
+              A sorted map from id to **shared trait objects**. Each value may be a different
+              concrete type; the map only knows they implement `CommandImpl`.
+          - lines: 486-487
+            token: "implementation.id().to_owned()"
+            kind: ownership
+            body: |
+              `id()` is a dynamic call that returns a borrow of the implementation; `to_owned()`
+              makes an owned `String` key before the `Arc` is moved into the map.
+      - type: prose
+        kind: rust
+        title: Object safety, at reading level
+        body: |
+          Not every trait can be used as `dyn Trait`. A trait object only knows the vtable of the
+          trait's methods, so every method must be callable **without knowing the concrete type**.
+          Roughly, a trait is [*object safe*](glossary:object-safety) (the newer term is *dyn compatible*) when its methods:
+
+          - take a receiver such as `&self`, `&mut self` or `self: Box<Self>`;
+          - have no type parameters of their own (a generic method would need one vtable entry per
+            possible type);
+          - do not return `Self` by value (the size of `Self` is unknown behind `dyn`);
+          - are not native `async fn`s, whose returned future is a different hidden type for every
+            implementation.
+
+          Methods that break a rule can be excluded from the vtable with `where Self: Sized`, but
+          you will rarely need that for reading Ono-Sendai.
+
+          The last rule explains two things you have seen. `CommandImpl` returns
+          `OutcomeFuture<'a>`, a **boxed** future of one fixed type, instead of being an `async fn`:
+          "boxed so the trait stays object-safe". `Provider` uses `#[async_trait]`, which performs
+          the same boxing automatically. Both traits need it because both are stored as
+          `Arc<dyn …>`.
+      - type: code
+        snippet: c10-provider-registry
+        caption: "`ono-provider-api/src/registry.rs`, shortened."
+        annotations:
+          - lines: 22
+            token: "Vec<Arc<dyn Provider>>"
+            kind: type
+            body: |
+              An ordered list of shared provider objects: `/proc`, systemd, netlink and plugin
+              providers side by side.
+          - lines: 82
+            token: "provider.availability()"
+            kind: flow
+            body: |
+              A dynamic call. For most providers this is the trait's default (`Available`); a
+              provider that depends on a missing system overrides it.
+          - lines: 83
+            token: "return Ok(provider)"
+            kind: ownership
+            body: |
+              Returns a **borrow** of the `Arc` stored in `self.providers`. No handle is cloned; the
+              result lives as long as the borrow of the registry.
+          - lines: 108
+            token: "?.snapshot(query)"
+            kind: flow
+            body: |
+              If `provider_for` fails, `?` returns its error. Otherwise `snapshot` is called on the
+              chosen provider through its vtable.
+      - type: diagram
+        kind: control-flow
+        title: From `get process` to one provider's `snapshot`
+        art: |2
+          registry.snapshot(&query)                 query.target_name() == "process"
+            │
+            ▼
+          provider_for("process")
+            ├─ for_target: keep providers whose targets() contain "process"
+            │     none? ──► Err(resolve.target_not_found)
+            ├─ for provider in &claiming:            (registration order)
+            │     provider.availability()  ──vtable──► override or default
+            │       Available            ──► return Ok(provider)
+            │       Unavailable(reason)  ──► remember "id: reason", try next
+            └─ all unavailable ──► Err(provider.unavailable, with every reason)
+            │
+            ▼ Ok(&Arc<dyn Provider>)
+          .snapshot(query)  ──vtable──► e.g. ProcessProvider::snapshot
+        description: |
+          `ProviderRegistry::snapshot` asks `provider_for` for the target named in the query.
+          `provider_for` first keeps only the providers whose `targets()` include it; if there are
+          none, it returns a `resolve.target_not_found` error. Otherwise it walks the claiming
+          providers in registration order and asks each for its availability through the trait
+          object. The first available one is returned as a borrowed `&Arc<dyn Provider>`. Each
+          unavailable one adds its id and reason to a list, and if all are unavailable the result
+          is a `provider.unavailable` error listing them. On success, `snapshot` is called on the
+          chosen provider, again by dynamic dispatch.
+      - type: prose
+        kind: ono
+        title: Two tables, two policies
+        body: |
+          The docs state different rules for the two tables, and the code implements them with
+          different collections:
+
+          - `CommandTable::register` inserts into a map keyed by id, so "A second implementation of
+            the same id replaces the first, which is how a KUANG/11 package or a test host
+            substitutes one".
+          - `ProviderRegistry::register` pushes onto a `Vec`: "the first provider claiming a target
+            answers for it, and a later one claiming the same target extends rather than
+            replaces".
+
+          `provider_for` also keeps two failures apart on purpose: nothing claims the target,
+          versus something claims it but cannot answer here. "The two are different questions and
+          a user needs to be told which one they are looking at."
+
+          `Arc` rather than `Box` lets the tables be cloned (`#[derive(Clone)]` on both) by copying
+          handles, not implementations.
+      - type: exercise
+        id: traits-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Two implementations are registered one after the other, both for the id
+          `ono.process.get`, in a `CommandTable`. Separately, two providers that both claim the
+          target `process` are registered in a `ProviderRegistry`, and both are available. Which
+          one answers in each case?
+        choices:
+          - text: "The **second** command implementation; the **first** provider."
+            correct: true
+            feedback: |
+              Correct. `BTreeMap::insert` replaces the value under an existing key. The provider
+              `Vec` keeps both, and `provider_for` returns the first available one in registration
+              order.
+          - text: "The first command implementation; the first provider."
+            feedback: |
+              `register` on the command table calls `insert` on a map, which overwrites. The doc
+              says a second implementation "replaces the first".
+          - text: "The second in both cases: later registration always wins."
+            feedback: |
+              The provider registry is a `Vec` searched from the front. A later provider "extends
+              rather than replaces".
+          - text: "It is decided at random by dynamic dispatch."
+            feedback: |
+              Dynamic dispatch only decides which *method body* runs for a given object. Which
+              object is chosen is ordinary, deterministic code: a map lookup or a loop.
+        hints:
+          - level: 1
+            body: Look at the collection type behind each `register`.
+          - level: 2
+            body: What does `insert` do on an existing key, and in which order does `provider_for` look?
+      - type: exercise
+        id: traits-04-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          `ProviderRegistry` stores `Vec<Arc<dyn Provider>>`. Consider two alternatives: an enum
+          with one variant per provider type, or a generic `ProviderRegistry<P: Provider>` holding
+          `Vec<P>`. Explain why neither fits what the registry has to do.
+        hints:
+          - level: 1
+            body: Who adds providers, and when is that known?
+          - level: 2
+            body: How many different concrete types can a `Vec<P>` hold for one `P`?
+        solution: |
+          - **A generic `Vec<P>`** holds values of **one** type `P`. The registry must hold
+            `ProcessProvider`, the systemd provider, the DNS provider and more, all at once, so a
+            single type parameter cannot describe it.
+          - **An enum** would list every provider type in `ono-provider-api`. But that crate sits
+            below the concrete providers in the crate map (they depend on it), and KUANG/11
+            plugins are loaded at run time, so the full list is not known when the crate is
+            compiled. Every new provider would also mean editing the enum.
+          - **`Arc<dyn Provider>`** erases the concrete type: any type implementing the trait can
+            be registered, including plugin providers created at run time, and the registry calls
+            them only through the trait. That requires `Provider` to be object safe, which is why
+            its async methods go through `#[async_trait]`. `Arc` makes the handles cheap to share
+            and lets the registry be cloned.
+      - type: exercise
+        id: traits-04-q3
+        exercise_type: trace-control-flow
+        prompt: |
+          Two providers claim `service`: first `A`, whose `availability()` returns
+          `Unavailable("no systemd")`, then `B`, which does not override `availability`. Trace
+          `registry.snapshot(&Query::target("service"))` through `provider_for`. Which methods are
+          called on which provider, and what is returned?
+        hints:
+          - level: 1
+            body: What is `B`'s availability if it does not override the method?
+          - level: 2
+            body: Follow the loop on lines 81–88, one provider at a time.
+        solution: |
+          1. `snapshot` calls `provider_for("service")`.
+          2. `for_target` calls `targets()` on every provider (dynamic calls) and keeps `[A, B]`,
+             in registration order. The list is not empty, so no `target_not_found` error.
+          3. Loop, `A`: `A.availability()` returns `Unavailable("no systemd")`; the reason
+             `"A's id: no systemd"` is pushed onto `reasons` (built with `provider.id()`, another
+             dynamic call).
+          4. Loop, `B`: `B` did not override `availability`, so the trait default runs and returns
+             `Available`. `provider_for` returns `Ok(&B)`.
+          5. Back in `snapshot`, `?` unwraps the `Ok`, and `B.snapshot(query)` is called through
+             the vtable. Its `Result<ValueStream, ErrorValue>` is returned as is.
+
+          `A`'s reason is discarded because an available provider was found. If `B` had also been
+          unavailable, the result would have been one `provider.unavailable` error listing both
+          reasons.

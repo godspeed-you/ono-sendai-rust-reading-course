@@ -1,0 +1,10 @@
+id: eval-word
+source:
+  file: crates/mini-shell/src/eval.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 10
+  end_line: 22
+  anchor: "pub fn eval_word"
+  content_hash: sha256:33830cb774a8f9e997635d18d23492b1e0d73343ae94e8cdafd7cf3910b758a2
+  code: "pub struct Context {\n    pub vars: HashMap<String, Value>,\n}\n\npub fn eval_word(ctx: &Context, word: &str) -> Result<Value, EvalError> {\n    if let Some(name) = word.strip_prefix('$') {\n        return Ok(ctx.vars.get(name).cloned().unwrap_or(Value::Nothing));\n    }\n    match word.parse::<i64>() {\n        Ok(n) => Ok(Value::Int(n)),\n        Err(_) => Ok(Value::Text(word.to_string())),\n    }\n}\n"

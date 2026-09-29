@@ -1,0 +1,18 @@
+id: c08-field-step-caller
+source:
+  file: crates/ono-command/src/expr.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 609
+  end_line: 616
+  anchor: 'fn field_step(access: &FieldAccess) -> FieldStep<''_> {'
+  content_hash: sha256:6792c0272751e1c9cb9ce7f135988f9629c9eeca74c85edd9723bbcc3006de56
+  code: |
+    /// One step of a field chain, optional where it was written `?.`.
+    fn field_step(access: &FieldAccess) -> FieldStep<'_> {
+        if access.optional {
+            FieldStep::optional(&access.field)
+        } else {
+            FieldStep::required(&access.field)
+        }
+    }

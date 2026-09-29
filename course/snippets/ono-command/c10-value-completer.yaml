@@ -1,0 +1,66 @@
+id: c10-value-completer
+source:
+  file: crates/ono-command/src/complete.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 368
+  end_line: 402
+  anchor: pub trait ValueCompleter {
+  content_hash: sha256:660b17f1a258988031f509584cffdfa5f3c5fa20182ce837839320e546c57c7d
+  code: |
+    /// What only a provider can complete: the users on this machine, the services of this host.
+    ///
+    /// The registry offers what metadata knows and stops there; this hook is where the caller adds
+    /// the rest. Spec §15.1 wants completion to be provider-aware, and this is the seam.
+    pub trait ValueCompleter {
+        /// The values for `parameter` of `command` that begin with `prefix`.
+        fn complete(
+            &self,
+            command: &CommandContract,
+            parameter: &ParameterSpec,
+            prefix: &str,
+        ) -> Vec<Candidate>;
+    }
+
+    /// The candidates for the token under the cursor, sorted and without repeats.
+    ///
+    /// ```
+    /// use ono_command::{CommandRegistry, StageContext};
+    ///
+    /// let registry = CommandRegistry::embedded()?;
+    /// let candidates = ono_command::complete(registry, &StageContext::from_line("get pro", 7), None);
+    /// assert_eq!(candidates[0].text(), "process");
+    /// # Ok::<(), ono_value::ErrorValue>(())
+    /// ```
+    #[must_use]
+    pub fn complete(
+        registry: &CommandRegistry,
+        context: &StageContext,
+        values: Option<&dyn ValueCompleter>,
+    ) -> Vec<Candidate> {
+        let mut candidates = gather(registry, context, values);
+        candidates.sort_by(|left, right| left.text.cmp(&right.text));
+        candidates.dedup_by(|left, right| left.text == right.text);
+        candidates
+    }
+- start_line: 569
+  end_line: 584
+  anchor: values.map_or_else(Vec::new, |hook| hook.complete(command, selector, prefix))
+  content_hash: sha256:e0a67bc5e72e5472c1e14c1111ca27336dd073558262624c7d678bd2a834e2bd
+  code: |
+    fn selector_values(
+        command: &CommandContract,
+        selector: &ParameterSpec,
+        prefix: &str,
+        values: Option<&dyn ValueCompleter>,
+    ) -> Vec<Candidate> {
+        let closed = selector.closed_set();
+        if !closed.is_empty() {
+            return closed
+                .into_iter()
+                .filter(|value| value.starts_with(prefix))
+                .map(|value| Candidate::value(value).with_doc(selector.doc()))
+                .collect();
+        }
+        values.map_or_else(Vec::new, |hook| hook.complete(command, selector, prefix))
+    }

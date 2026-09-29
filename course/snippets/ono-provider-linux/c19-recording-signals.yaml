@@ -1,0 +1,51 @@
+id: c19-recording-signals
+source:
+  file: crates/ono-provider-linux/tests/common/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 382
+  end_line: 422
+  anchor: pub struct RecordingSignals {
+  content_hash: sha256:f948f2eac2da7b1cff593234bf9534fda8af7b81215225001cd7f155bf709d91
+  code: |
+    /// A signal sender that records instead of delivering.
+    #[derive(Debug, Default)]
+    pub struct RecordingSignals {
+        sent: Mutex<Vec<(i32, i32)>>,
+        refuse: Option<ErrorValue>,
+    }
+
+    impl RecordingSignals {
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        /// A sender the kernel refuses, for the permission path.
+        pub fn refusing(error: ErrorValue) -> Arc<Self> {
+            Arc::new(Self {
+                sent: Mutex::new(Vec::new()),
+                refuse: Some(error),
+            })
+        }
+
+        /// Every `(pid, signal)` pair delivered so far.
+        pub fn sent(&self) -> Vec<(i32, i32)> {
+            self.sent
+                .lock()
+                .expect("the recorder is not poisoned")
+                .clone()
+        }
+    }
+
+    impl Signals for RecordingSignals {
+        fn send(&self, pid: i32, signal: i32) -> Result<(), ErrorValue> {
+            if let Some(error) = &self.refuse {
+                return Err(error.clone());
+            }
+            self.sent
+                .lock()
+                .expect("the recorder is not poisoned")
+                .push((pid, signal));
+            Ok(())
+        }
+    }

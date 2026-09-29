@@ -1,0 +1,63 @@
+id: c12-registry-for-target
+source:
+  file: crates/ono-provider-api/src/registry.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 45
+  end_line: 61
+  anchor: .flat_map(|provider| provider.schemas())
+  content_hash: sha256:2f8e54846776cf9dc3fdec8cdc3dcb888addd972d26be35585efea01ecc4efb3
+  code: |2
+        /// Every schema any registered provider produces.
+        #[must_use]
+        pub fn schemas(&self) -> Vec<Arc<Schema>> {
+            self.providers
+                .iter()
+                .flat_map(|provider| provider.schemas())
+                .collect()
+        }
+
+        /// The providers claiming `target`, in registration order.
+        #[must_use]
+        pub fn for_target(&self, target: &str) -> Vec<&Arc<dyn Provider>> {
+            self.providers
+                .iter()
+                .filter(|provider| provider.targets().contains(&target))
+                .collect()
+        }
+- start_line: 70
+  end_line: 100
+  anchor: let mut reasons = Vec::new();
+  content_hash: sha256:1bd750f838cab46a6f8b48f5e3ea5f6b6a8561f0ea50c126d00a6d9965d99cbf
+  code: |2
+        pub fn provider_for(&self, target: &str) -> Result<&Arc<dyn Provider>, ErrorValue> {
+            let claiming = self.for_target(target);
+            if claiming.is_empty() {
+                return Err(ErrorValue::new(
+                    ErrorCode::ResolveTargetNotFound,
+                    format!("no provider answers `{target}`"),
+                )
+                .with_help("`help targets` lists what this shell can be asked about"));
+            }
+
+            let mut reasons = Vec::new();
+            for provider in &claiming {
+                match provider.availability() {
+                    Availability::Available => return Ok(provider),
+                    Availability::Unavailable(reason) => {
+                        reasons.push(format!("{}: {reason}", provider.id()));
+                    }
+                }
+            }
+            Err(ErrorValue::new(
+                ErrorCode::ProviderUnavailable,
+                format!(
+                    "`{target}` cannot be answered here — {}",
+                    reasons.join("; ")
+                ),
+            )
+            .with_help(
+                "the provider exists but the system it reads is not present. This is not the same as \
+                 there being none of the thing you asked for.",
+            ))
+        }

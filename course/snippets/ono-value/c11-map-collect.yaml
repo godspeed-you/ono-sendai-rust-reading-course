@@ -1,0 +1,15 @@
+id: c11-map-collect
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 490
+  end_line: 494
+  anchor: .map(|(key, value)| (Arc::from(key), value.map_text(rewrite)))
+  content_hash: sha256:14f1347816e89c26e6cdc90d45d697f7b95fe1a77ec9ca62a9642f357870a1a9
+  code: |2
+                Value::Map(map) => Value::Map(Arc::new(
+                    map.iter()
+                        .map(|(key, value)| (Arc::from(key), value.map_text(rewrite)))
+                        .collect(),
+                )),

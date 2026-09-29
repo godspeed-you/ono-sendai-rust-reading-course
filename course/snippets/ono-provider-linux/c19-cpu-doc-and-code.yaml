@@ -1,0 +1,55 @@
+id: c19-cpu-doc-and-code
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 9
+  end_line: 13
+  anchor: CPU is a rate, and the first observation has none.
+  content_hash: sha256:a5dab1594ea0da8e095e92fb68772a48e831e77513f90b4ca0fb26402800245e
+  code: |
+    //! - **CPU is a rate, and the first observation has none.** `/proc/<pid>/stat` counts ticks since
+    //!   boot. A percentage is the difference between two observations divided by the time between
+    //!   them, so the first `get process` reports `cpu` as `null` and the second reports the share of
+    //!   one logical CPU used since the first. That is what
+    //!   `docs/contracts/schemas/process.v1.yaml` documents the field to mean.
+- start_line: 420
+  end_line: 454
+  anchor: self.lifetime_share(stat)
+  content_hash: sha256:5ecf4b4dfeec15fd1380fe1fbaad7d3bfb5b3b63b8a59e97da5b36df71c89959
+  code: |2
+        /// The share of one logical CPU the process used, and the window it is the share over.
+        ///
+        /// A share is a rate, and a rate needs two readings. Where an earlier observation of the same
+        /// process exists — a second `get process` in a session, a `watch`, or the extra reading
+        /// `--sample` paid for — the window is the interval between them, and the answer is what the
+        /// process is doing now. Where none does, the window is the process's own lifetime, which the
+        /// kernel states in full: `starttime` against `/proc/uptime`. Both are shares of one logical
+        /// CPU; `cpu_window` is what tells them apart (ADR-0232).
+        ///
+        /// `None` only when the kernel gave neither — no `/proc/uptime` and no earlier reading.
+        fn cpu(&self, pid: i64, stat: &procfs::ProcStat) -> Option<(f64, ono_value::Duration)> {
+            let now = self.clock.now_nanos();
+            let sample = Sample {
+                ticks: stat.cpu_ticks(),
+                at_nanos: now,
+            };
+            let previous = self
+                .samples
+                .lock()
+                .ok()
+                .and_then(|mut samples| samples.insert((pid, stat.starttime), sample));
+            if let Some(previous) = previous
+                && let Some(elapsed) = now.checked_sub(previous.at_nanos)
+                && elapsed > 0
+                && let Some(ticks) = stat.cpu_ticks().checked_sub(previous.ticks)
+            {
+                let seconds = elapsed as f64 / 1e9;
+                let window = i128::try_from(elapsed).ok()?;
+                return Some((
+                    ticks as f64 / self.clock_ticks as f64 / seconds * 100.0,
+                    ono_value::Duration::from_nanoseconds(window),
+                ));
+            }
+            self.lifetime_share(stat)
+        }

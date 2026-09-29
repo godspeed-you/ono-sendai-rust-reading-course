@@ -1,0 +1,113 @@
+id: c20-restore-file
+source:
+  file: crates/ono-recovery-files/src/restore.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 9
+  anchor: There is no instant at which the destination
+  content_hash: sha256:93a14dd37bf5312f9c66c9ea40318d84d435905b860f15e555dd307195eb3af2
+  code: |
+    //! Putting a file back without ever truncating the live one (spec v0.6 §15.4, Appendix C.6).
+    //!
+    //! §15.4: *"Where possible, restoration SHOULD use temp-file + fsync + atomic rename semantics
+    //! rather than truncating the live file in place."* Every write here follows that shape, and the
+    //! order matters as much as the steps: the copy is written to a new file beside the destination,
+    //! given its permissions, its owner and its extended attributes, flushed to the disk, and only
+    //! then renamed over the live path. Until the rename the original is untouched and complete, and
+    //! after the rename the replacement is complete. There is no instant at which the destination
+    //! holds half a file.
+- start_line: 21
+  end_line: 22
+  anchor: use std::os::unix::fs::OpenOptionsExt as _;
+  content_hash: sha256:c68b513d434fe279d7d440f35129100d0f2291e06a6e6f90a06c19eb7e3ecc6e
+  code: |
+    use std::fs::{File, OpenOptions};
+    use std::os::unix::fs::OpenOptionsExt as _;
+- start_line: 218
+  end_line: 286
+  anchor: .create_new(true)
+  content_hash: sha256:62a7ead6712d2683386715778bb373fffbf09a7944c195cabe65a83d86bf8e72
+  code: |
+    /// Writes the copy beside the live file, flushes it, and renames it over (§15.4).
+    fn restore_file(
+        store: &FileRecoveryStore,
+        directory: &Path,
+        destination: &Path,
+        entry: &ArchiveEntry,
+        report: &mut RestoreReport,
+    ) -> Result<(), ErrorValue> {
+        let blob = entry.blob().unwrap_or_default();
+        let bytes = store.read_blob(directory, blob)?;
+        if digest_of(&bytes) != entry.digest() {
+            return Err(recovery_apply_failed(
+                &destination.display().to_string(),
+                "the stored copy no longer matches the digest recorded when it was created, so it is \
+                 not the state that was protected",
+            ));
+        }
+        let staging = staging_path(destination);
+        let _ = std::fs::remove_file(&staging);
+        let outcome = write_staged(&staging, &bytes, entry, report);
+        if let Err(error) = outcome {
+            let _ = std::fs::remove_file(&staging);
+            return Err(recovery_apply_failed(
+                &destination.display().to_string(),
+                &format!(
+                    "the replacement could not be written, and the original is untouched: {error}"
+                ),
+            ));
+        }
+        commit(&staging, destination)?;
+        report.restored.push(destination.to_path_buf());
+        Ok(())
+    }
+
+    /// Writes the replacement and flushes it before anything is renamed (§15.4).
+    fn write_staged(
+        staging: &Path,
+        bytes: &[u8],
+        entry: &ArchiveEntry,
+        report: &mut RestoreReport,
+    ) -> Result<(), std::io::Error> {
+        use std::io::Write as _;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(crate::store::FILE_MODE)
+            .open(staging)?;
+        file.write_all(bytes)?;
+        apply_metadata(staging, entry, report);
+        file.sync_all()?;
+        Ok(())
+    }
+
+    /// Renames the replacement over the live path, then flushes the directory (§15.4).
+    fn commit(staging: &Path, destination: &Path) -> Result<(), ErrorValue> {
+        std::fs::rename(staging, destination).map_err(|error| {
+            let _ = std::fs::remove_file(staging);
+            recovery_apply_failed(
+                &destination.display().to_string(),
+                &format!("the replacement could not be moved into place, and the original is untouched: {error}"),
+            )
+        })?;
+        if let Some(parent) = destination.parent()
+            && let Ok(directory) = File::open(parent)
+        {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+- start_line: 376
+  end_line: 383
+  anchor: fn staging_path(
+  content_hash: sha256:5e4e47611b6fe9b73c04b92acfdd2c42d1f2b68dfbcd7251a848b9d00e1f4c13
+  code: |
+    /// The name the replacement is written under before it is renamed into place (§15.4).
+    fn staging_path(destination: &Path) -> PathBuf {
+        let name = destination.file_name().map_or_else(
+            || "object".to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        destination.with_file_name(format!(".ono-recovery.{name}.staging"))
+    }

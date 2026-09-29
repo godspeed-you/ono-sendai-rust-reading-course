@@ -1,0 +1,68 @@
+id: c17-reader-thread
+source:
+  file: crates/ono-cli/src/eval/native/external.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 76
+  end_line: 133
+  anchor: sender.blocking_send(event).is_ok()
+  content_hash: sha256:44a3937f240227306309d4c683056d5527fae8cb7c4b929725c377a8e170a753
+  code: |2
+        let (sender, receiver) = tokio::sync::mpsc::channel::<StreamEvent>(256);
+        let reader = std::thread::spawn(move || {
+            let mut file = std::fs::File::from(pipe);
+            let mut buffer = vec![0u8; 64 * 1024];
+            let deliver = |outcome: Result<Value, ErrorValue>| {
+                let event = match outcome {
+                    Ok(value) => StreamEvent::Value(value),
+                    Err(error) => StreamEvent::Failure(error),
+                };
+                sender.blocking_send(event).is_ok()
+            };
+            loop {
+                match std::io::Read::read(&mut file, &mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        for outcome in decoding.feed(&buffer[..count]) {
+                            if !deliver(outcome) {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            for outcome in decoding.finish() {
+                if !deliver(outcome) {
+                    return;
+                }
+            }
+        });
+
+        let consumed = run_native_segment(
+            session,
+            registry,
+            list,
+            following,
+            source,
+            None,
+            Seed::Stream {
+                receiver,
+                boundedness,
+            },
+            false,
+            last,
+        )
+        .map(|_| ());
+        // A reader still running means the consumer stopped before the child's output ended —
+        // `take 1`, an error, Ctrl-C. Cancellation propagates to the producer (spec §18.5,
+        // ADR-0059): the child is told to stop, and a status it exits with because of that is not
+        // a failure of the pipeline. A reader that finished saw end of file, and the child's own
+        // status stands.
+        let cancelled = !reader.is_finished();
+        if cancelled {
+            started.terminate();
+        }
+        let outcome = session.executor().finish_foreground(started);
+        let _ = reader.join();
+        consumed?;
+        let outcome = outcome.map_err(process_error_flow)?;

@@ -1,0 +1,87 @@
+id: deeper
+number: 2
+title: Deeper
+summary: Less help, more code.
+lessons:
+  - id: deeper-01
+    title: Stopping early
+    stage: practice
+    summary: A loop with an early exit.
+    prerequisites: [basics-02]
+    concepts: [control-flow]
+    ono_topics: [text-handling]
+    objectives:
+      - Read a loop with `break`.
+    sections:
+      - type: code
+        snippet: sum-until-negative
+      - type: exercise
+        id: deeper-01-q1
+        exercise_type: read-function
+        prompt: Read `sum_until_negative` and describe what it computes.
+        hints:
+          - level: 1
+            body: Where can the loop end early?
+          - level: 2
+            body: The negative value itself is never added.
+        solution:
+          summary: It sums the values up to, but excluding, the first negative one.
+          analysis:
+            - aspect: purpose
+              body: Sum a prefix of the slice.
+            - aspect: inputs
+              body: A borrowed slice of `i64`.
+            - aspect: control-flow
+              body: The `break` ends the loop at the first negative value.
+          guarantees: The input slice is never modified.
+          semantics: The slice is borrowed, so the caller keeps ownership.
+          interpretation: A small example of an early-exit loop.
+  - id: deeper-02
+    title: Parsing a word
+    stage: transfer
+    summary: Unseen code with a worked solution.
+    prerequisites: [deeper-01]
+    concepts: [enums]
+    ono_topics: [evaluation]
+    objectives:
+      - Read an enum and a function that builds it.
+    sections:
+      - type: code
+        snippet: parse-word
+        highlight: [9-10]
+      - type: exercise
+        id: deeper-02-q1
+        exercise_type: read-function
+        prompt: Read `parse` and explain which variant it returns.
+        snippets: [parse-word]
+        hints:
+          - level: 1
+            body: What does `str::parse` return?
+        solution:
+          summary: Numbers become `Word::Number`, everything else `Word::Name`.
+          analysis:
+            - aspect: purpose
+              body: Classify a word.
+            - aspect: outputs
+              body: A `Word`.
+            - aspect: errors
+              body: A parse failure is not an error; it selects the other variant.
+          guarantees: Every input produces a `Word`.
+          semantics: The `match` is exhaustive over `Result`.
+          interpretation: Parsing never fails; it only classifies.
+  - id: deeper-03
+    title: Evaluating a word
+    stage: independent
+    summary: Read it on your own.
+    prerequisites: [deeper-02]
+    concepts: [enums, control-flow]
+    ono_topics: [evaluation]
+    objectives:
+      - Read a function without help.
+    sections:
+      - type: exercise
+        id: deeper-03-q1
+        exercise_type: read-function
+        prompt: Read `eval` and write down what it does.
+        snippets: [eval-word]
+        checklist: independent-reading

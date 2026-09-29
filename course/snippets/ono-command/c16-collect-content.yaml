@@ -1,0 +1,35 @@
+id: c16-collect-content
+source:
+  file: crates/ono-command/src/impls/mutate.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 472
+  end_line: 496
+  anchor: 'async fn collect_content(mut input: ValueStream'
+  content_hash: sha256:c4859fadb8159aaf96921228a7739a9c8fca4975ca227279a6173d59179adc17
+  code: |
+    /// The pipeline as one `bytes` value: strings and bytes concatenated in order, byte for byte
+    /// (spec §12.1). Anything else has no byte form the shell may invent (spec §12.3).
+    async fn collect_content(mut input: ValueStream, spelling: &str) -> Result<Value, ErrorValue> {
+        let mut content = Vec::new();
+        while let Some(event) = input.recv().await {
+            match event {
+                StreamEvent::Value(Value::String(text)) => content.extend_from_slice(text.as_bytes()),
+                StreamEvent::Value(Value::Bytes(raw)) => content.extend_from_slice(&raw),
+                StreamEvent::Value(other) => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!(
+                            "`{spelling}` writes bytes or text, and a {} is neither",
+                            other.type_name()
+                        ),
+                    )
+                    .with_help(format!(
+                        "choose the representation: `… | to json | {spelling}` (spec §12.3)"
+                    )));
+                }
+                StreamEvent::Failure(error) => return Err(error),
+            }
+        }
+        Ok(Value::Bytes(content.into()))
+    }

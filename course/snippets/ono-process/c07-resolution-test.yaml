@@ -1,0 +1,21 @@
+id: c07-resolution-test
+source:
+  file: crates/ono-process/src/resolve.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 176
+  end_line: 186
+  anchor: let (status, error) = missing.failure().expect("resolution must fail");
+  content_hash: sha256:856917b4cd80f83b47fb2243f115ba3aae499c4c3aeafea98ae7e6448416bcaf
+  code: |2
+        #[test]
+        fn should_report_not_found_when_no_entry_holds_the_program() {
+            let missing = resolve(
+                OsStr::new("ono-no-such-program-42"),
+                Some(OsStr::new("/bin:/usr/bin")),
+                None,
+            );
+            let (status, error) = missing.failure().expect("resolution must fail");
+            assert_eq!(status, ExitStatus::NOT_FOUND);
+            assert_eq!(error.code(), ErrorCode::ResolveCommandNotFound);
+        }

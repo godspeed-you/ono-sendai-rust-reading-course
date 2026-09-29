@@ -1,0 +1,1120 @@
+id: tasks-channels
+number: 17
+title: Tasks, channels and cancellation
+summary: |
+  A native Ono-Sendai pipeline such as `get process | where cpu > 20` is not one loop: every
+  stage is a separate Tokio task, and the stages are joined by bounded channels. This chapter
+  reads that machinery in the real source — `tokio::spawn` and the `Send + 'static` bounds it
+  imposes, bounded `mpsc` channels and the backpressure they create, `tokio::select!` with
+  `biased;`, cooperative cancellation through a shared token, OS threads that feed async code,
+  shared state behind `Arc<Mutex<…>>`, request/reply with a `oneshot` channel, and the chain
+  that turns a Ctrl-C into a dropped future. It ends with the driver loop that ties the
+  synchronous evaluator to all of it.
+
+  You met `Arc`, atomics and `CancelToken`'s shape in [chapter 15](chapter:smart-pointers) and
+  futures in [chapter 16](chapter:async). Here they start to move.
+lessons:
+  - id: tasks-channels-01
+    title: "Every stage is a task: `ValueStream::spawn`, `stage` and `channel`"
+    stage: practice
+    summary: "Read how Ono-Sendai turns producers and transforms into spawned tasks joined by bounded channels, and what `Send + 'static` means in practice."
+    prerequisites: [async-04]
+    concepts: [tasks, channels, send-sync, trait-bounds, closures]
+    ono_topics: [pipeline, async-execution]
+    objectives:
+      - Explain what `tokio::spawn` does and what dropping its `JoinHandle` does.
+      - Read the `Send + 'static` bounds on a spawning function as practical requirements.
+      - Describe the channel pair between two stages and who owns each half.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `crates/ono-pipeline/src/stream.rs` defines `ValueStream`, "the object a native pipeline
+          stage hands to the next one". Its doc comment insists it "is not a `Value`": a stream is
+          an execution-layer object. Under the surface a `ValueStream` is the *receiving* end of
+          two bounded channels — one for values, one for per-item failures — plus a cancellation
+          token and shared counters. Whoever holds the *sending* end, a `StreamSink`, is a task
+          that produces into it. This lesson reads the three functions that create those tasks
+          and channels.
+      - type: code
+        snippet: c17-stream-spawn-stage
+        caption: |
+          `crates/ono-pipeline/src/stream.rs`: the default capacity, a producer task, a stage
+          task over an input stream, and the channel pair both use.
+        highlight: [377, 547]
+        annotations:
+          - lines: 371-375
+            kind: type
+            body: |
+              `F` is a closure called once with the sink, returning a future `Fut` that produces
+              `()`. Both must be `Send + 'static`, because both are handed to `tokio::spawn`.
+          - lines: 377
+            token: "tokio::spawn(async move { producer(sink).await });"
+            kind: flow
+            body: |
+              The producer becomes an independent task. `spawn` returns a `JoinHandle`, which is
+              not stored: it is dropped at the end of the statement. Dropping a Tokio
+              `JoinHandle` **detaches** the task — it keeps running until its future finishes.
+          - lines: 393-394
+            kind: ownership
+            body: |
+              The input is collected into a `Vec` first, and the `move` closure takes that
+              `Vec`. The task now owns its values outright, which is what `'static` demands.
+          - lines: 541-547
+            kind: ownership
+            body: |
+              A stage reuses its input's capacity, clones its cancellation token (the clone is
+              the *same* token — [chapter 15](lesson:smart-pointers-02)) and its diagnostics, then moves the input stream
+              itself (`self`) into the new task.
+          - lines: 590-591
+            kind: rust
+            body: |
+              [`mpsc::channel(n)`](glossary:channel) returns a `(Sender, Receiver)` pair with room for `n` queued
+              items. The senders go into the sink, the receivers into the stream; they end up in
+              different tasks.
+      - type: prose
+        kind: rust
+        title: What `Send + 'static` means for a task
+        body: |
+          [`tokio::spawn`](glossary:task) hands a future to the runtime, which may poll it on any worker thread,
+          pause it at an `.await`, and resume it on a different worker. The spawning function
+          returns immediately, and the task may run long after it. Two bounds follow:
+
+          - [**`'static`**](glossary:static-lifetime): the future must not borrow anything that could disappear while it
+            runs — no references into the caller's local variables. It may own data (moved in
+            with `move`), or hold `Arc`s and `'static` references.
+          - **`Send`**: the future must be safe to move to another thread. A type is `Send` if
+            ownership of its values may be transferred between threads. Most types are.
+            Exceptions you meet in reading: `Rc` (a non-atomic reference count), and futures
+            that hold a non-`Send` value (for example a `std::sync::MutexGuard`) across an
+            `.await`.
+
+          Its sibling **`Sync`** means "`&T` may be shared between threads"; `T: Sync` is the
+          same as `&T: Send`. `Cell<bool>` is `Send` but not `Sync`, which matters in
+          [lesson 4](lesson:tasks-channels-04).
+
+          Because `ValueStream::spawn` states these bounds, producers in Ono-Sendai are written
+          as `move |sink| async move { … }` over owned data — you will see the pattern in
+          the process provider in [chapter 19](lesson:provider-boundary-02).
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          ADR-0013 decides that "[native stages](glossary:pipeline-stage) run as Tokio tasks", joined by bounded `mpsc`
+          channels. So the stages run concurrently — and, on the multi-thread runtime, possibly
+          in parallel on different workers. The bounded channels
+          decide how far ahead a producer may run. The rationale for 64 is on lines 38–41:
+          "Large enough that a fast producer and a fast consumer never hand off one value at a
+          time, small enough that a stalled consumer stops an endless producer within a few
+          dozen values." And `stage` passes on capacity, token and diagnostics "so a composed
+          pipeline stays one pipeline": one Ctrl-C, one set of counters.
+      - type: diagram
+        kind: data-flow
+        title: "Tasks and channels of `get process | where cpu > 20`"
+        art: |
+          task A: process producer        task B: where stage          consumer
+          (ValueStream::spawn)            (ValueStream::stage)         (driver, lesson 4)
+            StreamSink ─── values mpsc(64) ──► ValueStream
+                       ─── errors mpsc(64) ──►   │ next_value
+                                                 ▼
+                                            StreamSink ── values mpsc(64) ──► ValueStream
+                                                       ── errors mpsc(64) ──►   .recv()
+          all three share one CancelToken (Arc) and one Diagnostics
+        description: |
+          The process provider's producer runs as task A and owns a `StreamSink` holding the
+          senders of two channels of capacity 64. The `where` stage runs as task B; it owns the
+          `ValueStream` with the matching receivers, reads values with `next_value`, and owns a
+          second `StreamSink` whose channels lead to the final `ValueStream`, which the
+          foreground driver reads. All stages share one cancellation token and one set of
+          diagnostic counters.
+      - type: exercise
+        id: tasks-channels-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          On line 377 the `JoinHandle` returned by `tokio::spawn` is dropped immediately. What
+          does that do to the producer task?
+        choices:
+          - text: "Nothing: the task is detached and runs until its future completes."
+            correct: true
+            feedback: |
+              Right. Dropping a Tokio `JoinHandle` only gives up the ability to await or abort
+              the task. The producer stops when its own future returns — typically because a
+              send failed.
+          - text: "It cancels the task at its next `.await`."
+            correct: false
+            feedback: |
+              That is what dropping an *un-spawned* future does, or what `JoinHandle::abort`
+              does. Dropping the handle of a spawned task does not cancel it.
+          - text: "`spawn` blocks until the task has finished, so there is nothing left to drop."
+            correct: false
+            feedback: |
+              No. `spawn` returns immediately; the whole point is that the caller continues.
+          - text: "The code does not compile: a spawned task's handle must be stored."
+            correct: false
+            feedback: |
+              Nothing requires storing it; this is real, compiling Ono-Sendai code. Keeping the
+              handle is a choice made only where the task must stay reachable ([lesson 3](lesson:tasks-channels-03)).
+      - type: exercise
+        id: tasks-channels-01-q2
+        exercise_type: read-function
+        prompt: |
+          `forward_at_most` is the helper behind every "first *n* values" stage: `windowed` (a
+          window on a blocking transform) uses it as shown, and `take 3`'s `Take::apply` (in
+          `transforms/slice.rs`, not shown) is the same shape —
+          `input.stage(Boundedness::Bounded, move |input, sink| async move { forward_at_most(input, &sink, count).await; })`.
+          Read the two functions and explain how `get log --follow | take 3` terminates,
+          although the producer never ends on its own.
+        snippets: [c17-forward-at-most]
+        hints:
+          - level: 1
+            body: |
+              What happens to `input` when `forward_at_most` returns? Who holds the other end of
+              `input`'s channels?
+        solution:
+          summary: |
+            `take 3` (like `windowed`) spawns a bounded stage whose body is `forward_at_most`.
+            After three values it returns; `input` (the stage's receiving end) is dropped, so the
+            producer's channel has no receiver and its next `send` fails with `SinkClosed`, which
+            ends the producer task.
+          analysis:
+            - aspect: control-flow
+              body: |
+                The loop in `forward_at_most` runs while `sent < limit`. It also returns early if
+                the input ends (`next_value` gives `None`) or if its own consumer is gone (`send`
+                fails).
+            - aspect: ownership
+              body: |
+                `input: ValueStream` is owned by the function (moved in by `stage`). Returning
+                drops it, and with it the two `Receiver`s.
+            - aspect: async
+              body: |
+                The producer is a separate task. It learns of the drop only at its next
+                `send().await`, which then yields an error; the doc comment compares this to
+                `yes | head -1` receiving `SIGPIPE`.
+            - aspect: types
+              body: |
+                Both `windowed` and `Take::apply` declare the output `Boundedness::Bounded`:
+                whatever the input was, at most `limit` values come out.
+          guarantees: |
+            The doc comment guarantees that dropping the input "is what makes `get log --follow |
+            take 3` terminate".
+          semantics: |
+            Dropping the (single) `Receiver` of a Tokio `mpsc` channel closes it; a later `send`
+            returns `Err(SendError)`, which `StreamSink::send` maps to `SinkClosed`.
+          interpretation: |
+            Cancellation "by dropping" is the default way work stops in this pipeline; the next
+            lesson shows the second, explicit way (the `CancelToken`).
+      - type: exercise
+        id: tasks-channels-01-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          Imagine a producer written as
+          `let names = vec![…]; ValueStream::spawn(config, Boundedness::Bounded, |sink| async { for n in &names { … } })`
+          — no `move`, borrowing the local `names`. Why does the compiler reject it, and which
+          bound is responsible? What does `from_values_with` do to avoid the problem?
+        solution:
+          summary: |
+            The closure and its future borrow `names`, a local of the caller; the task could
+            outlive that local, so they are not `'static`. The `F: … + 'static` / `Fut: … +
+            'static` bounds reject it. `from_values_with` collects the values into a `Vec` and
+            *moves* it into the closure and the future (`move |sink| async move`).
+          analysis:
+            - aspect: ownership
+              body: |
+                A spawned task must own what it uses or share it through `Arc`. Borrowing from
+                the spawning stack frame is impossible because the frame may be gone first.
+            - aspect: traits
+              body: |
+                `'static` as a bound means "contains no references shorter than `'static`" — not
+                "lives forever". An owned `Vec<Value>` satisfies it.
+            - aspect: async
+              body: |
+                `tokio::spawn` needs `Send + 'static` because the runtime may poll the task on any
+                worker, at any later time.
+          guarantees: |
+            The bounds on `ValueStream::spawn` and `ValueStream::stage` guarantee every pipeline
+            task is independent of its creator's stack.
+          semantics: |
+            `move` closures and `async move` blocks take ownership of captured variables;
+            without `move`, captures are borrows.
+          interpretation: |
+            This is why pipeline code in Ono-Sendai clones `Arc`s and owned values right before
+            spawning — a pattern you will recognise in `run_background` ([lesson 3](lesson:tasks-channels-03)) and in
+            providers.
+  - id: tasks-channels-02
+    title: "Backpressure and cancellation: `select!`, `biased;` and the `CancelToken`"
+    stage: practice
+    summary: "Read how every send waits for room and races cancellation, how the token wakes waiters without losing a wakeup, and a test that proves an infinite pipeline stops."
+    prerequisites: [tasks-channels-01, smart-pointers-02]
+    concepts: [select-cancellation, channels, futures, interior-mutability, testing]
+    ono_topics: [pipeline, cancellation]
+    objectives:
+      - "Explain how a bounded `send().await` produces backpressure."
+      - "Read `tokio::select!` with `biased;` and name what happens to the losing branch."
+      - "Explain why `CancelToken::cancelled` registers before it re-checks the flag."
+      - Trace an infinite pipeline through cancellation to its single `stream.cancelled` report.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          A pipeline stops for two reasons. Either a consumer stops reading and drops its stream
+          (previous lesson), or something trips the pipeline's [**cancellation token**](glossary:cancel-token): Ctrl-C,
+          a `try` block unwinding, or a consumer that "has seen enough" (`cancel.rs`, doc
+          comment). [Chapter 15](lesson:smart-pointers-02) showed the token's data: an `Arc` around
+          two `AtomicBool`s and a `Notify`. Now read how it is *awaited*, and how every send in
+          the pipeline races it.
+      - type: code
+        snippet: c17-sink-send
+        caption: |
+          `crates/ono-pipeline/src/stream.rs`: the writing end of a stream, and its `send`.
+        annotations:
+          - lines: 182-184
+            kind: ono
+            body: |
+              The rule this method implements: "`send` waits when the channel is full, which is
+              the [backpressure](glossary:backpressure) spec §11.2 requires — an infinite producer runs exactly as fast as
+              its consumer drains it, and no faster."
+          - lines: 200-206
+            kind: flow
+            body: |
+              [`select!`](glossary:select) polls both branches and runs the first one whose future completes. The
+              other future is **dropped**. If cancellation wins, the pending `values.send(value)`
+              future is dropped and `value` is dropped with it — it is never delivered.
+          - lines: 203
+            token: "biased;"
+            kind: rust
+            body: |
+              Without `biased;`, when several branches are ready at once `select!` picks one at
+              random (for fairness). With it, branches are polled top to bottom, so a cancelled
+              token always wins over a channel with room.
+          - lines: 205
+            token: "result.map_err(|_| SinkClosed)"
+            kind: type
+            body: |
+              `mpsc::Sender::send` fails only if the channel's one `Receiver` has been dropped (or
+              closed); that error is reduced to the unit struct `SinkClosed`, which a producer
+              treats like `SIGPIPE`.
+      - type: code
+        snippet: c17-cancel-token-cancelled
+        caption: |
+          `crates/ono-pipeline/src/cancel.rs`: cancelling, checking, and waiting.
+        annotations:
+          - lines: 47-50
+            kind: flow
+            body: |
+              Set the flag, then wake every task currently waiting in `cancelled()`.
+              `notify_waiters` wakes only those already registered — which is why the waiting
+              side must register carefully.
+          - lines: 67-68
+            token: "tokio::pin!(wait);"
+            kind: rust
+            body: |
+              `notified()` creates a future. `tokio::pin!` pins it on the stack so that
+              `enable()` (which needs a pinned `&mut`) can be called on it. Treat the pinning as
+              the black box from [chapter 16](lesson:async-03); what matters is `enable()`: it
+              registers this waiter *now*, before the future is awaited.
+          - lines: 69-72
+            kind: flow
+            body: |
+              Only after registering, the flag is checked again. A `cancel()` that happened
+              between the first check (line 63) and the registration is seen here; one that
+              happens after the registration wakes the waiter. Either way, no wakeup is lost.
+      - type: prose
+        kind: rust
+        title: Two ways a branch can lose
+        body: |
+          In `select!`, "losing" means being dropped. That is harmless for `cancelled()`, which
+          owns nothing but a registration. For `values.send(value)` it means the value is
+          discarded. `select!` is therefore also a *cancellation* tool: whatever branch loses is
+          cancelled at the await where it was paused, exactly like a future dropped by
+          `tokio::time::timeout` in [chapter 16](lesson:async-02).
+
+          Like `join!`, `select!` runs its branches concurrently inside **one** task; no thread
+          or task is created.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The comment on lines 201–202 is the whole argument for `biased;`: "Cancellation that
+          only *usually* wins is cancellation a user cannot trust." And the token itself exists so
+          that "a native pipeline stop[s] at its next await rather than at the end of its current
+          producer (spec §18.5)". Because every send selects against the token, the *next await*
+          of every stage is a cancellation point.
+
+          The second flag, `reported`, exists so that "a pipeline of ten stages still reports one
+          cancellation, not ten". The consumer's `recv` claims that report once.
+      - type: code
+        snippet: c17-value-stream-recv
+        caption: |
+          `ValueStream::recv`: after the channels are empty and closed, a cancelled pipeline
+          yields exactly one `StreamCancelled` failure. Stages use a different method
+          (`next_value`, built on `recv_raw`), so only the final consumer claims the report.
+      - type: diagram
+        kind: control-flow
+        title: One send, two possible endings
+        art: |
+          producer: sink.send(v).await
+                         │
+                  select! biased
+                  ┌──────┴─────────────────────┐
+          1. cancel.cancelled()        2. values.send(v)
+             ready if flag set            ready when channel has room
+             │                            │  (waits while 64 are queued = backpressure)
+             ▼                            ▼
+          Err(SinkClosed)              Ok(()) or Err(SinkClosed) if no receiver
+          (branch 2 dropped, v lost)   (branch 1 dropped, registration removed)
+        description: |
+          Each `send` races two futures with `select!` in biased order. The first branch
+          completes as soon as the token is cancelled; the second completes when the channel has
+          room and the value has been queued, or fails if the receiver is gone. While the
+          channel is full, only waiting happens, which is backpressure. Whichever branch
+          completes first decides the result, and the other future is dropped: if cancellation
+          wins, the value is never delivered.
+      - type: exercise
+        id: tasks-channels-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          The token has already been cancelled, and the value channel happens to have free room.
+          What does `sink.send(v).await` return?
+        choices:
+          - text: "`Ok(())`, because the channel had room and `send` completes immediately."
+            correct: false
+            feedback: |
+              Both branches are ready, but `biased;` polls the cancellation branch first, and it
+              completes immediately because `is_cancelled()` is true.
+          - text: "`Err(SinkClosed)`, every time."
+            correct: true
+            feedback: |
+              Right. With `biased;`, the first ready branch in written order wins; the send
+              future is dropped and `v` is not delivered.
+          - text: "Either, chosen at random."
+            correct: false
+            feedback: |
+              That would be the behaviour *without* `biased;`, which is exactly what the comment
+              rules out.
+          - text: "It waits until the consumer has read everything already queued."
+            correct: false
+            feedback: |
+              No branch waits for the queue to drain; the cancellation branch is ready at once.
+      - type: exercise
+        id: tasks-channels-02-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Read the test. Trace what happens from `cancel.cancel()` (line 40) until the `while
+          let` loop on line 43 ends, in all three parties: the endless producer, the `where`
+          stage, and the test's consumer. Why does the test see exactly one `StreamCancelled`
+          failure, possibly after a few more values?
+        snippets: [c17-cancellation-test]
+        hints:
+          - level: 1
+            body: |
+              Values already queued in the channels (capacity 4 here) are still there after the
+              token is cancelled. Who can still read them?
+          - level: 2
+            body: |
+              A task ends when its future returns; when it ends, its `StreamSink` is dropped.
+              `recv` only reports cancellation after `recv_raw` has returned `None`.
+        solution:
+          summary: |
+            After `cancel()`, the producer's pending or next `send` returns `Err` (biased
+            cancellation), so its loop ends and its sink is dropped. The `where` stage's next
+            `send` also fails, so it returns and drops its input and sink. The consumer drains
+            whatever values were still buffered, then `recv_raw` returns `None`, and `recv`
+            claims the single cancellation report and yields one `StreamCancelled` failure; the
+            following `recv` returns `None` and the loop ends.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Producer: `while sink.send(…).await.is_ok()` — the first failing send ends the
+                loop. `where` stage: after `next_value`, `sink.send(value).await.is_err()` →
+                `return`. Consumer: loops on `stream.recv()`, ignoring values, setting
+                `cancelled` on the failure.
+            - aspect: async
+              body: |
+                A producer blocked on a full channel is inside `select!`; its `cancelled()`
+                branch was registered with the `Notify`, so `notify_waiters` wakes it and the
+                biased select returns `Err`.
+            - aspect: ownership
+              body: |
+                When each task returns, its `StreamSink` (the senders) is dropped. Once the
+                buffered items are read, the consumer's receivers report the channels closed.
+            - aspect: outputs
+              body: |
+                Values produced before cancellation may still arrive — the test's `while` loop
+                accepts them. The failure has code `StreamCancelled`, rendered as
+                `Ono-Sendai-E0802`.
+            - aspect: types
+              body: |
+                Stages read with `next_value`/`recv_raw`, which never report cancellation; only
+                `recv` calls `claim_report`, whose `compare_exchange` succeeds once.
+          guarantees: |
+            The test asserts that the consumer is told why the stream ended ("a cancelled
+            pipeline must tell its consumer why it ended (spec §18.5)"), and `within` makes a hang
+            fail the test after 20 seconds instead of stalling the suite.
+          semantics: |
+            Dropping every `Sender` closes a Tokio `mpsc` channel; the `Receiver` still yields
+            the items already queued, then `None`.
+          interpretation: |
+            The test name and its `expect` messages read as a specification: "values flow before
+            cancellation", "tell its consumer why it ended". The next test in the same file,
+            `should_report_cancellation_exactly_once_however_long_the_pipeline_is`, pins the
+            `reported` flag's purpose the same way.
+      - type: exercise
+        id: tasks-channels-02-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain why `CancelToken::cancelled` checks `is_cancelled()` twice, and what could go
+          wrong if lines 66–71 were replaced by a plain `self.inner.wake.notified().await;`.
+        solution:
+          summary: |
+            `notify_waiters` wakes only waiters registered at that moment. Without `enable()` and
+            the second check, a `cancel()` that ran after the first check but before the waiter
+            registered would wake nobody, and the waiting future would sleep forever — a lost
+            wakeup.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Fast path: already cancelled → return. Slow path: create the `Notified` future,
+                register it (`enable`), re-check the flag, and only then await.
+            - aspect: async
+              body: |
+                A `Notified` future normally registers when first polled. Registering explicitly
+                before the re-check closes the window between "checked the flag" and "started
+                listening".
+            - aspect: mutation
+              body: |
+                The flag is an `AtomicBool` stored with `SeqCst`; `cancel()` stores first and
+                notifies second, so any waiter that misses the notification sees the stored flag.
+          guarantees: |
+            The doc comment: "Safe to `select!` on repeatedly: the waiter registers before it
+            re-checks the flag, so a cancellation racing with the registration cannot be missed."
+          semantics: |
+            `Arc` only shares the token; the atomics and `Notify` do the synchronization
+            ([chapter 15](lesson:smart-pointers-02)'s distinction).
+          interpretation: |
+            Because `send` creates a fresh `cancelled()` future on every call, a lost wakeup
+            would not just delay one producer — it could leave it blocked on a full channel with
+            nobody reading, which is the hang the design exists to prevent.
+  - id: tasks-channels-03
+    title: "Threads and tasks side by side"
+    stage: practice
+    summary: "Read OS threads that drain pipes and feed async code with `blocking_send`, and a background job that shares its results through `Arc<Mutex<…>>`."
+    prerequisites: [tasks-channels-02]
+    concepts: [tasks, channels, shared-ownership, interior-mutability, send-sync]
+    ono_topics: [async-execution, process-execution, pipeline]
+    objectives:
+      - "Read `std::thread::spawn` and `JoinHandle::join` and what a panicked thread yields."
+      - "Explain how `blocking_send` carries values from a synchronous thread into async code."
+      - "Explain why `run_background` keeps its `JoinHandle` and shares results through `Arc<Mutex<…>>`."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Not everything in Ono-Sendai is a task. Reading from a child process's pipe is a
+          blocking `read(2)`, so it is done on plain OS threads. And a pipeline typed with a
+          trailing `&` must keep running after the prompt returns, which the evaluator's
+          `block_on` cannot do. Three pieces show how threads, tasks and shared state meet.
+      - type: code
+        snippet: c17-collector
+        caption: |
+          `crates/ono-process/src/job.rs`: the smallest thread in the codebase.
+        annotations:
+          - lines: 125
+            kind: type
+            body: |
+              A tuple struct around `std::thread::JoinHandle<Vec<u8>>`: a handle to a thread
+              whose closure returns `Vec<u8>`.
+          - lines: 130-137
+            kind: ownership
+            body: |
+              The `move` closure takes ownership of `source` (an `OwnedFd`) and turns it into a
+              `File`. The collected bytes are the thread's return value.
+          - lines: 142
+            token: "self.0.join().unwrap_or_default()"
+            kind: flow
+            body: |
+              `join()` blocks until the thread ends and returns `Result<Vec<u8>, _>` — `Err` if
+              the thread panicked. `unwrap_or_default()` turns a panicked collector into empty
+              output instead of propagating the panic.
+      - type: code
+        snippet: c17-reader-thread
+        caption: |
+          `crates/ono-cli/src/eval/native/external.rs`: an adapted program's stdout, decoded on
+          a thread and streamed into the native segment that consumes it.
+        annotations:
+          - lines: 76
+            kind: rust
+            body: |
+              A *Tokio* bounded channel of 256 events. The sender goes to the OS thread, the
+              receiver into the native segment as `Seed::Stream`.
+          - lines: 80-86
+            token: "let deliver = |outcome: Result<Value, ErrorValue>| {"
+            kind: rust
+            body: |
+              A closure inside the thread's closure; it borrows `sender`, which the outer `move`
+              closure owns. `blocking_send` is the synchronous twin of `send().await`: it blocks
+              the calling OS thread while the channel is full. It must be called outside async
+              code — here it is, on a plain thread. It fails once the receiver is gone.
+          - lines: 91-95
+            kind: flow
+            body: |
+              `decoding.feed` turns raw bytes into zero or more records. The first failed
+              delivery ends the thread (`return`), so a consumer that stops early stops the
+              reader too.
+          - lines: 126-131
+            kind: flow
+            body: |
+              After the segment finishes, a reader that is *still running* means the consumer
+              stopped first (`take 1`, an error, Ctrl-C). The child is terminated, then waited
+              for, then the thread is joined.
+      - type: code
+        snippet: c17-seed-stream-relay
+        caption: |
+          The receiving side, in `run_native_segment` (`foreground.rs`): a producer task that
+          re-sends the thread's events into an ordinary `ValueStream`, so everything downstream
+          sees the usual bounded, cancellable stream.
+      - type: prose
+        kind: rust
+        title: "Tasks versus threads, `Arc<Mutex<…>>` versus channels"
+        body: |
+          A thread (`std::thread::spawn`) is an operating-system thread that runs one closure to
+          the end; blocking inside it is fine. [A task](glossary:task) (`tokio::spawn`) is a future multiplexed
+          with many others over a few worker threads; it must not block. Tokio's channels have
+          both kinds of ends — `send().await` for tasks, `blocking_send` for threads — so they are
+          the natural bridge. A third way to send, `try_send`, never waits at all: it fails at once
+          if the channel is full or its receiver is gone. Code that uses it is saying that a full
+          channel is itself an error rather than a reason to wait.
+
+          The other way to hand data between threads and tasks is shared state. `Arc<T>` gives
+          several owners the same value; it does **not** make mutation safe. [`Mutex<T>`](glossary:mutex) does: it
+          lets one holder at a time obtain `&mut T` through `lock()`. `Arc<Mutex<T>>` combines
+          them: shared ownership *and* synchronized mutation. `lock()` returns `Err` if a
+          previous holder panicked while holding the lock ("poisoned");
+          `unwrap_or_else(PoisonError::into_inner)` takes the guard anyway.
+      - type: code
+        snippet: c17-run-background
+        caption: |
+          `crates/ono-cli/src/eval/native/drive.rs`, excerpts of `run_background`: the stages
+          are bound earlier in the function exactly as in the foreground path; here they are
+          assembled and drained by a task.
+        annotations:
+          - lines: 315
+            token: "let providers = providers.clone();"
+            kind: ownership
+            body: |
+              `ProviderRegistry` derives `Clone` over a `Vec<Arc<dyn Provider>>`, so this clones
+              the vector of reference-counted pointers, not the providers. The task gets its own
+              registry value and borrows nothing from the session.
+          - lines: 322-324
+            kind: ownership
+            body: |
+              One `Arc::clone` per shared container, made *before* the `async move` block so
+              the task owns these clones while the originals stay here for the job table.
+          - lines: 325
+            token: "let handle = runtime.spawn(async move {"
+            kind: flow
+            body: |
+              `runtime.spawn`, not `block_on`: the pipeline runs on the workers and this function
+              returns at once.
+          - lines: 395-403
+            kind: ono
+            body: |
+              The `JoinHandle<()>` is **kept** in the `NativeJob`, together with the other
+              `Arc` halves. `get job`, `fg` and `kill %N` find the job through it; stopping the
+              job calls `handle.abort()`.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          Background jobs: in `run_stage_list`, the call to `run_background` is commented "Spec
+          §18.4: a backgrounded native pipeline is a job — listed, addressable, stoppable — never
+          a hidden thread (ADR-0024)." Keeping the `JoinHandle` is what makes it stoppable:
+          dropping it would only detach the task. `NativeJob`'s field doc says what `abort` does:
+          "aborting it drops every receiver, which stops the producers" — the same cancellation by
+          dropping the foreground uses.
+
+          Reader threads: the module doc of `external.rs` says "A decoder that streams gets its
+          own reader thread and a channel the native segment drains" (ADR-0059), so records from
+          an adapted program flow while it runs. The comment on lines 121–125 fixes what early
+          stopping means: "the child is told to stop, and a status it exits with because of that
+          is not a failure of the pipeline".
+      - type: diagram
+        kind: architecture
+        title: A reader thread feeding an async pipeline
+        art: |
+          child process ──stdout pipe──► OS thread (std::thread::spawn)
+                                           read() → decoding.feed() → deliver()
+                                           sender.blocking_send(event)
+                                                  │ tokio mpsc(256)
+                                                  ▼
+          worker task (Seed::Stream relay) receiver.recv().await → sink.send / sink.fail
+                                                  │ ValueStream (mpsc 64)
+                                                  ▼
+          native stages … → driver (main thread, block_on)
+        description: |
+          The child writes to a pipe. A dedicated OS thread reads the pipe with blocking reads,
+          decodes the bytes into records and delivers each as an event with `blocking_send` into
+          a Tokio channel of capacity 256. A relay task inside the native segment receives those
+          events and re-sends them into an ordinary `ValueStream`, which the following native
+          stages consume and the foreground driver drains. If any consumer stops, the chain of
+          failed sends ends the relay and then the reader thread.
+      - type: exercise
+        id: tasks-channels-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Why does `run_background` store `handle` in the `NativeJob` instead of letting it drop
+          like the producer handles in `ValueStream::spawn`?
+        choices:
+          - text: "Because dropping it would cancel the background pipeline immediately."
+            correct: false
+            feedback: |
+              No — dropping a Tokio `JoinHandle` detaches the task; it would keep running.
+          - text: "Because the job must stay addressable: `kill`/`fg` need the handle to abort the task or check whether it finished."
+            correct: true
+            feedback: |
+              Right. Without the handle the task would run on, but nothing could stop it or ask
+              about it — the "hidden thread" ADR-0024 forbids.
+          - text: "Because a spawned task only runs while its handle is alive."
+            correct: false
+            feedback: |
+              No. A spawned task runs independently of its handle.
+          - text: "Because `JoinHandle` holds the results, which `fg` reads with `.await`."
+            correct: false
+            feedback: |
+              The task returns `()`. Its results live in the shared `Arc<Mutex<…>>` containers.
+      - type: exercise
+        id: tasks-channels-03-q2
+        exercise_type: trace-value
+        prompt: |
+          Follow one decoded record from the child's stdout to the native stage after it. Name
+          every owner it passes through and every channel it crosses. Then describe what happens,
+          owner by owner, when the pipeline was `… | take 1` and the stage has taken its one
+          record.
+        hints:
+          - level: 1
+            body: |
+              Use the diagram. For the second half, start from the stage that stops and walk
+              upstream: each step is "dropped receiver → failed send → return".
+        solution:
+          summary: |
+            Bytes → `decoding.feed` → `Result<Value, ErrorValue>` → `StreamEvent` in `deliver` →
+            `blocking_send` into the 256-channel → relay task's `receiver.recv()` → `sink.send`
+            into a `ValueStream` channel → the next stage's `next_value`. When `take 1` returns,
+            it drops its input; the relay's next send fails and it breaks out of its loop, dropping
+            `receiver`; the reader thread's next `blocking_send` fails, `deliver` returns `false`,
+            and the thread returns. `reader.is_finished()` may still be false at that moment, so
+            the shell terminates the child and treats its exit status as not a failure.
+          analysis:
+            - aspect: ownership
+              body: |
+                The event is moved at every hop: into the channel by `blocking_send`, out of it
+                by `recv`, into the next channel by `send`. Nothing is cloned.
+            - aspect: control-flow
+              body: |
+                Upstream shutdown is a chain of failed sends: stage → relay (`delivered` false →
+                `break`) → thread (`deliver` false → `return`).
+            - aspect: async
+              body: |
+                Two worlds meet at the 256-channel: the thread blocks in `blocking_send` when it
+                is full; the relay task awaits `recv`.
+            - aspect: side-effects
+              body: |
+                The child process is terminated and reaped (`terminate`, `finish_foreground`),
+                then the thread is joined.
+          guarantees: |
+            The comments guarantee that a consumer stopping early causes the child to be told to
+            stop, and that the resulting status is not reported as a pipeline failure.
+          semantics: |
+            `blocking_send` and `send().await` fail exactly when the receiver has been dropped;
+            a dropped `ValueStream` drops its receivers.
+          interpretation: |
+            If the thread is blocked in `read()` because the child has not written anything, it
+            cannot notice the closed channel until `terminate` makes the child exit and the pipe
+            reach end of file — which is why the shell terminates the child before joining.
+      - type: exercise
+        id: tasks-channels-03-q3
+        exercise_type: read-function
+        prompt: |
+          Read the spawned task in `run_background` (lines 325–391). Summarize what it does, how
+          it reports failure, and how its results reach the session later. Be precise about
+          which values are shared and how.
+        solution:
+          summary: |
+            The task assembles the pipeline stage by stage (`table.run(...).await` per bound
+            stage), then drains the final stream: each value is either folded into the live row
+            model or pushed onto `values`; each failure is pushed onto `failures`. Any stage error
+            is pushed onto `failures` and ends the task. The session sees the results through the
+            other halves of the three `Arc<Mutex<…>>` stored in `NativeJob`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                A `for` over `&bound` builds each `Invocation`, feeding the previous stream in as
+                input. Errors from the temporal context or from a stage `return` early after
+                recording. Then `while let Some(event) = stream.recv().await` drains.
+            - aspect: ownership
+              body: |
+                The task owns `bound`, `providers`, `scope`, `context`, `adapters`, `resolver`
+                and the three `task_*` `Arc` clones, all moved in by `async move`; `table` is a
+                `&'static CommandTable` (a process-wide `OnceLock`), which `'static` allows. It
+                borrows nothing from the session.
+            - aspect: mutation
+              body: |
+                Every mutation of shared state goes through `lock()`; a poisoned lock is
+                recovered with `PoisonError::into_inner` (and in one place, line 332, a failed
+                lock simply skips the push).
+            - aspect: async
+              body: |
+                The task runs on worker threads; the evaluator has already returned and printed
+                `[%N]`. The awaits inside are the pipeline's normal suspension points.
+          guarantees: |
+            The function's doc guarantees that the chain is "built exactly as a foreground run
+            builds it" and that "aborting the task drops every receiver, which stops the
+            producers".
+          semantics: |
+            `Arc<Mutex<T>>` provides shared ownership (`Arc`) plus exclusive access for mutation
+            (`Mutex`); neither half is sufficient alone.
+          interpretation: |
+            Collecting into shared buffers rather than a channel suits a job whose results are
+            read at an unknown later time (`fg`, reaping) by a session that is not waiting for
+            them.
+  - id: tasks-channels-04
+    title: "The foreground driver: Ctrl-C and the block bridge"
+    stage: practice
+    summary: "Follow Ctrl-C from a signal handler to a dropped future, and read the driver loop that answers `each` blocks over `mpsc` + `oneshot` while draining the pipeline."
+    prerequisites: [tasks-channels-03]
+    concepts: [select-cancellation, channels, send-sync, interior-mutability, tokio]
+    ono_topics: [cancellation, evaluation, async-execution]
+    objectives:
+      - "Explain why the interrupt note is a `static AtomicBool` but the per-line memory is a `thread_local!` `Cell`."
+      - "Trace Ctrl-C from `note_interrupt` to a returned `Flow` and the dropped pipeline."
+      - "Read a request/reply protocol built from `mpsc::channel(1)` and `oneshot`."
+      - "Read `select!` branch preconditions (`, if cond`) and `std::future::pending()`."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          A native pipeline runs *inside* the shell process. When the user presses Ctrl-C, the
+          kernel delivers `SIGINT` to the shell itself — "there is no child for the kernel to
+          interrupt" (`signals.rs`). And an `each { … }` stage cannot run its block inside a
+          task, because a block is statements and "only the evaluator runs statements, on the
+          thread that owns the session" (module doc of `drive.rs`). Both problems are solved in
+          one place: the driver loop on the evaluator's thread. First the Ctrl-C chain, then the
+          block bridge, then the loop that joins them.
+      - type: code
+        snippet: c17-signal-note
+        caption: |
+          `crates/ono-process/src/signals.rs`: the signal handler and the function that reads
+          its note.
+        annotations:
+          - lines: 113
+            token: "static INTERRUPTED: AtomicBool"
+            kind: type
+            body: |
+              A `static` is shared by every thread of the process, so its type must be `Sync`.
+              [`AtomicBool`](glossary:atomic) is, and it can be changed through that shared access; a plain
+              `static bool` could not be changed at all without `static mut` and `unsafe`.
+          - lines: 115-117
+            kind: rust
+            body: |
+              An `extern "C" fn` with the C calling convention, installed as the `SIGINT` handler
+              (in `install_shell_signals`, same file). A signal handler may interrupt any code
+              at any instant, so it may only do async-signal-safe things; it stores one atomic
+              flag and nothing else. `Ordering::Relaxed` suffices because the flag is the whole
+              message: no other data is published along with it.
+          - lines: 127
+            kind: flow
+            body: |
+              `swap(false, …)` reads the old value and clears it in one atomic step: "whether
+              `SIGINT` arrived since the last call".
+      - type: code
+        snippet: c17-interrupt-reached
+        caption: |
+          `crates/ono-cli/src/eval/pipeline.rs`: remembering the interrupt for the rest of the
+          line.
+        annotations:
+          - lines: 30-35
+            kind: type
+            body: |
+              `thread_local!` gives each thread its own `REACHED`. `Cell<bool>` allows mutation
+              through a shared reference but is not `Sync`, so it could not be a plain `static`;
+              as a thread-local it never needs to be shared.
+          - lines: 47-50
+            kind: ono
+            body: |
+              Why per thread: "the foreground driver is one thread: the evaluator owns the
+              session, `block_on` runs its futures on the calling thread … A background job on a
+              runtime worker has a memory of its own that nothing ever sets, so a foreground
+              Ctrl-C cannot reach into it (spec §18.4)."
+      - type: code
+        snippet: c17-interrupted-future
+        caption: |
+          `crates/ono-cli/src/eval/native/drive.rs`: a future that completes once Ctrl-C has
+          been noted.
+        annotations:
+          - lines: 133-139
+            kind: flow
+            body: |
+              Polling, not notification: a Tokio `interval` ticks every 40 ms (its first tick
+              completes immediately), and each tick checks the note. A signal handler cannot
+              safely wake a future, so the future comes to look.
+      - type: code
+        snippet: c17-foreground-select
+        caption: |
+          `crates/ono-cli/src/eval/native/foreground.rs`: the channel for block requests, and
+          assembly raced against the interrupt.
+        annotations:
+          - lines: 180
+            kind: ono
+            body: |
+              Capacity **1**: "§25.3 keeps `each` serial, so a queue of items waiting to be run
+              would buy nothing, and §65.7 forbids the shape it would take".
+          - lines: 309-314
+            kind: flow
+            body: |
+              `block_on` runs the `select!` on this thread. If `interrupted()` wins, the
+              `assemble` future is dropped mid-way, and every stream it had built is dropped
+              with it. This `select!` has no `biased;`.
+          - lines: 317
+            token: "drop(asked);"
+            kind: ownership
+            body: |
+              The evaluator's own sender is dropped explicitly. The remaining senders are the
+              clones held by block stages, so the receiver learns from the channel closing that
+              no block will ask again.
+      - type: code
+        snippet: c17-block-request-asking
+        caption: |
+          `drive.rs`: the request/reply types and the stage an `each { … }` becomes.
+        annotations:
+          - lines: 51
+            token: "reply: tokio::sync::oneshot::Sender<BlockReply>,"
+            kind: type
+            body: |
+              Each request carries the sending half of a fresh [`oneshot` channel](glossary:channel) — a channel
+              for exactly one message. The answer comes back on it.
+          - lines: 99-110
+            kind: flow
+            body: |
+              Ask: create the reply channel, send the request over the bounded `mpsc` (waiting
+              while the one slot is full). If the driver is gone, stop.
+          - lines: 111-113
+            token: "let Ok(BlockReply::Produced { values, keep_going }) = answer.await else {"
+            kind: flow
+            body: |
+              `let … else` on an awaited result: continue only if a reply arrived *and* it is
+              `Produced`. A `Stop` reply, or a dropped reply sender (`Err`), ends the stage.
+          - lines: 119-121
+            kind: ono
+            body: |
+              `keep_going` is false after `break` in the block. Returning drops `input`, which
+              "closes the upstream channel and stops the source" (doc, lines 86–88).
+      - type: code
+        snippet: c17-drive-segment
+        caption: |
+          `drive.rs`: the driver loop. It alternates between `block_on` (waiting on the pipeline)
+          and synchronous work (running one block item).
+        annotations:
+          - lines: 180-182
+            kind: flow
+            body: |
+              A cancellation check between two `block_on` calls. While a block item runs, the
+              driver is outside the runtime and nothing it waits on can be polled, so this plain
+              check is "the only cancellation point a pipeline of many small reads has".
+          - lines: 185
+            token: "biased;"
+            kind: flow
+            body: |
+              Order of preference: a waiting block request, then a pipeline event, then the live
+              view, then the interrupt.
+          - lines: 186
+            token: ", if asking"
+            kind: rust
+            body: |
+              A branch precondition: when `asking` is false the branch is disabled and its future
+              is not polled at all. Once the request channel has closed, it would otherwise
+              complete with `None` on every iteration.
+          - lines: 190-195
+            kind: rust
+            body: |
+              An `async` block per iteration: receive from the stream if there is one. The
+              `None` arm awaits `std::future::pending()`, a future that never completes; the
+              `if draining.is_some()` guard already keeps that arm from being reached.
+          - lines: 220
+            token: "crate::eval::run_each_item(session, block, source, request.value, consumed)"
+            kind: flow
+            body: |
+              Outside `block_on`: the evaluator runs one item synchronously, with full access to
+              `&mut Session`. It may even run a nested pipeline with its own `block_on`.
+          - lines: 222-225
+            token: "let _ = request.reply.send(BlockReply::Produced {"
+            kind: rust
+            body: |
+              `oneshot::Sender::send` is not async; it returns `Err` if the stage stopped
+              listening, which `let _ =` ignores deliberately.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The doc comment of `drive_segment` states the design: "It is the only thing holding the
+          session, so it is the only thing that can run a block — and it is also what drains the
+          pipeline, so the two interleave rather than take turns." And: "Between two answers it is
+          inside `block_on`; while it answers one it is not, which is what lets a block run a
+          pipeline of its own (ADR-0480)."
+
+          The `thread_local!` memory exists because of a bug that is documented in place:
+          `take_interrupt` clears the note, so in `each { … }` "the first item to start after a
+          Ctrl-C swallowed the interrupt meant for the line around it" (ADR-0782). Remembering it
+          per line lets every nesting level unwind.
+      - type: diagram
+        kind: control-flow
+        title: "Ctrl-C, from the kernel to the prompt"
+        art: |
+          kernel ── SIGINT ──► note_interrupt: INTERRUPTED.store(true)    (any thread, any time)
+                                            │
+          driver thread, inside block_on:   │
+            interrupted(): tick every 40 ms ─► interrupt_reached()
+                                                 take_interrupt() swap(false) → REACHED.set(true)
+                                            │ returns
+            select! biased … () = interrupted() => Driven::Interrupted
+                                            │
+            drive_segment returns Err(interrupted_flow_now())  ── `?` in run_native_segment
+                                            │
+            `draining` ValueStream dropped → receivers dropped
+              → where stage's next send fails → it returns, drops its input
+              → producer's next send fails → it returns
+                                            │
+            run_program: report "interrupted", status 130 (128 + SIGINT)
+        description: |
+          The kernel delivers `SIGINT` to the shell; the handler only sets the static atomic flag.
+          On the evaluator's thread, the `interrupted()` future checks every 40 ms through
+          `interrupt_reached`, which moves the note into the thread-local `REACHED` and returns
+          true. The driver's `select!` then completes with `Driven::Interrupted`, and
+          `drive_segment` returns an error flow. Unwinding drops the stream being drained, which
+          drops its receivers; each upstream stage fails its next send and ends, back to the
+          producer. The top level reports the interruption and sets exit status 130.
+      - type: exercise
+        id: tasks-channels-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Why is `REACHED` a `thread_local!` `Cell<bool>` rather than another `static AtomicBool`?
+        choices:
+          - text: "Because a `Cell` is faster than an atomic, and nothing else matters here."
+            correct: false
+            feedback: |
+              Speed is not the reason given. The doc comment explains a *semantic* reason: the
+              memory must belong to one thread.
+          - text: "Because the memory must be per thread: only the foreground driver's thread should see this line's Ctrl-C, not a background job on a worker."
+            correct: true
+            feedback: |
+              Right. A process-wide flag would let a foreground Ctrl-C cancel background jobs.
+              A per-thread `Cell` also needs no `Sync`, because it is never shared.
+          - text: "Because signal handlers can only write to thread-locals."
+            correct: false
+            feedback: |
+              The reverse: the signal handler writes the process-wide `INTERRUPTED` atomic. The
+              thread-local is written by ordinary code in `interrupt_reached`.
+          - text: "Because `Cell<bool>` is `Sync`, so it can be shared by the worker threads."
+            correct: false
+            feedback: |
+              `Cell<bool>` is not `Sync`. That is why it cannot be a plain `static`.
+      - type: exercise
+        id: tasks-channels-04-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          The user runs `get process | where cpu > 20` (no `each` stage) and presses Ctrl-C while
+          the driver is waiting for the next event. Trace one iteration of `drive_segment`'s
+          `select!` in `biased` order: which branches are enabled, which is ready, and what the
+          function returns. Assume the note is noticed inside `select!`, not by the check on line
+          180.
+        hints:
+          - level: 1
+            body: |
+              With no block stage, how many `BlockRequest` senders still exist after line 317 of
+              `foreground.rs`? What does `requests.recv()` yield then?
+        solution:
+          summary: |
+            On the first iteration `requests.recv()` yields `None` at once (every sender is
+            gone), giving `Driven::Asked`, which sets `asking = false`. In the next iteration
+            the request branch is disabled, the showing branch is disabled (no live view), the
+            event branch is pending (no event yet), and `interrupted()` completes after its tick
+            sees the note: `Driven::Interrupted`, and the function returns
+            `Err(interrupted_flow_now())`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Branch 1 (`if asking`) runs only until the channel reports closed. Branch 2
+                (`if draining.is_some()`) is enabled but not ready. Branch 3 (`if
+                showing.is_some()`) is disabled. Branch 4 has no precondition and completes.
+            - aspect: async
+              body: |
+                When branch 4 wins, the other branch futures — including the pending
+                `stream.recv()` — are dropped. Nothing is lost: `recv` had not taken an event.
+            - aspect: errors
+              body: |
+                `interrupted_flow_now()` is `Flow::FailedWith(StreamCancelled "interrupted",
+                ExitStatus::from_signal(2))`, i.e. status 128 + 2.
+            - aspect: ownership
+              body: |
+                `draining` is a parameter of `drive_segment`; returning drops it, so the final
+                stream's receivers are dropped and the upstream tasks stop at their next send.
+          guarantees: |
+            `drive_segment`'s doc: "The interrupt of spec §18.5, which unwinds rather than
+            returning a partial drain."
+          semantics: |
+            A `select!` branch whose precondition is false is not polled; a `biased` select tries
+            enabled branches in order and takes the first ready one.
+          interpretation: |
+            Placing the interrupt branch last means pending work (a block request, an event
+            already queued) is handled first when both are ready; the explicit check at the top
+            of the loop compensates for the case where the driver is never idle.
+      - type: exercise
+        id: tasks-channels-04-q3
+        exercise_type: read-function
+        prompt: |
+          Read `asking_stage` (lines 89–124) as a protocol. Describe what one iteration exchanges
+          with the driver, and list every way the stage can end and what each means for upstream
+          and downstream.
+        solution:
+          summary: |
+            Per input value: create a `oneshot` pair, send `BlockRequest { stage, value, reply }`
+            over the capacity-1 `mpsc`, await the reply, forward the produced values downstream
+            one by one, then continue unless `keep_going` is false. It ends when the input ends,
+            the driver is gone (send fails), the reply is not `Produced` (block failed or jumped,
+            or the reply sender was dropped), downstream is gone (send fails), or the block said
+            `break`.
+          analysis:
+            - aspect: purpose
+              body: |
+                A stage that cannot run the block itself asks the only thread that can — the
+                evaluator — and waits for the answer.
+            - aspect: control-flow
+              body: |
+                Four `return`s plus the loop's natural end when `next_value` yields `None`.
+                Every return drops `input`, which stops upstream, and drops `sink`, which ends
+                the stream for downstream.
+            - aspect: async
+              body: |
+                Two awaits pace the stage: the `send` on the one-slot channel and `answer.await`.
+                The next input value is requested only after the previous item's values are sent,
+                which is §25.4's ordering and backpressure rule.
+            - aspect: ownership
+              body: |
+                `value` is moved into the request; the reply's `values` are moved into
+                `sink.send`. `asked` (a cloned `Sender`) is owned by the stage's closure.
+            - aspect: types
+              body: |
+                `oneshot` fits a single reply per request; `let … else` accepts only
+                `Ok(BlockReply::Produced { .. })`.
+          guarantees: |
+            The doc guarantees ordering ("values a block emits for one input item are forwarded
+            before the next input item is required") and that returning stops the source (§25.5).
+          semantics: |
+            Dropping a `oneshot::Sender` without sending makes the awaiting receiver yield
+            `Err(RecvError)`; the `let … else` treats that like `Stop`.
+          interpretation: |
+            The request/reply pair turns the evaluator into a service the pipeline's tasks can
+            call, while `Session` itself never leaves its thread — the reason the design exists.

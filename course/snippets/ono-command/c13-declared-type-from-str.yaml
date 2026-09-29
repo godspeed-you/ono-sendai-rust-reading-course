@@ -1,0 +1,60 @@
+id: c13-declared-type-from-str
+source:
+  file: crates/ono-command/src/contract.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 253
+  end_line: 256
+  anchor: pub enum DeclaredType {
+  content_hash: sha256:eb953501f82bec0a8414fd32dd82f7bdb569a39047d2658fd18373decb483c76
+  code: |
+    /// The declared type of a selector or an option, in the value vocabulary of spec §10.2 with the
+    /// three additions of ADR-0012 §7.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum DeclaredType {
+- start_line: 283
+  end_line: 287
+  anchor: List(Box<DeclaredType>),
+  content_hash: sha256:a915d7c01cf663f51d6719441568baf6e2671bf4ddd9692b04b99485fe001853
+  code: |2
+        /// An ordered list of the inner type.
+        List(Box<DeclaredType>),
+        /// An identity handle for an object of the named schema, such as `ref<ono.user/1>`.
+        Ref(String),
+    }
+- start_line: 401
+  end_line: 431
+  anchor: return Ok(DeclaredType::List(Box::new(inner.parse()?)));
+  content_hash: sha256:db832f0559c6cc14de29bdfa53660db64ef4650a98369f0eb3b458e324f9e495
+  code: |
+    impl FromStr for DeclaredType {
+        type Err = ErrorValue;
+
+        fn from_str(text: &str) -> Result<Self, Self::Err> {
+            if let Some(inner) = text.strip_prefix("list<").and_then(|r| r.strip_suffix('>')) {
+                return Ok(DeclaredType::List(Box::new(inner.parse()?)));
+            }
+            if let Some(schema) = text.strip_prefix("ref<").and_then(|r| r.strip_suffix('>')) {
+                return Ok(DeclaredType::Ref(schema.to_owned()));
+            }
+            match text {
+                "bool" => Ok(DeclaredType::Bool),
+                "int" => Ok(DeclaredType::Int),
+                "float" => Ok(DeclaredType::Float),
+                "string" => Ok(DeclaredType::String),
+                "path" => Ok(DeclaredType::Path),
+                "duration" => Ok(DeclaredType::Duration),
+                "bytesize" => Ok(DeclaredType::ByteSize),
+                "timestamp" => Ok(DeclaredType::Timestamp),
+                "port" => Ok(DeclaredType::Port),
+                "ip" => Ok(DeclaredType::Ip),
+                "ipnetwork" => Ok(DeclaredType::IpNetwork),
+                "record" => Ok(DeclaredType::Record),
+                "value" => Ok(DeclaredType::Value),
+                _ => Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    format!("`{text}` is not a declared type of the registry vocabulary"),
+                )),
+            }
+        }
+    }

@@ -1,0 +1,50 @@
+id: c14-risk-derives
+source:
+  file: crates/ono-provider-api/src/capability.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 10
+  end_line: 49
+  anchor: pub enum Risk {
+  content_hash: sha256:ef17b8b0b5fea6d3cf769980490fc23294f826d1f5d3e119a4cffc4a22df00d3
+  code: |
+    /// How much a capability could change or reveal.
+    ///
+    /// Spec §17.1 computes a risk descriptor from this together with the number of targets, the
+    /// context, the privilege level and irreversibility. This is the part the provider declares.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub enum Risk {
+        /// A point-in-time query with no side effect.
+        Read,
+        /// A continuous subscription: it holds resources and keeps running.
+        Observe,
+        /// Changes state outside the shell, reversibly.
+        Mutate,
+        /// May cause irreversible loss.
+        Destructive,
+    }
+
+    impl Risk {
+        /// The name `docs/contracts/capabilities.yaml` uses.
+        #[must_use]
+        pub const fn as_str(self) -> &'static str {
+            match self {
+                Risk::Read => "read",
+                Risk::Observe => "observe",
+                Risk::Mutate => "mutate",
+                Risk::Destructive => "destructive",
+            }
+        }
+
+        /// Whether an operation of this risk changes anything outside the shell.
+        #[must_use]
+        pub const fn changes_the_world(self) -> bool {
+            matches!(self, Risk::Mutate | Risk::Destructive)
+        }
+    }
+
+    impl fmt::Display for Risk {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.as_str())
+        }
+    }

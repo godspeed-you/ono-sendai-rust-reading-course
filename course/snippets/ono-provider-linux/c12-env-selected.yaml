@@ -1,0 +1,28 @@
+id: c12-env-selected
+source:
+  file: crates/ono-provider-linux/src/env.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 141
+  end_line: 158
+  anchor: .filter(|binding| wanted.is_none_or(|name| binding.name == name))
+  content_hash: sha256:31a5cf1b03b30fef0d36046e21ec17524a57660c577958e0162cf78f7f3e0ef1
+  code: |2
+        fn selected(&self, query: &Query) -> Vec<EnvBinding> {
+            let wanted = query
+                .selectors()
+                .iter()
+                .find_map(|selector| match selector {
+                    Selector::Field { name, value } if name == "name" => value.as_str().ok(),
+                    _ => None,
+                });
+            let exported = query
+                .option_value("exported")
+                .and_then(|value| value.as_bool().ok());
+            self.bindings()
+                .into_iter()
+                .filter(|binding| wanted.is_none_or(|name| binding.name == name))
+                .filter(|binding| exported.is_none_or(|wanted| binding.exported == wanted))
+                .take(query.max().unwrap_or(usize::MAX))
+                .collect()
+        }

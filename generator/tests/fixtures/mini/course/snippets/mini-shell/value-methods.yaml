@@ -1,0 +1,15 @@
+id: value-methods
+source:
+  file: crates/mini-shell/src/value.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 15
+  end_line: 17
+  anchor: "impl Value {"
+  content_hash: sha256:a8a2c6e2602d912a63fc4ceb8c6e9c69ff4322f1c920e52c40677890226d9984
+  code: "impl Value {\n    /// A short name of the value's type, used in error messages.\n    pub fn type_name(&self) -> &'static str {\n"
+- start_line: 30
+  end_line: 36
+  anchor: "pub fn into_list"
+  content_hash: sha256:2b1065ad77272166846433e32514edca03386d1889bde7923a974f4837c6436d
+  code: "    pub fn into_list(self) -> Vec<Value> {\n        match self {\n            Value::List(items) => items,\n            other => vec![other],\n        }\n    }\n}\n"

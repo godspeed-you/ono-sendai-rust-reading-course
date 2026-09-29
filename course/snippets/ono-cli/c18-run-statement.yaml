@@ -1,0 +1,28 @@
+id: c18-run-statement
+source:
+  file: crates/ono-cli/src/eval/statement.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 21
+  end_line: 38
+  anchor: Statement::Pipeline(pipeline) => run_pipeline(session, pipeline, source),
+  content_hash: sha256:f63118559de5b350eb30bf2b2d9e5428e1a5472e526ee4777b7e7021ba0cbc83
+  code: |
+    /// Runs one statement.
+    pub fn run_statement(
+        session: &mut Session,
+        statement: &Statement,
+        source: &str,
+    ) -> Eval<ExitStatus> {
+        match statement {
+            Statement::Pipeline(pipeline) => run_pipeline(session, pipeline, source),
+            Statement::Let(binding) => {
+                let (value, status) = binding_value(session, &binding.value, source)?;
+                session.assign(binding.name.clone(), value);
+                Ok(status)
+            }
+            Statement::If(branch) => run_if(session, branch, source),
+            Statement::While(loop_) => run_while(session, loop_, source),
+            Statement::For(loop_) => run_for(session, loop_, source),
+            Statement::Match(match_) => run_match(session, match_, source),
+            Statement::Try(try_) => run_try(session, try_, source),

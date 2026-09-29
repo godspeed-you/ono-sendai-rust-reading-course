@@ -1,0 +1,28 @@
+id: c08-expect-ident
+source:
+  file: crates/ono-parser/src/parser/diagnostics.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 29
+  end_line: 46
+  anchor: return (token.text(self.source).to_owned(), token.span);
+  content_hash: sha256:f5830d720c8ad8f54dad848a0fadca1832f9fc5984f8308cf31e67ac5dc269d9
+  code: |2
+        pub(super) fn describe(&self, token: Token) -> String {
+            match token.kind {
+                TokenKind::Eof => "the end of the input".to_owned(),
+                TokenKind::Newline => "the end of the line".to_owned(),
+                _ => format!("`{}`", token.text(self.source)),
+            }
+        }
+
+        pub(super) fn expect_ident(&mut self, what: &str) -> (String, Span) {
+            let token = self.peek(LexMode::Expr);
+            if token.kind == TokenKind::Ident {
+                self.bump(LexMode::Expr);
+                return (token.text(self.source).to_owned(), token.span);
+            }
+            let description = self.describe(token);
+            self.report_unexpected(token, format!("expected {what}, found {description}"));
+            (String::new(), Span::at(token.span.start()))
+        }

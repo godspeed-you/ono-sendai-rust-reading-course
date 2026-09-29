@@ -1,0 +1,26 @@
+id: c11-stream-transform
+source:
+  file: crates/ono-pipeline/src/stream.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 515
+  end_line: 530
+  anchor: 'pub fn transform<T: Transform>(self, transform: T) -> Result<Self, ErrorValue> {'
+  content_hash: sha256:862f3ffbdbdaf1127b25ff58a554be43794d2369b1f1e9a40b4d8096c9d45387
+  code: |2
+        /// Applies a transform, checking first that the stream can support it.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::StreamUnboundedOperation`] when a blocking transform is applied to a
+        /// stream that never ends and no window was given (spec §11.1). Nothing runs and nothing is
+        /// consumed: the error arrives before the first value would have.
+        pub fn transform<T: Transform>(self, transform: T) -> Result<Self, ErrorValue> {
+            let input = match transform.input_requirement() {
+                InputRequirement::Streaming => self,
+                InputRequirement::Bounded(_) if self.boundedness.is_bounded() => self,
+                InputRequirement::Bounded(Some(window)) => self.windowed(window),
+                InputRequirement::Bounded(None) => return Err(unbounded_error(transform.name())),
+            };
+            Ok(Box::new(transform).apply(input))
+        }

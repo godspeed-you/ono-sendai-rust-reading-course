@@ -1,0 +1,35 @@
+id: c07-parsed-into-parts
+source:
+  file: crates/ono-parser/src/parser/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 65
+  end_line: 89
+  anchor: 'diagnostics: parser.diagnostics,'
+  content_hash: sha256:b4e0886cc5f05816dd239448a38b1c39ddcf156e43fc2cb46c828cc6fed4c460
+  code: |2
+        /// Takes the tree and the diagnostics apart, for a caller that wants to own both.
+        #[must_use]
+        pub fn into_parts(self) -> (Program, Vec<Diagnostic>) {
+            (self.program, self.diagnostics)
+        }
+    }
+
+    /// Parses a source into a tree and a list of diagnostics.
+    ///
+    /// The call never panics and always returns a tree, whatever it is handed.
+    ///
+    /// ```
+    /// let parsed = ono_parser::parse("get process | where cpu > 20");
+    /// assert!(parsed.diagnostics().is_empty());
+    /// assert_eq!(parsed.program().statements.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn parse(source: &str) -> Parsed {
+        let mut parser = Parser::new(source);
+        let program = parser.parse_program();
+        Parsed {
+            program,
+            diagnostics: parser.diagnostics,
+        }
+    }

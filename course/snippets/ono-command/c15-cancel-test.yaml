@@ -1,0 +1,24 @@
+id: c15-cancel-test
+source:
+  file: crates/ono-command/tests/implementations.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 178
+  end_line: 191
+  anchor: fn should_carry_a_cancellation_token_into_the_implementation() {
+  content_hash: sha256:3752275c78db5d466a6ebd86ae175e4f1d10d4b4aa8610a8ebea9fa703cbc191
+  code: |
+    #[test]
+    fn should_carry_a_cancellation_token_into_the_implementation() {
+        let (contract, arguments) = bound("get process");
+        let providers = ProviderRegistry::new();
+        let token = CancelToken::new();
+        let invocation = Invocation::new(contract, &arguments, &providers).with_cancel(token.clone());
+
+        assert!(!invocation.cancel_token().is_cancelled());
+        token.cancel();
+        assert!(
+            invocation.cancel_token().is_cancelled(),
+            "spec §18.5: one token stops every stage of the pipeline"
+        );
+    }

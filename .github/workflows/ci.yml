@@ -1,0 +1,135 @@
+name: CI
+
+# Validates the course end to end (spec §70): schema, unit/generator tests, upstream snippet
+# validation against the pinned Ono-Sendai commit, full build, link + offline checks, browser tests
+# (responsive, interaction, accessibility, network blocked) and release packaging.
+# The release workflow reuses this workflow before publishing anything (spec §71).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+    outputs:
+      version:
+        description: Course version from course-lock.yaml
+        value: ${{ jobs.verify.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned versions
+        id: meta
+        run: |
+          version=$(sed -n 's/^  version: \([0-9][^ ]*\)$/\1/p' course-lock.yaml | head -1)
+          commit=$(sed -n 's/^  commit: \([0-9a-f]\{40\}\)$/\1/p' course-lock.yaml)
+          test -n "$version" && test -n "$commit"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: Format and lint
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked -p ono-course --all-targets -- -D warnings
+
+      - name: Unit, generator and golden tests
+        run: cargo test --locked -p ono-course
+
+      - name: Validate course source
+        run: scripts/course validate
+
+      - name: Check out Ono-Sendai at the pinned commit
+        uses: actions/checkout@v4
+        with:
+          repository: godspeed-you/ono-sendai
+          ref: ${{ steps.meta.outputs.commit }}
+          path: .ono-sendai
+          fetch-depth: 0
+
+      - name: Validate snippets against the pinned Ono-Sendai commit
+        run: scripts/course validate --ono .ono-sendai
+
+      - name: Build the course (includes offline, link and asset checks)
+        run: scripts/course build
+
+      - name: Offline and link check (explicit)
+        run: scripts/course check-offline
+
+      - name: Source tree stays clean after the build
+        run: |
+          rm -rf .ono-sendai
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::build or validation modified tracked files or left untracked output"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install browser test tooling
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Browser tests (offline, responsive, interaction, accessibility)
+        run: npx playwright test
+
+      - name: Package release archives
+        run: scripts/course package
+
+      - name: Verify an extracted archive in a clean directory
+        run: |
+          version=${{ steps.meta.outputs.version }}
+          mkdir -p /tmp/extract /tmp/extract-zip
+          tar -xzf "release/ono-sendai-rust-reading-course-v$version.tar.gz" -C /tmp/extract
+          unzip -q "release/ono-sendai-rust-reading-course-v$version.zip" -d /tmp/extract-zip
+          # Both archives unpack to the same tree, and that tree is exactly the checked dist/.
+          diff -r /tmp/extract /tmp/extract-zip
+          diff -r "/tmp/extract/ono-sendai-rust-reading-course-v$version" dist
+          (cd release && sha256sum --check --strict SHA256SUMS)
+          RRC_DIST="/tmp/extract/ono-sendai-rust-reading-course-v$version" npx playwright test --grep @smoke
+
+      - name: Report archive sizes
+        run: |
+          {
+            echo "### Release archive sizes"
+            echo '```'
+            ls -l release/
+            du -sh dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          path: release/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore

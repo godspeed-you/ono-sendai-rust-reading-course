@@ -1,0 +1,57 @@
+id: c19-pid-reuse-test
+source:
+  file: crates/ono-provider-linux/tests/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 412
+  end_line: 458
+  anchor: async fn should_refuse_to_signal_when_the_start_time_changed()
+  content_hash: sha256:e520a652b629cb1b09240676d2843fd7d4943e0b978185e3ffabb482ca6d9199
+  code: |
+    #[tokio::test]
+    async fn should_refuse_to_signal_when_the_start_time_changed() {
+        let fixture = ProcFixture::new();
+        let signals = RecordingSignals::new();
+        let provider = ProcessProvider::rooted(fixture.root())
+            .with_accounts(accounts())
+            .with_signals(Arc::clone(&signals) as Arc<dyn ono_provider_linux::Signals>);
+
+        fixture.process(4242).stat(
+            "chosen",
+            StatFields {
+                starttime: 1_000 * USER_HZ,
+                ..StatFields::default()
+            },
+        );
+        let selected = ObjectId::new(
+            schemas::process_id(),
+            [
+                Value::Int(4242),
+                Value::Timestamp(expected_start(1_000 * USER_HZ)),
+            ],
+        );
+
+        // The pid is recycled: same number, different process, different start time.
+        fixture.process(4242).stat(
+            "impostor",
+            StatFields {
+                starttime: 9_000 * USER_HZ,
+                ..StatFields::default()
+            },
+        );
+
+        let outcome = provider
+            .act(&Action::new("process", "kill", selected))
+            .await
+            .expect("a refusal is an outcome, not a provider failure");
+
+        assert!(!outcome.is_success());
+        assert_eq!(
+            outcome.error().map(ono_value::ErrorValue::code),
+            Some(ErrorCode::IoNotFound)
+        );
+        assert!(
+            signals.sent().is_empty(),
+            "nothing may be signalled once the identity has moved"
+        );
+    }

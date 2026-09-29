@@ -1,0 +1,14 @@
+id: count-words
+source:
+  file: crates/ono-demo/src/lib.rs
+  commit: a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+segments:
+  - start_line: 8
+    end_line: 11
+    anchor: "pub fn count_words"
+    content_hash: sha256:999eab0d4eb0030b96a808a1d3c9111bdb795ced487a9293cb32621e399a0e8f
+    code: |
+      /// Counts the words in a line.
+      pub fn count_words(line: &str) -> usize {
+          line.split_whitespace().count()
+      }

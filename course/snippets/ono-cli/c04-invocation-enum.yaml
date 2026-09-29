@@ -1,0 +1,33 @@
+id: c04-invocation-enum
+source:
+  file: crates/ono-cli/src/invocation.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 8
+  end_line: 18
+  anchor: pub enum Invocation {
+  content_hash: sha256:0043f19ed4344d7331ffcc69375affdd3a9ec5c6494b36b9ea627cd90e70afe5
+  code: |
+    /// What the shell was asked to do.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Invocation {
+        /// Read from the terminal until the user leaves.
+        Interactive(Options),
+        /// Run the given source, then exit with its status.
+        Source(String, Options),
+        /// Run a script file, then exit with its status.
+        Script(PathBuf, Vec<String>, Options),
+        /// Read a script from standard input.
+        Stdin(Options),
+- start_line: 27
+  end_line: 33
+  anchor: Usage(String),
+  content_hash: sha256:033bbd582a3a1ebecabebed9ffbc9178caed5c407f9252a4ff2664eaca1246e4
+  code: |2
+        /// Print the version and exit.
+        Version,
+        /// Print usage and exit.
+        Help,
+        /// The command line could not be understood.
+        Usage(String),
+    }

@@ -1,0 +1,56 @@
+id: c04-value-enum
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 17
+  end_line: 21
+  anchor: Every compound case sits behind
+  content_hash: sha256:edd0f19e2a75c43d30cbad80431cd5ebaa9a1635de182b42f6f90f484a80999c
+  code: |
+    /// A value flowing through a pipeline (spec §10.2, §25).
+    ///
+    /// Every compound case sits behind an `Arc`, so cloning a value is a refcount bump whatever it
+    /// holds: spec §34 budgets a pipeline stage in microseconds, and a value model that copies its
+    /// payload cannot meet that.
+- start_line: 38
+  end_line: 56
+  anchor: pub enum Value {
+  content_hash: sha256:d6c51f5a6891cec2d96c6de0d61128d1e41615543bb6ef3c2b166cb5b996c50d
+  code: |
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub enum Value {
+        /// A value that is known to be unknown (spec §10.5).
+        #[default]
+        Null,
+        /// A boolean.
+        Bool(bool),
+        /// A signed integer.
+        Int(i128),
+        /// A binary floating-point number.
+        Float(f64),
+        /// An exact decimal number.
+        Decimal(Decimal),
+        /// Text.
+        String(Arc<str>),
+        /// Raw bytes, which may not be valid text (spec §12.2).
+        Bytes(Bytes),
+        /// A filesystem path.
+        Path(Arc<Path>),
+- start_line: 72
+  end_line: 83
+  anchor: Port(u16),
+  content_hash: sha256:b3ba15a619aca3fe837b0adb1a0806818195c921efff35241a3ead6a70d39cc5
+  code: |2
+        IpNetwork(IpNetwork),
+        /// A TCP or UDP port number.
+        Port(u16),
+        /// An ordered list of values.
+        List(Arc<[Value]>),
+        /// A map with string keys.
+        Map(Arc<MapValue>),
+        /// A schema-bound record.
+        Record(Arc<RecordValue>),
+        /// A structured error carried as data (spec §16.1).
+        Error(Arc<ErrorValue>),
+    }

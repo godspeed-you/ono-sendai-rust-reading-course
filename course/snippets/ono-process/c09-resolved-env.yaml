@@ -1,0 +1,33 @@
+id: c09-resolved-env
+source:
+  file: crates/ono-process/src/command.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 305
+  end_line: 327
+  anchor: EnvChange::Clear => changes.clear(),
+  content_hash: sha256:37a08a228da7bfc50f96044625dcf85a54ab1beb92e1bb0b7c126d3386b533f3
+  code: |2
+        /// The environment the command should run in, resolved against `inherited`.
+        ///
+        /// Returns `None` for "inherit everything" so the common case costs nothing.
+        pub(crate) fn resolved_env(&self) -> Option<Vec<(OsString, Option<OsString>)>> {
+            if self.env.is_empty() {
+                return None;
+            }
+            let mut changes = Vec::new();
+            for change in &self.env {
+                match change {
+                    EnvChange::Clear => changes.clear(),
+                    EnvChange::Set(key, value) => {
+                        changes.retain(|(existing, _)| existing != key);
+                        changes.push((key.clone(), Some(value.clone())));
+                    }
+                    EnvChange::Unset(key) => {
+                        changes.retain(|(existing, _)| existing != key);
+                        changes.push((key.clone(), None));
+                    }
+                }
+            }
+            Some(changes)
+        }

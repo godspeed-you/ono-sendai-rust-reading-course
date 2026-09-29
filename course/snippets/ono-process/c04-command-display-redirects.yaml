@@ -1,0 +1,18 @@
+id: c04-command-display-redirects
+source:
+  file: crates/ono-process/src/command.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 341
+  end_line: 348
+  anchor: Redirect::Duplicate { fd, from } => write!
+  content_hash: sha256:ea6c9b65ed7a29eb0da4467ccd06de5e6c2874c2f87a541a5b15c78582e6a7fa
+  code: |2
+            for redirect in &self.redirects {
+                match redirect {
+                    Redirect::Read { fd, path } => write!(f, " {fd}<{}", path.display())?,
+                    Redirect::Write { fd, path } => write!(f, " {fd}>{}", path.display())?,
+                    Redirect::Append { fd, path } => write!(f, " {fd}>>{}", path.display())?,
+                    Redirect::Duplicate { fd, from } => write!(f, " {fd}>&{from}")?,
+                }
+            }

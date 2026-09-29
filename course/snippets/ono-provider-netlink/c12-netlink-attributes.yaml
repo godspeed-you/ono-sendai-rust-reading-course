@@ -1,0 +1,54 @@
+id: c12-netlink-attributes
+source:
+  file: crates/ono-provider-netlink/src/wire.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 94
+  end_line: 137
+  anchor: impl<'a> Iterator for Attributes<'a> {
+  content_hash: sha256:a362a6b340693884faec7e22656a5194dd0bf88c4ce3f8953483611940bf9043
+  code: |
+    /// Walks the attributes in `bytes`.
+    ///
+    /// An attribute whose length field does not fit the buffer ends the walk rather than raising an
+    /// error: the attributes already read are still good, and the caller reports the ones it needed
+    /// and did not get as failed fields, which is what keeps a truncated message from erasing the
+    /// object it described.
+    pub(crate) fn attributes(bytes: &[u8]) -> Attributes<'_> {
+        Attributes { rest: bytes }
+    }
+
+    /// The iterator [`attributes`] returns.
+    #[derive(Debug)]
+    pub(crate) struct Attributes<'a> {
+        rest: &'a [u8],
+    }
+
+    impl<'a> Iterator for Attributes<'a> {
+        type Item = Attribute<'a>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let remaining = self.rest.len();
+            if remaining < sys::ATTR_HEADER {
+                self.rest = &[];
+                return None;
+            }
+            let length = u16_at(self.rest, 0)? as usize;
+            if length < sys::ATTR_HEADER || length > remaining {
+                self.rest = &[];
+                return None;
+            }
+            let kind = u16_at(self.rest, 2)?;
+            let payload = self.rest.get(sys::ATTR_HEADER..length).unwrap_or(&[]);
+            let advance = align(length).min(remaining);
+            self.rest = self.rest.get(advance..).unwrap_or(&[]);
+            Some(Attribute { kind, payload })
+        }
+    }
+
+    /// The payload of the first attribute of type `kind`, if the buffer holds one.
+    pub(crate) fn attribute(bytes: &[u8], kind: u16) -> Option<&[u8]> {
+        attributes(bytes)
+            .find(|attribute| attribute.kind == kind)
+            .map(|attribute| attribute.payload)
+    }

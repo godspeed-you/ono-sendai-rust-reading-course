@@ -1,0 +1,23 @@
+id: c16-provider-mutation-invoke
+source:
+  file: crates/ono-command/src/impls/mutate.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 530
+  end_line: 542
+  anchor: Box::pin(async move { self.run(ctx).await })
+  content_hash: sha256:150e442c2230ac0d00399dc0d2973fb36191935d6347860a086fe6dcf018b3dd
+  code: |
+    impl CommandImpl for ProviderMutation {
+        fn id(&self) -> &str {
+            &self.id
+        }
+
+        fn invoke(&self, ctx: &mut Invocation<'_>) -> Result<Outcome, ErrorValue> {
+            Err(must_be_awaited(&ctx.contract().spelling()))
+        }
+
+        fn invoke_async<'a>(&'a self, ctx: &'a mut Invocation<'_>) -> OutcomeFuture<'a> {
+            Box::pin(async move { self.run(ctx).await })
+        }
+    }

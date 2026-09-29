@@ -1,0 +1,17 @@
+id: eval-word
+source:
+  file: crates/ono-demo/src/eval.rs
+  commit: a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+segments:
+  - start_line: 16
+    end_line: 22
+    anchor: "pub fn eval"
+    content_hash: sha256:ecfebbd3f1a945e99f87aece98e7f1f9ea9873f90961104fe667a88b4368cff2
+    code: |
+      /// Evaluates a word against a lookup table.
+      pub fn eval(word: &Word, lookup: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+          match word {
+              Word::Number(n) => Some(*n),
+              Word::Name(name) => lookup(name),
+          }
+      }

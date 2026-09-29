@@ -1,0 +1,31 @@
+id: c01-exit-status-test
+source:
+  file: crates/ono-core/tests/exit_status.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 21
+  anchor: fn should_use_the_bourne_family_status_values_when_reporting_an_outcome()
+  content_hash: sha256:240d7a067dcbf58501049073d892e05dc1323c78287ee45def6072adc2b5c36d
+  code: |
+    //! The exit-status contract of ADR-0008. Surrounding scripts depend on these values, so they
+    //! are asserted as numbers, not as names.
+
+    use ono_core::ExitStatus;
+
+    #[test]
+    fn should_use_the_bourne_family_status_values_when_reporting_an_outcome() {
+        assert_eq!(ExitStatus::SUCCESS.code(), 0);
+        assert_eq!(ExitStatus::FAILURE.code(), 1);
+        assert_eq!(ExitStatus::USAGE.code(), 2);
+        assert_eq!(ExitStatus::NOT_EXECUTABLE.code(), 126);
+        assert_eq!(ExitStatus::NOT_FOUND.code(), 127);
+        assert_eq!(ExitStatus::INTERRUPTED.code(), 130);
+    }
+
+    #[test]
+    fn should_report_a_signalled_process_as_128_plus_the_signal_when_it_is_killed() {
+        assert_eq!(ExitStatus::from_signal(2).code(), 130);
+        assert_eq!(ExitStatus::from_signal(9).code(), 137);
+        assert_eq!(ExitStatus::from_signal(15).code(), 143);
+    }

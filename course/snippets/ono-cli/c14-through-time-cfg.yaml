@@ -1,0 +1,29 @@
+id: c14-through-time-cfg
+source:
+  file: crates/ono-cli/src/providers.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 109
+  end_line: 127
+  anchor: '#[cfg(not(feature = "temporal"))]'
+  content_hash: sha256:4086f58e444d86273d1a7ed5907c3090b0513ec8b0ad970278eb1ebc63b310dd
+  code: |
+    /// The same providers, each behind the temporal seam of [`TemporalProvider`].
+    #[cfg(feature = "temporal")]
+    fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
+        let mut wrapped = ProviderRegistry::new();
+        for provider in registry.providers() {
+            wrapped.register(Arc::new(TemporalProvider::new(Arc::clone(provider))));
+        }
+        wrapped
+    }
+
+    /// A build without the temporal tier asks every provider in the present, directly (ADR-0910).
+    #[cfg(not(feature = "temporal"))]
+    fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
+        let mut direct = ProviderRegistry::new();
+        for provider in registry.providers() {
+            direct.register(Arc::clone(provider));
+        }
+        direct
+    }

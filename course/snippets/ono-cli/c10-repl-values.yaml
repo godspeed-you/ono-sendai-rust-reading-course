@@ -1,0 +1,18 @@
+id: c10-repl-values
+source:
+  file: crates/ono-cli/src/repl.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 181
+  end_line: 188
+  anchor: .map(|values| values as &dyn ono_command::ValueCompleter)
+  content_hash: sha256:a46ae50186aa60f5f2622e1ae88b601da57ce28fcc14f749b204f1acd7ad12c0
+  code: |2
+                let values = if is_head {
+                    None
+                } else {
+                    self.values
+                        .as_ref()
+                        .map(|values| values as &dyn ono_command::ValueCompleter)
+                };
+                for candidate in ono_command::complete(registry, &context, values) {

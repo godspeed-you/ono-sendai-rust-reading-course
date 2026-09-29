@@ -1,0 +1,16 @@
+id: c03-span-join-test
+source:
+  file: crates/ono-core/tests/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 22
+  end_line: 27
+  anchor: fn should_cover_both_operands_when_two_spans_are_joined()
+  content_hash: sha256:d4bbd54d14392ba1d592dcd95480a33949dc9fd73897692f66944bb9cd4efa9b
+  code: |
+    #[test]
+    fn should_cover_both_operands_when_two_spans_are_joined() {
+        let joined = Span::new(2, 5).join(Span::new(9, 11));
+        assert_eq!(joined, Span::new(2, 11));
+        assert_eq!(Span::new(9, 11).join(Span::new(2, 5)), Span::new(2, 11));
+    }

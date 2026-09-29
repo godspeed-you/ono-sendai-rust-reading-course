@@ -1,0 +1,23 @@
+id: c13-parameters-with
+source:
+  file: crates/ono-command/src/contract.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1423
+  end_line: 1435
+  anchor: '.map_err(|failure: ErrorValue| {'
+  content_hash: sha256:0122cd773bd0ab5f74cec5691823904aeb6ee3c141a74ad9ec38aeb61b21fc2f
+  code: |
+    fn parameters_with(
+        raw: Vec<RawParameter>,
+        error: &dyn Fn(String) -> ErrorValue,
+    ) -> Result<Vec<ParameterSpec>, ErrorValue> {
+        raw.into_iter()
+            .map(|parameter| {
+                let declared_type: DeclaredType =
+                    parameter
+                        .declared_type
+                        .parse()
+                        .map_err(|failure: ErrorValue| {
+                            error(format!("`{}`: {}", parameter.name, failure.message()))
+                        })?;

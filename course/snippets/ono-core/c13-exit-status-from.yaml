@@ -1,0 +1,28 @@
+id: c13-exit-status-from
+source:
+  file: crates/ono-core/src/exit.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 16
+  end_line: 17
+  anchor: pub struct ExitStatus(u8);
+  content_hash: sha256:7e5084d00f532cefb9d7b3aacb68bea324a9775ad47424bd005ca26be29366f9
+  code: |
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct ExitStatus(u8);
+- start_line: 71
+  end_line: 81
+  anchor: impl From<ExitStatus> for std::process::ExitCode {
+  content_hash: sha256:c22a19167144d48c71c80578565baffa819f510b4103695b863e5f8c9a484ed4
+  code: |
+    impl From<ExitStatus> for std::process::ExitCode {
+        fn from(status: ExitStatus) -> Self {
+            std::process::ExitCode::from(status.0)
+        }
+    }
+
+    impl fmt::Display for ExitStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }

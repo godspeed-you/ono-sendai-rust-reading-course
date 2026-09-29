@@ -1,0 +1,772 @@
+id: option
+number: 5
+title: Option and absence
+summary: |
+  Rust has no `null`. When a value may be missing, the type says so: `Option<T>` is an enum with
+  two variants, `Some(T)` and `None`, and the compiler makes every reader deal with both.
+
+  This chapter reads four places where Ono-Sendai uses that idea. It starts with the smallest
+  honest `Option` in the codebase (the signal behind an exit status). The centre of the chapter is
+  the shell's own "three meanings of nothing": the reason `ono-value` refuses to squeeze an
+  absent field, an unknown value and a failed read into one nullable slot. The chapter ends with
+  the everyday tools for handling `Option`: borrowing through it with `as_ref`/`as_deref`, and
+  leaving a function early with `?`.
+lessons:
+  - id: option-01
+    title: A status that may name a signal
+    stage: guided
+    summary: "`ExitStatus::signal` returns `Option<u8>`: `Some` signal number or `None`, never a magic value."
+    prerequisites: [enums-matching-01]
+    concepts: [option, enums]
+    ono_topics: [core-vocabulary]
+    objectives:
+      - "Read `Option<T>` in a signature as “a `T`, or nothing”."
+      - "Say what `Some(...)` and `None` construct, and why `None` needs no payload."
+      - Explain why Ono-Sendai returns an `Option` here instead of a sentinel number such as 0.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          You met `ExitStatus` in [chapter 2](chapter:functions-types): a one-byte newtype in
+          `ono-core` that holds the status a command reports. The file begins with the line
+          `//! The exit-status contract of ADR-0008.` That ADR adopts the Bourne-shell
+          conventions: 0 is success, 126 means "found but not executable", 127 means "not
+          found", and a process killed by signal *N* reports `128 + N`. For example, a
+          `kill -9` gives 137.
+
+          So some statuses describe a signal death and most do not. The method below answers
+          "which signal killed it?", and the honest answer is sometimes "none did".
+      - type: code
+        snippet: c05-exit-signal
+        caption: |
+          `crates/ono-core/src/exit.rs`, the last method of `impl ExitStatus`.
+        annotations:
+          - lines: 62
+            token: "Option<u8>"
+            kind: type
+            body: |
+              The return type is `Option<u8>`. [`Option`](glossary:option) is a generic enum from the standard
+              library with exactly two variants: `Some(u8)` carries a value and `None` carries
+              nothing. You can read the signature as "returns a `u8`, or nothing". Because
+              `Option` is in every Rust file's prelude, it needs no `use`.
+          - lines: 62
+            token: "self"
+            kind: ownership
+            body: |
+              `self` is taken by value, not as `&self`. `ExitStatus` is a one-byte `Copy` type,
+              so the call copies that byte and the caller keeps its own status.
+              [Ownership chapter 7](lesson:ownership-moves-03) explains `Copy` exactly.
+          - lines: 63
+            token: "self.0 > 128"
+            kind: flow
+            body: |
+              `self.0` is the `u8` inside the newtype. The comparison is strictly greater than
+              128. A status of exactly 128 would mean "signal 0", and signal 0 does not exist,
+              so 128 is not a signal death. Note that the method reads only the number: the
+              struct's doc comment says a program's own status "passes through unchanged",
+              including values that collide with these conventions, so a program that chose to
+              exit with 143 would also report `Some(15)`.
+          - lines: 64
+            token: "Some(self.0 - 128)"
+            kind: rust
+            body: |
+              `Some(...)` builds the "there is a value" variant, the same way you would build
+              any tuple-like enum variant. The subtraction cannot underflow, because this
+              branch only runs when `self.0` is above 128.
+          - lines: 66
+            token: "None"
+            kind: rust
+            body: |
+              `None` is the "no value" variant. It carries no data, so it is written without
+              parentheses. It is still an ordinary value of type `Option<u8>`: the whole
+              `if`/`else` is an expression, and both branches have that type.
+      - type: prose
+        kind: rust
+        title: Option is just an enum
+        body: |
+          `Option` is not special syntax. The standard library defines it roughly like this:
+
+          ```rust
+          enum Option<T> {
+              None,
+              Some(T),
+          }
+          ```
+
+          Everything you learned about enums and `match` in
+          [chapter 4](chapter:enums-matching) applies. The `<T>` means "an `Option` of some
+          type": `Option<u8>` holds a `u8`, and `Option<&str>` holds a borrowed string. A caller
+          cannot use the `u8` without first finding out which variant it has, for example:
+
+          ```rust
+          match status.signal() {
+              Some(signal) => println!("killed by signal {signal}"),
+              None => println!("exited normally"),
+          }
+          ```
+
+          Forgetting the `None` arm is a compile error, because `match` must be exhaustive.
+          This is the whole point: absence cannot be ignored by accident.
+      - type: prose
+        kind: ono
+        title: Why not return 0 for "no signal"?
+        body: |
+          Returning a plain `u8` would force the method to invent a value for "not a signal",
+          and every caller would have to remember that the value is special. Ono-Sendai's
+          callers need the distinction to be unmistakable. `ono-cli`'s job listing reports an
+          exit status only when `status.signal().is_none()`; its comment reads "A signal death
+          has no exit status to report (job.v1): null, never 128 + n dressed up as one."
+
+          The type carries the rule, so nobody has to remember it. Methods such as `is_none()`
+          and `is_some()` ask which variant you have without taking the value out.
+      - type: exercise
+        id: option-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A process is killed with `SIGTERM` (signal 15), so its status is `ExitStatus::from_code(143)`.
+          What does `.signal()` return?
+        choices:
+          - text: "`Some(15)`"
+            correct: true
+            feedback: |
+              Right. 143 is greater than 128, so the first branch runs and builds
+              `Some(143 - 128)`, which is `Some(15)`. Ono-Sendai's own process tests assert
+              exactly this: `assert_eq!(outcome.status().signal(), Some(15));`.
+          - text: "`15`"
+            correct: false
+            feedback: |
+              The return type is `Option<u8>`, not `u8`, so a bare `15` cannot be returned.
+              The number is wrapped in `Some`, and the caller has to unwrap or match it.
+          - text: "`None`"
+            correct: false
+            feedback: |
+              `None` is returned only when the status is 128 or less. 143 is above 128.
+          - text: "`Some(143)`"
+            correct: false
+            feedback: |
+              The method subtracts 128 before wrapping the number. `Some` carries the signal
+              number, not the raw status.
+      - type: exercise
+        id: option-01-q2
+        exercise_type: predict
+        prompt: |
+          Predict the result of `.signal()` for two statuses: `ExitStatus::SUCCESS` (0) and
+          `ExitStatus::from_code(128)`. Then say why returning `Option<u8>` is better for the
+          caller than returning `0` in both cases.
+        hints:
+          - level: 1
+            body: Look at the exact comparison operator on line 63.
+          - level: 2
+            body: |
+              `>` is strict. Then ask yourself what a caller would do with a returned `0`:
+              could they tell "no signal" apart from a (non-existent) "signal 0"?
+        solution: |
+          Both calls return `None`. `0 > 128` is false, and `128 > 128` is false too, so the
+          `else` branch runs both times.
+
+          If the method returned a plain `u8` and used `0` to mean "no signal", every caller
+          would have to know that convention, and nothing would stop one from printing
+          "killed by signal 0". With `Option<u8>`, the absence is part of the type. A caller
+          must `match`, or use a method such as `is_none()` or `unwrap_or`, before a number
+          appears, and the compiler checks that it did. Ono-Sendai relies on this distinction:
+          the job listing reports no exit status at all for a signal death instead of showing a
+          made-up number.
+
+  - id: option-02
+    title: Three meanings of nothing
+    stage: guided
+    summary: "`FieldAccess` keeps absent, unknown and failed apart, and converts back to `Option` only deliberately."
+    prerequisites: [option-01]
+    concepts: [option, enums, pattern-matching]
+    ono_topics: [records-schemas, value-model]
+    objectives:
+      - Explain why a single `Option<Value>` cannot express the result of reading a record field.
+      - "Read the four variants of `FieldAccess` and say which situation each one describes."
+      - "Trace how `into_value` maps each variant to an `Option<Value>` without losing information."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `ono-value` is the crate that, in its own words, "makes Ono an object shell rather
+          than a text shell". Providers produce [`RecordValue`s](glossary:record): a process, a user, a file.
+          Each record is bound to a [`Schema`](glossary:schema) that declares its fields. `get process` gives you
+          records with fields such as `pid`, `cpu` and `memory`.
+
+          Reading a field sounds like a lookup that either finds something or does not. The
+          Ono-Sendai specification (spec §10.5, "Null and absence") says it is more than that.
+          Ono-Sendai MUST distinguish:
+
+          - a field absent from the schema;
+          - a field that is present but whose value is unknown (`null`);
+          - a field whose access failed because of a permission or provider error.
+
+          The spec explains why: "Silently converting all three into empty strings would
+          recreate the ambiguity Ono-Sendai is designed to remove."
+      - type: prose
+        kind: rust
+        title: Why Option alone is not enough
+        body: |
+          `Option<Value>` has two states. The spec asks for more:
+
+          | Situation | Example | `Option<Value>` could say |
+          |---|---|---|
+          | the schema has no such field | `cpy` (a typo for `cpu`) | `None` |
+          | the field exists, value unknown | a process owner nobody could determine | `None`? or `Some(Null)`? |
+          | reading it failed | `memory` of a root process, permission denied | ??? |
+          | the field has a value | `pid` = 7 | `Some(value)` |
+
+          Three of the four rows would collapse into `None`. So `ono-value` defines its own
+          enum with one variant per row.
+      - type: code
+        snippet: c05-field-access
+        caption: |
+          `crates/ono-value/src/record.rs`: the enum and its conversion back to `Option`. The
+          `is_absent`/`is_unknown`/`is_failed` helpers in between are omitted.
+        annotations:
+          - lines: 16-19
+            kind: ono
+            body: |
+              The doc comment states the design decision directly: "Collapsing them is exactly
+              the ambiguity Ono exists to remove, so they are three variants rather than one
+              nullable value." When a doc comment gives the reason, quote it. It is the most
+              reliable "why" you will find.
+          - lines: 21
+            token: "pub enum FieldAccess"
+            kind: rust
+            body: |
+              An ordinary enum ([chapter 4](lesson:enums-matching-01)), used where a less careful design would return
+              `Option<Value>`. It is the *result* of a field read, not something stored inside
+              records.
+          - lines: 23
+            token: "Absent"
+            kind: type
+            body: |
+              A unit variant. The schema never declared this field, so there is no slot and
+              nothing to report.
+          - lines: 25
+            token: "Unknown"
+            kind: type
+            body: |
+              The field exists, but its value is not known. This is what Ono-Sendai means by
+              `null`.
+          - lines: 27
+            token: "Known(Value)"
+            kind: type
+            body: |
+              The normal case: the field exists and holds this `Value` (the central enum from
+              [chapter 4](lesson:enums-matching-02)).
+          - lines: 29
+            token: "Failed(Arc<ErrorValue>)"
+            kind: type
+            body: |
+              The field exists, but reading it failed, and the variant carries the structured
+              error explaining why. For now, read `Arc<ErrorValue>` as "a shared handle to an
+              error value". [Chapter 15](lesson:smart-pointers-01) explains `Arc` properly.
+          - lines: 56
+            token: "into_value(self) -> Option<Value>"
+            kind: ownership
+            body: |
+              `self` by value: the method consumes the [`FieldAccess`](glossary:field-access) and hands its contents
+              over, so nothing is copied. The `into_` prefix is the Rust naming convention for
+              "consumes the receiver" ([chapter 7](lesson:ownership-moves-02)).
+          - lines: 58
+            token: "FieldAccess::Absent => None"
+            kind: flow
+            body: |
+              Only `Absent` becomes `None`. "Not part of this record" is the one case where
+              "no value" is the true answer.
+          - lines: 59
+            token: "Some(Value::Null)"
+            kind: flow
+            body: |
+              An unknown value becomes `Some(Value::Null)`, not `None`. The field *is there*;
+              its value is the explicit null that `Value` has a variant for.
+          - lines: 61
+            token: "Some(Value::Error(error))"
+            kind: flow
+            body: |
+              A failed read becomes a `Value::Error`, so the failure travels on as data instead
+              of disappearing. The doc comment on lines 53–54 says so: "the outcome survives the
+              conversion."
+      - type: diagram
+        kind: data-flow
+        title: How into_value keeps the outcomes apart
+        art: |
+          FieldAccess              into_value(self)          Option<Value>
+          ───────────              ────────────────          ─────────────
+          Absent          ─────────────────────────────►  None
+          Unknown         ─────────────────────────────►  Some(Value::Null)
+          Known(value)    ─────────────────────────────►  Some(value)
+          Failed(error)   ─────────────────────────────►  Some(Value::Error(error))
+        description: |
+          Each of the four `FieldAccess` variants maps to a different `Option<Value>`. Only
+          `Absent` becomes `None`. `Unknown` becomes `Some(Value::Null)`. `Known(value)` becomes
+          `Some(value)`, with the value moved across unchanged. `Failed(error)` becomes
+          `Some(Value::Error(error))`, so the error is kept as data. No two variants end up as
+          the same `Option`, so no information is lost.
+      - type: prose
+        kind: ono
+        title: A real consumer, and the tests that pin the rule
+        body: |
+          The distinction is visible to users. The `inspect` command in `ono-command` lists a
+          record's fields and says, for each one, which of the outcomes it got.
+      - type: code
+        snippet: c05-inspected-fields
+        caption: |
+          `crates/ono-command/src/impls/meta.rs`: how `inspect` describes each field.
+        annotations:
+          - lines: 474
+            kind: rust
+            body: |
+              Treat lines 474–475 as a black box for now: they walk over the schema's fields and
+              build one small map per field. [Chapter 12](lesson:iterators-closures-03) teaches the `|field|`
+              closure syntax.
+          - lines: 478-479
+            kind: ono
+            body: |
+              The comment names the rule: the three absences of spec §10.5 are "reported as three
+              different words rather than as one empty cell".
+          - lines: 480
+            token: "match record.access(field.name())"
+            kind: flow
+            body: |
+              `access` returns a `FieldAccess` (next lesson). The `match` has one arm per variant
+              and produces a tuple `(word, value)`, which `let (access, held) = ...` takes apart
+              immediately.
+          - lines: 482-483
+            kind: ono
+            body: |
+              `Unknown` and `Absent` both show `Value::Null` as their value, but they get different
+              words. Without the enum, the reader of this output could not tell them apart.
+      - type: exercise
+        id: option-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          A record of schema `ono.test.thing/1` declares a nullable field `owner`, and nobody has
+          set it, so it holds `Value::Null`. `record.access("owner")` returns
+          `FieldAccess::Unknown`. What does `.into_value()` turn that into?
+        choices:
+          - text: "`None`"
+            correct: false
+            feedback: |
+              `None` is reserved for `Absent`. `owner` is declared by the schema, so it is part
+              of the record, and returning `None` would claim it is not.
+          - text: "`Some(Value::Null)`"
+            correct: true
+            feedback: |
+              Correct. Line 59 maps `Unknown` to `Some(Value::Null)`: the field exists, and its
+              value is the explicit null.
+          - text: "`Some(Value::Error(...))`"
+            correct: false
+            feedback: |
+              That is what a *failed* read becomes. Nothing failed here; the value is simply not
+              known.
+      - type: exercise
+        id: option-02-q2
+        exercise_type: explain-line
+        prompt: |
+          This test comes from `crates/ono-value/tests/null_semantics.rs`. The fixture record
+          declares `owner` (set to `Value::Null`) and `memory` (set to a permission-denied
+          `Value::Error`). It declares no field called `nothing_like_this`.
+
+          Explain what the three `assert_ne!` lines protect against. Which design would make
+          them fail?
+        snippets: [c05-null-semantics-test]
+        hints:
+          - level: 1
+            body: |
+              For each of the three `access` calls, work out which `FieldAccess` variant it
+              returns.
+          - level: 2
+            body: |
+              `assert_ne!(a, b, msg)` fails when `a == b`. Imagine `access` returned
+              `Option<Value>` and mapped "absent", "unknown" and "failed" all to `None`. What
+              would each assertion compare?
+        solution: |
+          The three calls return `FieldAccess::Absent` (no such field), `FieldAccess::Unknown`
+          (`owner` holds null) and `FieldAccess::Failed(..)` (`memory` holds an error).
+          `assert_ne!` checks that each pair is *different*, and the messages spell out what it
+          guards against: "absent and unknown must not collapse", and so on.
+
+          The assertions would fail under the design spec §10.5 forbids. If `access` returned
+          `Option<Value>` and collapsed the outcomes, for example by turning all three into
+          `None`, then `absent == unknown` and every assertion would fail. The test is written
+          from the outside of the crate (it lives in `tests/`), so it documents the public
+          promise: whatever changes inside `ono-value`, these three outcomes stay
+          distinguishable. [Chapter 19](lesson:provider-boundary-03) returns to reading tests as
+          documentation.
+
+  - id: option-03
+    title: "Reading a field: matching on an Option"
+    stage: guided
+    summary: "`RecordValue::get` returns `Option<&Value>`; `access` matches on it with nested patterns and a guard."
+    prerequisites: [option-02]
+    concepts: [option, pattern-matching]
+    ono_topics: [records-schemas, error-flow]
+    objectives:
+      - "Read `Option<&T>` as “maybe a borrowed `T`”."
+      - "Read nested patterns such as `Some(Value::Null)` and a match guard `if ...`."
+      - Explain why arm order matters in this `match`, and what ADR-0215 changed.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          The previous lesson showed the *result* type of a field read. This lesson reads the
+          method that produces it. A `RecordValue` stores its declared fields **by schema
+          position** in a `Vec<Value>`. Provider-specific extras live in a separate map called
+          `extra`. So "the value under `name`" means: ask the schema for the position, and if
+          the schema does not know the name, look in the extras.
+      - type: code
+        snippet: c05-record-access
+        caption: |
+          `crates/ono-value/src/record.rs`: `get` finds a value, `access` classifies it.
+        annotations:
+          - lines: 179
+            token: "Option<&Value>"
+            kind: type
+            body: |
+              "Maybe a borrowed `Value`". When the field exists, you get a reference into the
+              record, not a copy. When it does not, you get `None`.
+              [Chapter 8](lesson:borrowing-01) covers references in depth.
+          - lines: 180
+            token: "self.schema.position_of(name)"
+            kind: type
+            body: |
+              `Schema::position_of` returns `Option<usize>`: the storage index, or `None` if
+              the schema does not declare `name`. Matching on it is the most explicit way to
+              handle an `Option`.
+          - lines: 181
+            token: "Some(index) => self.fields.get(index)"
+            kind: rust
+            body: |
+              The pattern `Some(index)` matches only the `Some` variant and binds the number
+              inside to `index`. `Vec::get` returns `Option<&Value>` too: `None` if the index
+              were out of range. Unlike `self.fields[index]`, it cannot panic.
+          - lines: 182
+            token: "None => self.extra.get(name)"
+            kind: flow
+            body: |
+              Not a declared field, so the method tries the extensions. That lookup also returns
+              `Option<&Value>`, so both arms have the same type, as a `match` expression
+              requires.
+          - lines: 186-190
+            kind: ono
+            body: |
+              This doc comment carries an architectural decision (ADR-0215): an error stored in
+              a field whose declared type is `error` *is* that field's value, and is `Known`.
+              An error in any other field means the read failed.
+          - lines: 193
+            token: "match self.get(name)"
+            kind: flow
+            body: |
+              `access` reuses `get` and matches on the `Option<&Value>` it returns. Arms are
+              tried top to bottom, and the first one that matches wins.
+          - lines: 194
+            token: "None => FieldAccess::Absent"
+            kind: flow
+            body: |
+              Neither the schema nor the extensions know the name, so the field is absent.
+          - lines: 195
+            token: "Some(Value::Null)"
+            kind: rust
+            body: |
+              A **nested pattern**: `Some` whose content is the `Null` variant of `Value`. The
+              scrutinee holds a reference (`&Value`), and Rust lets the pattern look through it
+              automatically. You write `Value::Null`, not `&Value::Null`.
+          - lines: 196
+            token: "if !self.declares_error(name)"
+            kind: rust
+            body: |
+              A [**match guard**](glossary:match-guard). The arm matches only if the pattern fits *and* the condition is
+              true. `error` is bound as `&Arc<ErrorValue>`, a reference to the handle inside the
+              record.
+          - lines: 197
+            token: "Arc::clone(error)"
+            kind: ownership
+            body: |
+              The record keeps its own error. `Arc::clone` makes a second *handle* to the same
+              `ErrorValue` by incrementing a reference count, so the `FieldAccess` can own a
+              handle too. It does not copy the error. See [chapter 7](lesson:ownership-moves-03).
+          - lines: 199
+            token: "Some(value) => FieldAccess::Known(value.clone())"
+            kind: flow
+            body: |
+              The catch-all: any other value is known. This includes an error in a field
+              declared `error`, which fell through the guard above. `value` is a `&Value`, and
+              `Known` needs an owned `Value`, hence `.clone()`. The `Value` doc promises that
+              cloning a value "is a refcount bump", so this is cheap.
+      - type: diagram
+        kind: control-flow
+        title: Which arm of access runs
+        art: |
+          self.get(name)
+             │
+             ├─ None ─────────────────────────────────────► Absent
+             │
+             └─ Some(v)
+                  ├─ v is Value::Null ────────────────────► Unknown
+                  ├─ v is Value::Error(e)
+                  │     and field NOT declared `error` ───► Failed(Arc::clone(e))
+                  └─ anything else ───────────────────────► Known(v.clone())
+                     (including an Error in a field
+                      declared `error`: ADR-0215)
+        description: |
+          `access` first calls `get`. If `get` returns `None`, the result is `Absent`. If it
+          returns `Some(v)`, three checks follow in order. If `v` is `Value::Null`, the result is
+          `Unknown`. If `v` is `Value::Error(e)` and the schema does *not* declare the field as
+          type `error`, the result is `Failed`, holding a new handle to the same error. Every
+          other value, including an error stored in a field declared as `error`, becomes
+          `Known` with a clone of the value.
+      - type: prose
+        kind: ono
+        title: Why the guard exists
+        body: |
+          ADR-0215 ("An error a schema declares is data, not a failed read") explains why.
+          Earlier, every stored error was reported as `Failed`. That broke results such as
+          `ono.action-result/1`, whose `error` field is *meant* to hold an error. The ADR's
+          example is `stop process 999999 | select error.name`: instead of the error's name it
+          answered a record holding the whole error, because reading `error` counted as a
+          failed read and `select` stored the raised error as the field — "The path never
+          descended." The decision: "The three §10.5 outcomes are therefore decided by the
+          schema, not by the bytes in the slot — which is what a schema is for." In the code, that sentence is the
+          guard on line 196.
+      - type: exercise
+        id: option-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Suppose the arms on lines 195 and 199 were swapped, so `Some(value) => ...` came
+          directly after `None => ...`. What would `access` return for a field holding
+          `Value::Null`?
+        choices:
+          - text: "`FieldAccess::Unknown`, because the more specific pattern still wins"
+            correct: false
+            feedback: |
+              Rust does not pick the "most specific" arm. It tries the arms in order and takes
+              the first one that matches.
+          - text: "`FieldAccess::Known(Value::Null)`"
+            correct: true
+            feedback: |
+              Right. `Some(value)` matches every `Some`, so it would catch null (and every error)
+              before the more specific arms could run. The compiler would even warn that the later
+              arms are unreachable. In the real code, the specific arms come first so the
+              catch-all only sees what is left.
+          - text: "It would not compile, because the match is no longer exhaustive"
+            correct: false
+            feedback: |
+              Exhaustiveness is about covering every possible value, and `None` plus `Some(value)`
+              already cover everything. Unreachable arms produce a warning, not an error.
+      - type: exercise
+        id: option-03-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Use the fixture from the previous lesson: `memory` is declared as a `bytesize` and holds a
+          permission-denied `Value::Error`. `failure` is declared with type `error` and holds a
+          `Value::Error`. `cpy` is not declared anywhere. For each of `access("memory")`,
+          `access("failure")` and `access("cpy")`, say which line's arm runs and which
+          `FieldAccess` comes back.
+        hints:
+          - level: 1
+            body: Start with `get`. For which of the three names does it return `None`?
+          - level: 2
+            body: |
+              Both `memory` and `failure` reach line 196 with `Some(Value::Error(..))`. The guard
+              asks `declares_error(name)`: is the field's *declared type* `error`?
+        solution: |
+          - `access("cpy")`: `position_of` returns `None`, and the extras do not contain `cpy`,
+            so `get` returns `None`. The arm on line 194 runs and the result is
+            `FieldAccess::Absent`.
+          - `access("memory")`: `get` returns `Some(&Value::Error(..))`. Line 195 does not
+            match, because the value is not null. On line 196 the pattern matches, and the
+            guard `!self.declares_error("memory")` is true, because `memory` is declared
+            `bytesize`. The result is `FieldAccess::Failed(..)`, holding a new `Arc` handle to
+            the same error.
+          - `access("failure")`: the pattern on line 196 matches, but the guard is false,
+            because `failure` is declared with type `error`. The arm is skipped, and the
+            catch-all on line 199 runs: `FieldAccess::Known(Value::Error(..))`. Under ADR-0215,
+            the error is that field's value, not a failed read.
+
+  - id: option-04
+    title: "Borrowing through an Option, and leaving early with ?"
+    stage: guided
+    summary: "`as_ref` and `as_deref` lend what an `Option` field holds; `?` on an `Option` returns `None` early."
+    prerequisites: [option-03]
+    concepts: [option, question-mark, borrowing]
+    ono_topics: [error-flow, value-model]
+    objectives:
+      - "Explain why a `&self` getter returns `Option<&T>` by calling `.as_ref()` or `.as_deref()`."
+      - "Explain why `Option<bool>` can be returned directly from `&self`."
+      - "Read `?` applied to an `Option` as “if this is `None`, return `None` now”."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          [`ErrorValue`](glossary:error-value) is Ono-Sendai's structured error: "exactly the record of spec §16.1",
+          carried as data (it is also the `Value::Error` variant you just saw). Several of its
+          parts are optional. An error need not be *about* a particular thing, need not have a
+          cause, need not come with a help line. Whether a retry could help may simply not be
+          known. Each of these is an `Option` field, and each one has a getter.
+      - type: code
+        snippet: c05-error-getters
+        caption: |
+          `crates/ono-value/src/error.rs`: the struct's fields, and four of its getters.
+        annotations:
+          - lines: 96-99
+            kind: type
+            body: |
+              Four optional fields. `ValueRef` names what the error is about. `Arc<ErrorValue>`
+              is the error this one was raised from (the cause). `Arc<str>` is shared text.
+              `retryable` is `Option<bool>`: yes, no, or *nobody knows*.
+          - lines: 173
+            token: "Option<&ValueRef>"
+            kind: ownership
+            body: |
+              The getter takes `&self`, so it may only *lend* parts of the error, and it
+              returns "maybe a reference to the target".
+          - lines: 174
+            token: "self.target.as_ref()"
+            kind: rust
+            body: |
+              `Option::as_ref` turns a `&Option<ValueRef>` into an `Option<&ValueRef>`, a new
+              `Option` that borrows the content instead of owning it. Returning `self.target`
+              directly would try to *move* the field out of a struct we only borrowed, and the
+              compiler rejects that.
+          - lines: 180
+            token: "self.source.as_deref()"
+            kind: rust
+            body: |
+              `as_deref` does `as_ref` and then looks *through* the smart pointer. It turns
+              `Option<Arc<ErrorValue>>` into `Option<&ErrorValue>`, so callers see a plain
+              reference and never deal with the `Arc`.
+          - lines: 186
+            token: "self.help.as_deref()"
+            kind: rust
+            body: |
+              The same move for text: `Option<Arc<str>>` becomes `Option<&str>`. `&str` is the
+              type almost every string-reading function accepts.
+          - lines: 189
+            kind: ono
+            body: |
+              "or `None` when nothing is known about it". Ono-Sendai does not default an unknown
+              to `false`. Not knowing is its own answer, the same philosophy as `FieldAccess`.
+          - lines: 192
+            token: "self.retryable"
+            kind: ownership
+            body: |
+              No `as_ref` here. `Option<bool>` is a `Copy` type (both `Option` and `bool` are),
+              so reading it through `&self` copies the value out, and nothing is moved.
+      - type: prose
+        kind: rust
+        title: The question mark on an Option
+        body: |
+          Code that calls several functions returning `Option` would quickly become a staircase of
+          `match`es. [The `?` operator](glossary:question-mark-operator) removes that. Written after an expression of type
+          `Option<T>`, it means:
+
+          - if the value is `Some(x)`, the whole expression evaluates to `x` and execution
+            continues;
+          - if it is `None`, the **enclosing function returns `None` immediately**.
+
+          So `?` on an `Option` only works inside a function that itself returns an `Option`.
+          [Chapter 6](lesson:result-errors-03) shows the same operator on `Result`, where it does
+          one more thing.
+      - type: code
+        snippet: c05-split-literal
+        caption: |
+          `crates/ono-value/src/units.rs`: a private helper used when parsing literals such as
+          `3.5GiB`.
+        annotations:
+          - lines: 588
+            kind: ono
+            body: |
+              "or reports that there is no unit suffix at all": `None` is the normal answer for
+              input like `42`. The caller decides whether that is an error (next chapter).
+          - lines: 589
+            token: "Option<(&str, &str)>"
+            kind: type
+            body: |
+              Maybe a pair of borrowed string slices, the number part and the unit part. Both
+              point into the caller's `text`, so nothing is copied. How Rust knows they come from
+              `text` is a [chapter 8](lesson:borrowing-01) topic; for now, trust that they do.
+          - lines: 591
+            token: "?"
+            kind: flow
+            body: |
+              `find` returns `Option<usize>`: the byte index of the first character that
+              satisfies the test, or `None` if there is none. The `|c: char| ...` part is a
+              closure; read it as "is this an ASCII letter?". `?` either unwraps the index into
+              `split` or makes `split_literal` return `None` right here.
+          - lines: 592
+            token: "trimmed[..split]"
+            kind: rust
+            body: |
+              Slicing a string by byte range: everything before the first letter. This is safe
+              because `find` returned the start of a character.
+          - lines: 593-595
+            kind: flow
+            body: |
+              An explicit early `return None` for input such as `GiB` that has a unit and no
+              number. `?` only handles values that are already `None`; a check like this needs
+              a written `return`.
+          - lines: 596
+            token: "Some((number, trimmed[split..].trim()))"
+            kind: rust
+            body: |
+              Double parentheses: `Some(...)` wrapping a tuple `(number, suffix)`.
+      - type: exercise
+        id: option-04-q1
+        exercise_type: predict
+        prompt: |
+          Predict what `split_literal` returns for each input: `"3.5GiB"`, `"  64 KiB "`, `"42"`
+          and `"GiB"`. For every `None`, name the line that produced it.
+        hints:
+          - level: 1
+            body: Work through the lines in order for each input, after `trim()` has removed the outer spaces.
+          - level: 2
+            body: |
+              For `"42"`, what does `find` return when no character is a letter? For `"GiB"`,
+              what is `split`, and what is `trimmed[..0]`?
+        solution: |
+          - `"3.5GiB"`: the first letter is `G`, at byte index 3. The number is `"3.5"` and
+            the suffix is `"GiB"`, so the result is `Some(("3.5", "GiB"))`.
+          - `"  64 KiB "`: trimming gives `"64 KiB"`. The first letter `K` is at index 3.
+            `trimmed[..3]` is `"64 "`, which trims to `"64"`, and the suffix trims to `"KiB"`.
+            The result is `Some(("64", "KiB"))`.
+          - `"42"`: no character is alphabetic, so `find` returns `None`. The `?` on line 591
+            returns `None` from `split_literal`.
+          - `"GiB"`: `split` is 0, so `number` is the empty string, and the check on lines
+            593–595 returns `None`.
+
+          The two `None`s have different causes (no unit, no number), but the helper does not
+          need to tell them apart: its caller treats both as "not a valid literal".
+      - type: exercise
+        id: option-04-q2
+        exercise_type: multiple-choice
+        prompt: |
+          Why does `target()` end with `self.target.as_ref()` while `retryable()` can simply
+          return `self.retryable`?
+        choices:
+          - text: "`retryable` is `Option<bool>`, which is `Copy`; `Option<ValueRef>` is not, so it can only be lent"
+            correct: true
+            feedback: |
+              Exactly. Through `&self` you may copy `Copy` values out, but you may not move
+              anything out. `as_ref` gives an `Option<&ValueRef>` that borrows instead of moving.
+          - text: "`as_ref` makes a copy of the target so the caller cannot change the error"
+            correct: false
+            feedback: |
+              `as_ref` copies nothing. It produces an `Option` holding a *reference* into the
+              existing field. The caller cannot change the error because `&` references are
+              read-only, not because of a copy.
+          - text: "`retryable` is private and `target` is public"
+            correct: false
+            feedback: |
+              Both fields are private (no `pub`), and both getters are public. Visibility is
+              not the difference; ownership is.
+          - text: "It is a style choice; both lines would compile either way"
+            correct: false
+            feedback: |
+              `return self.target` from a `&self` method would be rejected: "cannot move out of
+              `self.target` which is behind a shared reference".

@@ -1,0 +1,751 @@
+id: result-errors
+number: 6
+title: Result, errors and the ? operator
+summary: |
+  `Option` says "maybe nothing". `Result<T, E>` says "a `T`, or an error `E` explaining what went
+  wrong". Rust has no exceptions: a function that can fail says so in its return type, and its
+  caller has to decide what to do with the failure.
+
+  This chapter reads Ono-Sendai's everyday fallible functions: typed accessors on `Value`, a
+  crate-specific error type in `ono-process`, and literal parsers built from `?`, the operator
+  that returns early and converts the error on the way. It ends with a deliberate contrast. The
+  parser never returns `Result` at all, because a shell editor needs *every* problem in a
+  half-typed line, not just the first one.
+lessons:
+  - id: result-errors-01
+    title: "Result: a value, or a described failure"
+    stage: guided
+    summary: "`Value::as_bool` returns `Result<bool, ErrorValue>`: `Ok` with the boolean, or `Err` with a type-mismatch error."
+    prerequisites: [option-04]
+    concepts: [result, pattern-matching]
+    ono_topics: [value-model, error-flow]
+    objectives:
+      - "Read `Result<T, E>` in a signature and name the success type and the error type."
+      - "Construct `Ok(...)` and `Err(...)` values, and read a catch-all arm that binds the value."
+      - Explain what the `# Errors` doc section promises.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          A pipeline stage receives `Value`s: the central enum from
+          [chapter 4](chapter:enums-matching), with variants such as `Bool`, `Int`, `String` and
+          `Record`. A command that needs a boolean (a flag, the result of a test) has to get
+          one out of a `Value` it did not choose. That value might be anything. Asking for a
+          boolean is therefore an operation that can fail, and Ono-Sendai says so in the type.
+      - type: code
+        snippet: c06-value-as-bool
+        caption: |
+          `crates/ono-value/src/value.rs`: two typed accessors and the private helper that builds
+          their error.
+        annotations:
+          - lines: 180-182
+            kind: rust
+            body: |
+              `# Errors` is a standard Rust documentation convention for fallible functions: it
+              lists what can come back in the `Err` case. Ono-Sendai follows it on almost every
+              public function that returns a [`Result`](glossary:result), so look for it before reading a body.
+          - lines: 183
+            token: "Result<bool, ErrorValue>"
+            kind: type
+            body: |
+              `Result` is another standard enum, with two variants: `Ok(T)` for success and
+              `Err(E)` for failure. Here `T` is `bool` and `E` is `ErrorValue`, Ono-Sendai's
+              structured error. You can read the signature as "gives a `bool`, or an
+              `ErrorValue` saying why not".
+          - lines: 184
+            token: "match self"
+            kind: flow
+            body: |
+              `self` is a `&Value`, so this `match` inspects the value without taking it apart
+              or moving it.
+          - lines: 185
+            token: "Ok(*value)"
+            kind: ownership
+            body: |
+              Because the match looks through a reference, `value` is a `&bool`. `*value`
+              dereferences it, copying the `bool` out (`bool` is `Copy`), and `Ok(...)` wraps
+              it as the success case.
+          - lines: 186
+            token: "other => Err(other.mismatch(\"bool\"))"
+            kind: flow
+            body: |
+              A catch-all arm that **binds** whatever it matched to the name `other`, so the
+              arm can use it. Every other variant ends up here, and `Err(...)` wraps the error
+              that `mismatch` builds.
+          - lines: 195-199
+            kind: rust
+            body: |
+              Same shape for integers. Ono-Sendai's `Int` holds an `i128`, and the success type
+              follows it.
+          - lines: 512
+            token: "fn mismatch"
+            kind: rust
+            body: |
+              No `pub`: a private helper, visible only inside this module. It returns a plain
+              `ErrorValue`, not a `Result`. Building an error is not itself fallible; the
+              *caller* decides to put it in an `Err`.
+          - lines: 514
+            token: "ErrorCode::TypeMismatch"
+            kind: ono
+            body: |
+              Every error carries a stable code from `ono-core`'s taxonomy. Scripts and
+              `try`/`catch` match on the code (its dotted name here is `type.mismatch`), never
+              on the wording of the message.
+          - lines: 515
+            kind: ono
+            body: |
+              The message names both sides, for example `expected bool but found int`. It uses
+              `type_name`, the same type names the shell's `type` command reports.
+      - type: prose
+        kind: rust
+        title: Result is just an enum, too
+        body: |
+          Like `Option`, `Result` is an ordinary generic enum from the standard library:
+
+          ```rust
+          enum Result<T, E> {
+              Ok(T),
+              Err(E),
+          }
+          ```
+
+          The difference is what the "unhappy" variant carries. `None` carries nothing, but
+          `Err(E)` carries an explanation. That is the rule of thumb for reading Ono-Sendai: an
+          `Option` in a signature means that absence is a normal answer, and a `Result` means
+          that something can go wrong and you will be told what.
+
+          A `Result` cannot be silently ignored. If you call `as_bool()` and drop the result
+          without looking at it, the compiler warns (`Result` is marked `#[must_use]` in the
+          standard library). To reach the `bool`, you must handle the `Err` case somehow.
+      - type: prose
+        kind: ono
+        title: Why an ErrorValue and not a panic
+        body: |
+          A command in a pipeline is handed values produced by other commands and by users. A
+          type mismatch there is an ordinary event, not a bug in the shell. The workspace lints
+          warn about `unwrap`, `expect` and `panic!` in production code (`Cargo.toml`), and
+          accessors like these are the reason that is practical. The failure comes back as a
+          value with a stable code, and it can be reported, caught with `try`/`catch`, or carried
+          down the pipeline as data (`ErrorValue` is also the `Value::Error` variant).
+      - type: exercise
+        id: result-errors-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          What does `Value::Int(3).as_bool()` return?
+        choices:
+          - text: "`Ok(true)`, because non-zero integers are true"
+            correct: false
+            feedback: |
+              `as_bool` does not convert. The only arm that produces `Ok` is `Value::Bool(value)`.
+              Everything else falls into `other`.
+          - text: "`Err(...)` holding a `type.mismatch` error with the message `expected bool but found int`"
+            correct: true
+            feedback: |
+              Right. `Value::Int(3)` does not match `Value::Bool(value)`, so the catch-all arm
+              binds it as `other` and returns `Err(other.mismatch("bool"))`.
+          - text: "`None`"
+            correct: false
+            feedback: |
+              `None` is an `Option` variant. The return type is `Result<bool, ErrorValue>`,
+              whose variants are `Ok` and `Err`.
+          - text: "The program panics"
+            correct: false
+            feedback: |
+              Nothing in this function panics. The failure is returned as a value for the caller
+              to handle.
+      - type: exercise
+        id: result-errors-01-q2
+        exercise_type: explain-line
+        prompt: |
+          Explain line 186, `other => Err(other.mismatch("bool")),`, token by token. What type does
+          `other` have, and why can `mismatch` be called on it?
+        hints:
+          - level: 1
+            body: What is being matched on line 184, a `Value` or a reference to one?
+          - level: 2
+            body: |
+              A pattern that is just a name matches anything and binds it. Look at
+              `mismatch`'s receiver on line 512.
+        solution: |
+          `other` is a pattern consisting of just a name. It matches any value that the earlier
+          arm did not, and binds it to `other`. The match is on `self`, which is a `&Value`, so
+          `other` is a `&Value` too: a borrow of the same value, not a copy.
+
+          `mismatch` takes `&self`, so it can be called on a `&Value` directly. It reads the
+          type name (`other.type_name()` inside) and builds an `ErrorValue` with code
+          `TypeMismatch` and a message such as `expected bool but found string`. `Err(...)` then
+          wraps that error as the failure case of `Result<bool, ErrorValue>`. Binding `other`
+          instead of writing `_` is what lets the message say what was actually found.
+
+  - id: result-errors-02
+    title: An error type for one crate
+    stage: guided
+    summary: "`ono-process` defines its own `Error` struct, a `Result<T>` alias, and the trait impls that make it a real error type."
+    prerequisites: [result-errors-01]
+    concepts: [error-types, result]
+    ono_topics: [error-flow, process-execution]
+    objectives:
+      - "Read a type alias such as `pub type Result<T> = std::result::Result<T, Error>;`."
+      - "Recognise the `Display` and `std::error::Error` implementations that make a struct an error type."
+      - "Explain how `code_for_io` maps an open-ended set of OS errors onto a closed taxonomy."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `ono-process` is "the Unix execution layer": it starts external programs, wires up
+          redirections and pipes, and manages jobs. Its crate doc says it "knows about
+          processes and descriptors, not about values, rendering or the language". So it does
+          not use `ono-value`'s rich `ErrorValue`. It has a lightweight error of its own that
+          depends only on `ono-core`'s error codes.
+      - type: code
+        snippet: c06-process-error
+        caption: |
+          `crates/ono-process/src/error.rs` (constructors omitted).
+        annotations:
+          - lines: 10
+            token: "pub type Result<T>"
+            kind: rust
+            body: |
+              A **type alias**: a new name for an existing type. In the modules of this crate
+              that import it (`use crate::Result;` or similar), `Result<Pid>` means
+              `std::result::Result<Pid, Error>`. The error type is fixed and only the
+              success type `T` varies. Many crates do this, so when you see a `Result` with a
+              single parameter, look for the alias.
+          - lines: 26
+            token: "pub struct Error"
+            kind: type
+            body: |
+              An error type is usually just a struct or an enum. This one has two private
+              fields: a machine-readable code and a human message.
+          - lines: 27
+            token: "ErrorCode"
+            kind: ono
+            body: |
+              The same stable taxonomy (`io.not_found`, `resolve.command_not_found`, ...) that
+              `ErrorValue` uses. A higher layer can therefore turn a process error into a value
+              error without losing the identity of the failure: `ono-cli` does exactly that with
+              `ErrorValue::new(error.code(), error.message().to_owned())`.
+          - lines: 64
+            token: "impl fmt::Display for Error"
+            kind: rust
+            body: |
+              Implementing the `Display` [**trait**](glossary:trait) is how a type says "this is how I am printed
+              for a human", for example with `{}` in `format!` or with `.to_string()`. Treat the
+              `impl Trait for Type` syntax as a black box until
+              [chapter 10](lesson:traits-01). Here the message is printed exactly as it is.
+          - lines: 70
+            token: "impl std::error::Error for Error {}"
+            kind: rust
+            body: |
+              This marks `Error` as a standard error type, which lets generic error-handling code
+              accept it. The block is empty because every method of that trait has a default. It
+              does require `Debug` and `Display`, which the struct has (the `derive` on line 25,
+              and lines 64–68).
+          - lines: 74-76
+            kind: ono
+            body: |
+              The reasoning is stated in the doc comment: the taxonomy is closed and has no
+              generic I/O code, so anything unrecognised becomes `io.permission_denied`, and
+              "The message always carries the real reason."
+          - lines: 78
+            token: "match error.kind()"
+            kind: flow
+            body: |
+              The standard library's `io::ErrorKind` has many variants, and new ones can be
+              added in later Rust versions. Three are mapped explicitly, each to its own code...
+          - lines: 82
+            token: "_ => ErrorCode::IoPermissionDenied"
+            kind: flow
+            body: |
+              ...and the wildcard `_` catches every other kind and gives it the taxonomy's
+              fourth I/O code, `io.permission_denied`. Without it, the `match` would not compile: `io::ErrorKind` has
+              far more variants than the three listed, and it is marked `#[non_exhaustive]`, so
+              code outside the standard library must always have a wildcard arm when matching
+              on it.
+      - type: prose
+        kind: ono
+        title: Two error types, on purpose
+        body: |
+          Ono-Sendai has two layers of errors. `ono-core::ErrorCode` is a payload-free list of
+          identities. Its module doc says: "Codes are payload-free so that every layer of the
+          shell can name one without depending on the value model." On top of that:
+
+          - `ono-value::ErrorValue` is the rich error of spec §16.1: target, cause, help,
+            retryable, metadata. It can travel as data.
+          - `ono-process::Error` is just a code and a message, because this crate must not
+            depend on the value model.
+
+          Both carry an `ErrorCode`, so a higher layer can turn a process error into a value
+          error without guessing what it meant.
+      - type: exercise
+        id: result-errors-02-q1
+        exercise_type: predict
+        prompt: |
+          This test sits at the bottom of the same file. Error 24 is `EMFILE` ("too many open
+          files"), which `io::ErrorKind` does not classify as any of the three kinds listed in
+          `code_for_io`. Predict whether both assertions pass, and explain why.
+        snippets: [c06-process-error-test]
+        hints:
+          - level: 1
+            body: Which arm of the `match` on line 78 handles an I/O error that is none of the three listed kinds?
+          - level: 2
+            body: |
+              `from_io(context, error)` builds `Self::new(code_for_io(error), format!("{context}: {error}"))`.
+              What does the message start with?
+        solution: |
+          Both assertions pass. `EMFILE` is not `NotFound`, `AlreadyExists` or `NotADirectory`,
+          so the wildcard arm maps it to `ErrorCode::IoPermissionDenied`, and the first
+          assertion holds. `from_io` builds the message as `"{context}: {error}"`, so it starts
+          with `opening a pipe: ` followed by the operating system's own description, and the
+          second assertion holds.
+
+          The test's own comment gives the reason: "The taxonomy has no generic I/O code." The
+          code is a best-effort category for machines, and the message keeps the precise cause
+          for people, which is the promise made in the doc comment on lines 74–76.
+      - type: exercise
+        id: result-errors-02-q2
+        exercise_type: multiple-choice
+        prompt: |
+          Inside `ono-process`, a function is declared `fn open(path: &Path) -> Result<OwnedFd>`.
+          What is its full return type?
+        choices:
+          - text: "`std::result::Result<OwnedFd, ono_process::Error>`"
+            correct: true
+            feedback: |
+              Right. The alias on line 10 fixes the error type to this crate's `Error` and leaves
+              only the success type to fill in.
+          - text: "`std::result::Result<OwnedFd, std::io::Error>`"
+            correct: false
+            feedback: |
+              A `Result` with a single type parameter cannot be the standard `Result`, which
+              needs two. It is the alias from `error.rs`, whose error type is `crate::Error`,
+              not `io::Error`.
+          - text: "`Option<OwnedFd>`"
+            correct: false
+            feedback: |
+              A `Result` alias is still a `Result`. Its failure case carries an `Error`, while
+              `Option` would carry nothing.
+
+  - id: result-errors-03
+    title: "The ? operator"
+    stage: guided
+    summary: "`?` unwraps an `Ok` or returns the `Err` early, converting it with `From`; `ok_or_else` turns an `Option` into a `Result` first."
+    prerequisites: [result-errors-02, option-04]
+    concepts: [question-mark, result, option]
+    ono_topics: [value-model, error-flow]
+    objectives:
+      - "Read `expr?` on a `Result` as “take the `Ok` value, or return the error now”."
+      - "State that `?` converts the error with `From::from` before returning it."
+      - "Read `ok_or_else` and `map_err` as the adapters that make `?` fit."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Ono-Sendai's values know their units: `512MiB > 1GiB` is a comparison between two byte
+          sizes, and `10s + 512MiB` is an error. The shell therefore has to parse literals such
+          as `3.5GiB`. `ByteSize::parse` does that, using the `split_literal` helper you read
+          in [the previous chapter](lesson:option-04). Parsing can fail in several ways, and
+          each failure should end the function at once with a useful error.
+      - type: prose
+        kind: rust
+        title: What ? does on a Result
+        body: |
+          Written after an expression of type `Result<T, E>`, inside a function that returns
+          `Result<U, F>`, `?` means:
+
+          - on `Ok(value)`, the expression evaluates to `value` and execution continues;
+          - on `Err(error)`, the function immediately returns `Err(From::from(error))`.
+
+          The second step includes a **conversion**. `?` passes the error through [`From::from`](glossary:from-into),
+          so an error of type `E` can leave a function whose error type is `F`, as long as the
+          conversion "`F` from `E`" exists. When `E` and `F` are the same type, as in every
+          function in this lesson, the conversion does nothing: every type converts into itself.
+          Ono-Sendai also uses the non-trivial case. The evaluator in `ono-cli` returns
+          `Result<T, Flow>`, where the enum `Flow` says why evaluation stopped early (an error,
+          but also `break`, `return` or `exit`). It declares how an `ErrorValue` becomes a
+          `Flow`, so `?` wraps value errors automatically. [Chapter 13](lesson:conversions-03) reads that code; for now,
+          remember that `?` *returns early and converts*.
+
+          `?` on an `Option` (the previous chapter) returns `None` early. The two forms do not
+          mix: in a function returning `Result`, an `Option` must first be turned into a
+          `Result`, and `ok_or_else` does that.
+      - type: code
+        snippet: c06-bytesize-parse
+        caption: |
+          `crates/ono-value/src/units.rs`: parsing `128B`, `64KiB` or `3.5GiB`.
+        annotations:
+          - lines: 157
+            token: "Result<Self, ErrorValue>"
+            kind: type
+            body: |
+              `Self` is `ByteSize`, the type this `impl` block belongs to. On success you get a
+              size; on failure, an `ErrorValue`.
+          - lines: 158
+            token: "let (number, suffix)"
+            kind: rust
+            body: |
+              Destructuring a tuple: the `(&str, &str)` pair from `split_literal` is split into
+              two bindings.
+          - lines: 158
+            token: "ok_or_else(|| unit_error(text, \"byte size\"))"
+            kind: rust
+            body: |
+              `split_literal` returns an `Option`. `ok_or_else` turns `Some(x)` into `Ok(x)`, and
+              `None` into `Err(...)` by calling the [closure](glossary:closure) `|| unit_error(...)`. A closure is a
+              small function written in place; `||` means it takes no arguments. The error is
+              built only if it is needed.
+          - lines: 158
+            token: "?;"
+            kind: flow
+            body: |
+              Now `?` has a `Result<(&str, &str), ErrorValue>`. `Ok` is unwrapped into the
+              tuple, and `Err` returns from `parse` at once.
+          - lines: 159
+            token: "ByteUnit::from_suffix(suffix)"
+            kind: flow
+            body: |
+              Same pattern again. `from_suffix` returns `Option<ByteUnit>` (`None` for a suffix
+              that is not a byte unit, such as `gib` — matching is case-sensitive — or `s`), and
+              it is adapted and propagated in one line.
+          - lines: 160-162
+            kind: flow
+            body: |
+              Some failures are not the result of another call. They are a rule of this
+              function, so they need an explicit `return Err(...)`. The unit error says the
+              literal is not a byte size; a byte size cannot be negative.
+          - lines: 163-165
+            kind: rust
+            body: |
+              The tail expression has no `?`. `scale_to_base` returns `Option<i128>` (`None` if
+              the number part is not a number, such as `1.2.3`, or if the result overflows). `.map(...)` transforms the value inside a `Some`, and `.ok_or_else(...)`
+              makes it a `Result<ByteSize, ErrorValue>`. That is already the return type, so it
+              is returned as is.
+      - type: diagram
+        kind: control-flow
+        title: The four exits of ByteSize::parse
+        art: |
+          parse(text)
+            │
+            ├─ split_literal(text) is None ──?──► return Err(unit_error)
+            ├─ from_suffix(suffix)  is None ──?──► return Err(unit_error)
+            ├─ number starts with '-' ─ return ─► Err(unit_error)
+            └─ scale_to_base(...)
+                  ├─ Some(bytes) ──────────────► Ok(ByteSize(bytes))
+                  └─ None (bad number/overflow) ► Err(unit_error)
+        description: |
+          `ByteSize::parse` has three early exits and one final expression. If `split_literal`
+          finds no number or no unit, the `?` on line 158 returns an error. If the unit is not
+          a byte unit, the `?` on line 159 returns an error. If the number is negative, the
+          explicit `return` on line 161 returns an error. Otherwise, the final expression
+          scales the number: if it fits, the result is `Ok` with the size, and if the number
+          part cannot be read as a number or the calculation overflows, the result is an error. All four failures use the same
+          `type.invalid_unit` error built by `unit_error`.
+      - type: prose
+        kind: ono
+        title: Why a literal is parsed, and refused, here
+        body: |
+          The module doc of `units.rs` states what parsing buys: "Parsing normalises every unit of a
+          dimension onto one base quantity — bytes and nanoseconds — which is what makes automatic
+          conversion free." After `parse`, `3.5GiB` is a byte count, so comparing it with `512MiB`
+          needs no unit logic at all. The same doc says that the `exact` rendering "parses back to
+          the identical value", so `parse` is also the way back from text.
+
+          Every refusal is built by `unit_error`, which uses the one code `type.invalid_unit` and
+          the message `` `<text>` is not a byte size literal ``. Whatever was wrong with the text,
+          the caller sees one kind of failure naming the text the user wrote. The `?`s keep each
+          refusal to one line, so the function reads as the list of rules a byte size must meet.
+      - type: code
+        snippet: c06-schema-id-from-str
+        caption: |
+          `crates/ono-value/src/schema.rs`: parsing a schema id such as `ono.process/1`.
+        annotations:
+          - lines: 55-56
+            kind: rust
+            body: |
+              Treat this as a black box for now: implementing [`FromStr`](glossary:fromstr) is what makes
+              `"ono.process/1".parse::<SchemaId>()` work, and `type Err = ErrorValue;` names the
+              error type that `.parse()` returns. Traits come in
+              [chapter 10](lesson:traits-01), and `FromStr` itself in
+              [chapter 13](lesson:conversions-02).
+          - lines: 59
+            token: "let error = || {"
+            kind: rust
+            body: |
+              A closure stored in a variable. Every failure in this function produces the same
+              error, so it is written once and called as `error()` wherever it is needed.
+          - lines: 65
+            token: "ok_or_else(error)?"
+            kind: flow
+            body: |
+              `rsplit_once('/')` splits at the *last* slash and returns `Option<(&str, &str)>`.
+              With no slash, `ok_or_else(error)` produces `Err(error())`, and `?` returns it.
+          - lines: 66-68
+            kind: flow
+            body: |
+              `"/1"` does contain a slash, but it has an empty name, which this rule rejects with
+              an explicit `return`.
+          - lines: 71
+            token: "map_err(|_| error())?"
+            kind: rust
+            body: |
+              `version.parse::<u32>()` returns a `Result` whose error type is the standard
+              library's `ParseIntError`. `map_err` replaces that error with our own
+              (`|_|` ignores the original), and `?` propagates it. `::<u32>` (the "turbofish")
+              says which type to parse into.
+          - lines: 69
+            token: "Ok(Self::new("
+            kind: flow
+            body: |
+              If both parts are valid, the id is built and wrapped in `Ok`. The `?` inside the
+              argument list runs first; if it returns early, `Ok(...)` is never reached.
+      - type: exercise
+        id: result-errors-03-q1
+        exercise_type: predict
+        prompt: |
+          Predict what `SchemaId::from_str` returns for each input, and name the line that
+          decides it: `"ono.process/1"`, `"ono.process"`, `"/1"`, `"ono.process/one"` and
+          `"a/b/3"`.
+        hints:
+          - level: 1
+            body: For each input, first work out what `rsplit_once('/')` returns.
+          - level: 2
+            body: |
+              `rsplit_once` splits at the *last* `/`. After that, the name must not be empty
+              and the version must parse as a `u32`.
+        solution: |
+          - `"ono.process/1"`: the split gives `("ono.process", "1")`. The name is not empty
+            and `"1"` parses, so the result is `Ok(SchemaId { name: "ono.process", version: 1 })`
+            (line 69).
+          - `"ono.process"`: there is no `/`, so `rsplit_once` returns `None`, `ok_or_else`
+            turns it into `Err(error())`, and the `?` on line 65 returns it.
+          - `"/1"`: the split gives `("", "1")`, the name is empty, and the `return Err` on line
+            67 fires.
+          - `"ono.process/one"`: the split succeeds, but `"one".parse::<u32>()` fails.
+            `map_err` replaces the error, and the `?` on line 71 returns it.
+          - `"a/b/3"`: the split at the last slash gives `("a/b", "3")`, so the result is `Ok`
+            with the name `a/b` and version 3.
+
+          Every `Err` is the same `parse.syntax` error with the message
+          `` `<text>` is not a schema id; expected `name/version` ``.
+      - type: exercise
+        id: result-errors-03-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          `RecordBuilder::set` is one step of the chain a provider uses to build a record:
+          `RecordValue::builder(schema, provenance).set("name", ...)?.set("version", ...)?`,
+          and finally `.build()` (the Linux package provider is written exactly like this). Trace what happens when the schema does not
+          declare `name`. Which line returns, what does the caller receive, and what happens to
+          the builder `self` that was passed in?
+        snippets: [c06-record-builder-set]
+        hints:
+          - level: 1
+            body: What does `position_of` return for an undeclared name, and what does `ok_or_else` make of it?
+          - level: 2
+            body: |
+              `set` takes `mut self`, so the builder is owned by the function. What happens to a
+              value a function owns when the function returns without handing it back?
+        solution: |
+          `position_of(name)` returns `None`. `ok_or_else` calls the closure, which builds an
+          `ErrorValue` with code `TypeUnknownField` and a message such as
+          `` ono.test.thing/1 has no field `cpy` ``, and the `?` on line 324 returns
+          `Err(that_error)` from `set`. Since the error types match (`ErrorValue` on both
+          sides), the `From` conversion is the identity. Lines 325–328 never run.
+
+          The caller receives `Err(...)`, not a builder. The builder was moved into `set`
+          (`mut self`), and it is not returned on the error path, so it is dropped when `set`
+          returns, together with the partly built record. The doc comment (lines 316–317) tells
+          the provider what to do instead: data the schema does not cover belongs in
+          `set_extra`. At a call site such as `.set(...)?.set(...)?`, the first failing `set`
+          ends the whole chain, because its `?` returns from the *caller's* function as well.
+
+  - id: result-errors-04
+    title: Stop at the first error, or collect them all?
+    stage: guided
+    summary: "`Schema::validate` returns the first violation; the parser never returns `Result` and collects diagnostics instead."
+    prerequisites: [result-errors-03]
+    concepts: [result, error-types, collections]
+    ono_topics: [parsing, records-schemas, error-flow]
+    objectives:
+      - "Read `Result<(), E>` as “succeeded with nothing to report, or failed”."
+      - Recognise early returns from inside a loop.
+      - Explain why the parser collects diagnostics in a `Vec` instead of returning a `Result`.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Two parts of Ono-Sendai check input against rules. `Schema::validate` checks that a
+          record a provider produced matches its schema (spec §35.3). The parser checks that a
+          command line matches the grammar. Both can find problems, but they report them in
+          completely different ways, and each choice is deliberate.
+      - type: code
+        snippet: c06-schema-validate
+        caption: |
+          `crates/ono-value/src/schema.rs`: the start and the end of `Schema::validate`. The
+          omitted lines check field types and extension names in the same style.
+        annotations:
+          - lines: 516
+            token: "Result<(), ErrorValue>"
+            kind: type
+            body: |
+              `()` is the unit type, "no value". A `Result<(), E>` is used for an action or a
+              check: success carries nothing, and only the failure has content.
+          - lines: 517-523
+            kind: flow
+            body: |
+              A precondition checked first, with an explicit `return Err(...)`. `violation`
+              (not shown) builds an `ErrorValue` with code `provider.schema_violation`.
+          - lines: 524
+            token: "for (index, field) in self.fields.iter().enumerate()"
+            kind: rust
+            body: |
+              A loop over the declared fields together with their positions. The iterator
+              methods are covered in [chapter 12](lesson:iterators-closures-01); read this as "for each
+              field and its index".
+          - lines: 525
+            token: "unwrap_or(&Value::Null)"
+            kind: rust
+            body: |
+              `field_at` returns `Option<&Value>`. `unwrap_or(default)` gives the value inside a
+              `Some`, or the default for `None`. A missing slot is treated as null.
+          - lines: 526-528
+            kind: ono
+            body: |
+              An error in a field is accepted whatever the declared type. The doc comment
+              explains that spec §10.5 requires a failed access to stay visible, and "calling
+              that a schema violation would push providers back towards fabricating data".
+          - lines: 531
+            token: "return Err(self.violation(format!("
+            kind: flow
+            body: |
+              A `return` inside a loop leaves the whole function, not just the loop. The first
+              violation found ends the check.
+          - lines: 556
+            token: "Ok(())"
+            kind: flow
+            body: |
+              Only reached when no check returned early: success, with nothing to carry.
+      - type: prose
+        kind: ono
+        title: Why the first error is enough here
+        body: |
+          The `# Errors` section promises an error "naming the first field that violates the
+          contract". A record that breaks its schema is a provider bug, and one precise message
+          is enough to find it. Stopping early is simpler and cheaper.
+
+          A person typing at a prompt is a different situation.
+      - type: code
+        snippet: c06-parse-collects
+        caption: |
+          `crates/ono-parser/src/parser/mod.rs`: the parser's public entry point.
+        annotations:
+          - lines: 74
+            kind: ono
+            body: |
+              "The call never panics and always returns a tree, whatever it is handed." The
+              module doc adds that problems are collected "as diagnostics instead of throwing
+              them", "so a half-typed line still produces something the editor can highlight".
+          - lines: 82
+            token: "-> Parsed"
+            kind: type
+            body: |
+              Not `Result<Program, Diagnostic>`. Parsing always succeeds in producing *something*.
+              `Parsed` holds the tree **and** a `Vec<Diagnostic>` listing everything that was
+              wrong with it.
+          - lines: 84
+            token: "parser.parse_program()"
+            kind: flow
+            body: |
+              Parsing runs to the end of the input whatever it finds. At each problem, the
+              parser records a diagnostic, skips to a recovery point (the next `|`, newline or
+              closing bracket) and continues.
+          - lines: 87
+            token: "diagnostics: parser.diagnostics"
+            kind: ownership
+            body: |
+              The collected list is handed over to the result. (Taking a field out of a struct
+              like this is a *move*. [Chapter 7](lesson:ownership-moves-02) reads this line
+              again.)
+      - type: code
+        snippet: c06-parser-report
+        caption: |
+          `crates/ono-parser/src/parser/diagnostics.rs`: where a problem goes instead of being
+          returned.
+        annotations:
+          - lines: 15-16
+            kind: flow
+            body: |
+              Reporting is just `push` onto a `Vec`. The method returns nothing and the caller
+              continues parsing. `&mut self` is needed because it changes the parser's list
+              ([chapter 9](lesson:mutability-02)).
+          - lines: 21-25
+            kind: ono
+            body: |
+              Each problem is classified. `Diagnostic::incomplete` means "still typing" (an open
+              quote, a trailing `|`); `Diagnostic::syntax` means no amount of further typing can
+              fix it. ADR-0009 requires the editor to be able to tell those apart.
+      - type: exercise
+        id: result-errors-04-q1
+        exercise_type: identify-abstraction
+        prompt: |
+          Imagine `parse` were declared `fn parse(source: &str) -> Result<Program, Diagnostic>`, with
+          `?` at every point where a problem is found. Name two things the shell's line editor
+          could no longer do. Then say why `Schema::validate` does not have the same problem.
+        hints:
+          - level: 1
+            body: How many diagnostics can a `Result<Program, Diagnostic>` carry, and what happens to the tree on `Err`?
+          - level: 2
+            body: |
+              The crate docs promise that `parse` "always returns a tree" and that the editor can
+              tell "still typing" from "broken". Which of those needs the tree, and which needs
+              *all* the diagnostics?
+        solution: |
+          With `Result<Program, Diagnostic>` and `?`, parsing would stop at the first problem and
+          return only that problem, with no tree. The editor would lose:
+
+          1. **The tree for a broken or unfinished line.** Syntax highlighting and completion
+             work on the tree while the user is still typing. `Parsed::program()` promises a tree
+             "Always present, even for input that was rejected outright".
+          2. **The full list of problems.** Only the first diagnostic would survive. The editor
+             could not mark every error at once, and it could not reliably decide "still typing"
+             versus "broken" (`is_complete`/`has_errors` look at *all* diagnostics: a line may
+             have a real syntax error and also end inside an open bracket).
+
+          `Schema::validate` checks a finished record produced by a provider. Nobody is typing,
+          nothing needs highlighting, and one precise message about the first bad field is
+          enough to fix the provider. There, `Result<(), ErrorValue>` with early returns is the
+          simpler and correct shape.
+
+          The general lesson: `Result` models "this operation either produced a value or
+          failed". When failure is partial and the caller needs both the result *and* all the
+          problems, Ono-Sendai returns a struct holding both.
+      - type: exercise
+        id: result-errors-04-q2
+        exercise_type: multiple-choice
+        prompt: |
+          A record's first declared field is `required` and holds `Value::Null`. Its third field
+          holds a value of the wrong type. What does `validate` return?
+        choices:
+          - text: "`Err` naming the first field (the required null)"
+            correct: true
+            feedback: |
+              Right. The loop checks fields in order, and the `return Err(...)` on line 531 fires
+              at index 0. The third field is never examined.
+          - text: "`Err` naming both fields"
+            correct: false
+            feedback: |
+              `Result<(), ErrorValue>` carries one error, and the function returns as soon as it
+              has one. Collecting several problems is the parser's approach, not this one.
+          - text: "`Ok(())`, because null is always allowed"
+            correct: false
+            feedback: |
+              Null is allowed only in fields that are nullable and not required. Line 530 checks
+              `field.required || !field.nullable`.
+          - text: "`Err` naming the third field, because type errors are checked first"
+            correct: false
+            feedback: |
+              Checks run field by field, in declaration order. For field 0, the null check
+              already returns.

@@ -1,0 +1,30 @@
+id: c11-key-function
+source:
+  file: crates/ono-command/src/impls/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 91
+  end_line: 94
+  anchor: input.transform(Group::new(key))?
+  content_hash: sha256:664dcb6053e411a2b51c83e785fb21410bce9422c604106617bbed01ce8ed8f7
+  code: |2
+                Kind::Group => {
+                    let key = key_function(arguments, "key", &spelling, &scope)?;
+                    input.transform(Group::new(key))?
+                }
+- start_line: 236
+  end_line: 246
+  anchor: let key = expression(arguments, name, spelling)?;
+  content_hash: sha256:2348c05840f384a0c9421f8622b7a60ecbbe9318b9978010aafd28281274fa12
+  code: |
+    /// A key function over the expression bound to `name`.
+    fn key_function(
+        arguments: &BoundArguments,
+        name: &str,
+        spelling: &str,
+        scope: &Arc<Scope>,
+    ) -> Result<impl ono_pipeline::KeyFn + use<>, ErrorValue> {
+        let key = expression(arguments, name, spelling)?;
+        let scope = Arc::clone(scope);
+        Ok(move |value: &Value| evaluate(&key, value, &scope))
+    }

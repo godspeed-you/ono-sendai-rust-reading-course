@@ -1,0 +1,43 @@
+id: c04-error-kind-enum
+source:
+  file: crates/ono-core/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 12
+  end_line: 44
+  anchor: pub enum ErrorKind {
+  content_hash: sha256:1beacda1fb8eb21a9f32017b7508902e20e6f98c8e469b8617626d65447d35f6
+  code: |
+    /// The broad category an error belongs to, as spec §16.1 defines it.
+    ///
+    /// Scripts branch on the kind; the [`ErrorCode`] carries the precise identity. ADR-0006 extends
+    /// the list of spec §16.1 with `Safety` and `Stream`, which spec §43 needs and §16.1 omits.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub enum ErrorKind {
+        /// A name could not be resolved to a command, target or object.
+        Resolution,
+        /// The operation is understood but not permitted for this user or context.
+        Permission,
+        /// The operating system refused or failed an I/O operation.
+        Io,
+        /// The input could not be parsed.
+        Parse,
+        /// A value, field or unit did not have the required type.
+        Type,
+        /// A provider could not answer, or answered outside its advertised schema.
+        Provider,
+        /// An external process failed or was signalled.
+        External,
+        /// The requested state conflicts with the state that already exists.
+        Conflict,
+        /// The operation did not complete within its budget.
+        Timeout,
+        /// The operation was cancelled before completing.
+        Cancelled,
+        /// A safety policy or confirmation requirement stopped the operation.
+        Safety,
+        /// The operation is not valid for a stream with these properties.
+        Stream,
+        /// A resource budget — items retained, bytes retained, values materialized — was reached.
+        Resource,
+    }

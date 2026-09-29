@@ -1,0 +1,51 @@
+id: c03-fd
+source:
+  file: crates/ono-process/src/fd.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 8
+  anchor: File-descriptor numbers
+  content_hash: sha256:d7d8c1c1f094b9fadce28ceaebfab20975bc96c93f72a56bc4f6a0de520e7ae1
+  code: |
+    //! File-descriptor numbers as they appear in shell redirection syntax.
+
+    use std::fmt;
+
+    /// A descriptor number as written in a redirection such as `2>&1`.
+    ///
+    /// This is a number from the command line, not a handle: no open descriptor crosses this
+    /// crate's boundary (ADR-0007).
+- start_line: 15
+  end_line: 42
+  anchor: pub(crate) const fn raw(self) -> i32 {
+  content_hash: sha256:60b092ddea96d33b53bdda2a7e330c45a674cbe0b31dfe17ebdf1f0ffb964ac6
+  code: |
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Fd(u16);
+
+    impl Fd {
+        /// Standard input, descriptor 0.
+        pub const STDIN: Self = Self(0);
+        /// Standard output, descriptor 1.
+        pub const STDOUT: Self = Self(1);
+        /// Standard error, descriptor 2.
+        pub const STDERR: Self = Self(2);
+
+        /// The descriptor with this number.
+        #[must_use]
+        pub const fn new(number: u16) -> Self {
+            Self(number)
+        }
+
+        /// The descriptor's number.
+        #[must_use]
+        pub const fn number(self) -> u16 {
+            self.0
+        }
+
+        /// The number as the C API spells it.
+        pub(crate) const fn raw(self) -> i32 {
+            self.0 as i32
+        }
+    }

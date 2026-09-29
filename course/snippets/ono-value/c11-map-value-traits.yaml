@@ -1,0 +1,54 @@
+id: c11-map-value-traits
+source:
+  file: crates/ono-value/src/map.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 80
+  end_line: 123
+  anchor: type IntoIter = Box<dyn Iterator<Item = (&'a str, &'a Value)> + 'a>;
+  content_hash: sha256:2bb6e00fe829265616094919fcb77beb6b4825e2a67d3727b2c3d6d28441c701
+  code: |2
+        /// Every entry, in insertion order.
+        pub fn iter(&self) -> impl Iterator<Item = (&str, &Value)> {
+            self.entries.iter().map(|(key, value)| (&**key, value))
+        }
+
+        /// Every key, in insertion order.
+        pub fn keys(&self) -> impl Iterator<Item = &str> {
+            self.entries.iter().map(|(key, _)| &**key)
+        }
+
+        /// Every value, in insertion order.
+        pub fn values(&self) -> impl Iterator<Item = &Value> {
+            self.entries.iter().map(|(_, value)| value)
+        }
+    }
+
+    impl PartialEq for MapValue {
+        fn eq(&self, other: &Self) -> bool {
+            self.entries.len() == other.entries.len()
+                && self
+                    .entries
+                    .iter()
+                    .all(|(key, value)| other.get(key) == Some(value))
+        }
+    }
+
+    impl FromIterator<(Arc<str>, Value)> for MapValue {
+        fn from_iter<I: IntoIterator<Item = (Arc<str>, Value)>>(iter: I) -> Self {
+            let mut map = Self::new();
+            for (key, value) in iter {
+                map.insert(key, value);
+            }
+            map
+        }
+    }
+
+    impl<'a> IntoIterator for &'a MapValue {
+        type Item = (&'a str, &'a Value);
+        type IntoIter = Box<dyn Iterator<Item = (&'a str, &'a Value)> + 'a>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            Box::new(self.iter())
+        }
+    }

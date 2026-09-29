@@ -1,0 +1,85 @@
+id: c19-dns-provider
+source:
+  file: crates/ono-provider-net/src/dns.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 298
+  end_line: 372
+  anchor: impl Provider for DnsProvider {
+  content_hash: sha256:d05cb7a6f33bf55e8d58144d7472ce990371642ac4da4432a2e1f07faf35a846
+  code: |
+    #[async_trait::async_trait]
+    impl Provider for DnsProvider {
+        fn id(&self) -> &str {
+            crate::RESOLVER_PROVIDER
+        }
+
+        fn targets(&self) -> &[&str] {
+            &["dns"]
+        }
+
+        fn schemas(&self) -> Vec<Arc<Schema>> {
+            require(&dns_record_id()).map_or_else(|_| Vec::new(), |schema| vec![schema])
+        }
+
+        fn capabilities(&self) -> Vec<Capability> {
+            vec![Capability::new("dns.resolve", Risk::Read)]
+        }
+
+        fn temporal(&self) -> TemporalCapabilities {
+            // A resolution is an observation made when it was asked for, and the answer may differ
+            // the next time. There is nothing here to keep, nothing to check against a past instant
+            // and nothing that would survive into a checkpoint as state: a cached answer is a fact
+            // about a cache, not about a name (§21.2, §21.7).
+            TemporalCapabilities {
+                current_snapshot: true,
+                live_events: false,
+                historical_query: false,
+                exhaustive_events: false,
+                causal_tokens: false,
+                checkpointable: false,
+                retained_history: None,
+            }
+        }
+
+        fn availability(&self) -> Availability {
+            // The C library is always there; whether a nameserver answers is a per-lookup matter,
+            // and one lookup's failure is reported as that lookup's error, retryable.
+            Availability::Available
+        }
+
+        fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+            let schema = require(&dns_record_id())?;
+            let lookup = Lookup::from_query(query)?;
+            Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                Boundedness::Bounded,
+                move |sink| async move {
+                    match lookup.run_bounded(schema).await {
+                        Ok(records) => {
+                            for record in records {
+                                if sink.send(record.into_value()).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            let _ = sink.fail(error).await;
+                        }
+                    }
+                },
+            ))
+        }
+
+        async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+            let schema = require(&dns_record_id())?;
+            let Selector::Field { name, value } = selector else {
+                return Ok(Vec::new());
+            };
+            if name != "query" {
+                return Ok(Vec::new());
+            }
+            let records = Lookup::of(value, None)?.run_bounded(schema).await?;
+            Ok(records.iter().filter_map(ObjectRef::of).collect())
+        }
+    }

@@ -1,0 +1,38 @@
+id: c03-schema-id
+source:
+  file: crates/ono-value/src/schema.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 26
+  end_line: 53
+  anchor: pub struct SchemaId {
+  content_hash: sha256:7be0b1c3eeebc2016e9d589cd3fababb4e64d4d6f2e898a0a07de8c19bd639f6
+  code: |
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct SchemaId {
+        name: Arc<str>,
+        version: u32,
+    }
+
+    impl SchemaId {
+        /// Creates an id from its namespaced name and its version.
+        #[must_use]
+        pub fn new(name: &str, version: u32) -> Self {
+            Self {
+                name: name.into(),
+                version,
+            }
+        }
+
+        /// The namespaced name, without the version.
+        #[must_use]
+        pub fn name(&self) -> &str {
+            &self.name
+        }
+
+        /// The schema version. A breaking change takes the next version (spec §10.4).
+        #[must_use]
+        pub const fn version(&self) -> u32 {
+            self.version
+        }
+    }

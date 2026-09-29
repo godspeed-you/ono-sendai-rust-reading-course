@@ -1,0 +1,45 @@
+id: c09-renderer-table
+source:
+  file: crates/ono-render/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 113
+  end_line: 147
+  anchor: let mut table = Table::new(vec![Column::new("VALUE")]);
+  content_hash: sha256:b0593f8b1c4f70b772250d0c9e575571853d5691aeda9ff58b16ccd6b2513404
+  code: |2
+        /// A table over `values` (spec §13.2).
+        ///
+        /// Records of one schema take their columns from the schema's `default_view` when it has one
+        /// and from its field order otherwise (spec §27.3). Maps that all share a key list take their
+        /// columns from those keys. A stream of plain values gets a single `VALUE` column.
+        ///
+        /// Anything else is heterogeneous, and spec §11.4 wants that to be explicit: the table
+        /// becomes `TYPE` and `VALUE`. It deliberately does not union the columns of the different
+        /// shapes, because a row that lacks a column would then look exactly like a row whose value
+        /// is unknown — the conflation spec §10.5 exists to prevent.
+        #[must_use]
+        pub fn table(&self, values: &[Value]) -> Table {
+            match Shape::of(values) {
+                Shape::Empty => Table::new(Vec::new()),
+                Shape::Records(schema) => self.record_table(&schema, values),
+                Shape::Maps(keys) => self.map_table(&keys, values),
+                Shape::Scalars => {
+                    let mut table = Table::new(vec![Column::new("VALUE")]);
+                    for value in values {
+                        table.push_row(vec![self.cell(value)]);
+                    }
+                    table
+                }
+                Shape::Mixed => {
+                    let mut table = Table::new(vec![Column::new("TYPE"), Column::new("VALUE")]);
+                    for value in values {
+                        table.push_row(vec![
+                            Cell::new(sanitise(&type_label(value))).with_token(Token::Dim),
+                            self.cell(value),
+                        ]);
+                    }
+                    table
+                }
+            }
+        }

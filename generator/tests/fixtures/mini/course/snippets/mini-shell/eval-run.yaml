@@ -1,0 +1,10 @@
+id: eval-run
+source:
+  file: crates/mini-shell/src/eval.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 37
+  end_line: 49
+  anchor: "pub fn run"
+  content_hash: sha256:f29899bd1a8367c9001393891e48b78f30879e9ed3929c1be7de5c83f2bdaf71
+  code: "pub fn run(ctx: &mut Context, command: &str, args: Vec<Value>) -> Result<Value, EvalError> {\n    match command {\n        \"sum\" => Ok(Value::Int(sum(&args)?)),\n        \"set\" => {\n            let mut it = args.into_iter();\n            let name = it.next().map(|v| v.to_string()).unwrap_or_default();\n            let value = it.next().unwrap_or(Value::Nothing);\n            ctx.vars.insert(name, value.clone());\n            Ok(value)\n        }\n        other => Err(EvalError::UnknownCommand(other.to_string())),\n    }\n}\n"

@@ -1,0 +1,37 @@
+id: c08-parser-state
+source:
+  file: crates/ono-parser/src/parser/state.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 16
+  end_line: 42
+  anchor: pub(super) fn text(&self) -> &'a str {
+  content_hash: sha256:ac6354bf1dd6d0ee13090263b57122072f22fa6d78c86946d866f557fca5ec54
+  code: |
+    pub(super) struct Parser<'a> {
+        pub(super) source: &'a str,
+        pub(super) limit: usize,
+        pub(super) pos: u32,
+        pub(super) diagnostics: Vec<Diagnostic>,
+        pub(super) record: Option<Vec<Token>>,
+        pub(super) depth: u32,
+        pub(super) no_brace: bool,
+    }
+
+    impl<'a> Parser<'a> {
+        pub(super) fn new(source: &'a str) -> Self {
+            Self {
+                source,
+                limit: source.len(),
+                pos: 0,
+                diagnostics: Vec::new(),
+                record: None,
+                depth: 0,
+                no_brace: false,
+            }
+        }
+
+        pub(super) fn text(&self) -> &'a str {
+            self.source.get(..self.limit).unwrap_or(self.source)
+        }
+    }

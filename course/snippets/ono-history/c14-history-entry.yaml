@@ -1,0 +1,61 @@
+id: c14-history-entry
+source:
+  file: crates/ono-history/src/entry.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 10
+  end_line: 60
+  anchor: 'duration_ms: Option<u64>,'
+  content_hash: sha256:994d0ec1cb7332606938804702af7ce3f55e441b42f6cd1d2c1dca76691e0aea
+  code: |
+    /// One command, and what happened when it ran.
+    ///
+    /// Spec §20.1: "History records semantics, not only strings". An entry knows where it ran, how
+    /// it ended and how long it took, so a later session can answer questions about it without
+    /// re-running anything. The context snapshot and structured result reference of §20.1 arrive
+    /// with the context stack in phase E; the fields that phase A can honestly fill are filled now,
+    /// and nothing is fabricated (spec §35.3).
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Entry {
+        id: String,
+        at: Timestamp,
+        command: String,
+        cwd: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        session: String,
+        /// The adapters that shaped the command's programs (spec v0.3 §1.62), by full id.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        adapters: Vec<String>,
+        /// The argv each adapter actually ran, in the same order as `adapters`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        plans: Vec<String>,
+    }
+
+    impl Entry {
+        pub(crate) fn new(
+            id: String,
+            session: String,
+            command: String,
+            cwd: PathBuf,
+            outcome: Option<Outcome>,
+        ) -> Self {
+            Self {
+                id,
+                at: Timestamp::now(),
+                command,
+                cwd,
+                status: outcome.as_ref().map(|outcome| outcome.status.code()),
+                duration_ms: outcome
+                    .as_ref()
+                    .map(|outcome| u64::try_from(outcome.duration.as_millis()).unwrap_or(u64::MAX)),
+                session,
+                adapters: outcome
+                    .as_ref()
+                    .map(|outcome| outcome.adapters.clone())
+                    .unwrap_or_default(),
+                plans: outcome.map(|outcome| outcome.plans).unwrap_or_default(),
+            }
+        }

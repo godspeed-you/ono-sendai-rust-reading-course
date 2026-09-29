@@ -1,0 +1,26 @@
+id: c08-token-text
+source:
+  file: crates/ono-parser/src/lexer.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 150
+  end_line: 165
+  anchor: 'pub fn text<''a>(&self, source: &''a str) -> &''a str {'
+  content_hash: sha256:54355bcd088288da618719d4218382ff9af4b9fc6197608f5b7390401a174165
+  code: |
+    /// One lexical token: what it is and where it came from.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Token {
+        /// The lexical class.
+        pub kind: TokenKind,
+        /// The source range the token covers.
+        pub span: Span,
+    }
+
+    impl Token {
+        /// The exact source text of the token.
+        #[must_use]
+        pub fn text<'a>(&self, source: &'a str) -> &'a str {
+            self.span.of(source)
+        }
+    }

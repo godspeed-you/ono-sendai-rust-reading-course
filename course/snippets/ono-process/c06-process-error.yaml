@@ -1,0 +1,48 @@
+id: c06-process-error
+source:
+  file: crates/ono-process/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 9
+  end_line: 10
+  anchor: pub type Result<T> = std::result::Result<T, Error>;
+  content_hash: sha256:0d2d49e065dfa829f27a7fcc6c96091911fcc7ea19a6999f7eef17a479768583
+  code: |
+    /// The result type used throughout this crate.
+    pub type Result<T> = std::result::Result<T, Error>;
+- start_line: 25
+  end_line: 29
+  anchor: pub struct Error {
+  content_hash: sha256:841c9b81e46cf159aa13f49c3398d18b68758f3474ac12dc308013000f7e6c9c
+  code: |
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Error {
+        code: ErrorCode,
+        message: String,
+    }
+- start_line: 64
+  end_line: 84
+  anchor: impl std::error::Error for Error {}
+  content_hash: sha256:e35a2def93a99141d2a893ca5b6fb909d56e1ea4aaab23d33c77768ce22a00bd
+  code: |
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.message)
+        }
+    }
+
+    impl std::error::Error for Error {}
+
+    /// Maps an I/O failure onto the closed taxonomy of spec §43.
+    ///
+    /// The taxonomy has no generic I/O code, so anything the four specific codes do not describe is
+    /// reported as `io.permission_denied`: the operating system refused the operation. The message
+    /// always carries the real reason.
+    fn code_for_io(error: &io::Error) -> ErrorCode {
+        match error.kind() {
+            io::ErrorKind::NotFound => ErrorCode::IoNotFound,
+            io::ErrorKind::AlreadyExists => ErrorCode::IoAlreadyExists,
+            io::ErrorKind::NotADirectory => ErrorCode::IoNotDirectory,
+            _ => ErrorCode::IoPermissionDenied,
+        }
+    }

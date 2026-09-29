@@ -1,0 +1,34 @@
+id: c13-main-exit-code
+source:
+  file: crates/ono-cli/src/main.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 15
+  end_line: 15
+  anchor: fn main() -> ExitCode {
+  content_hash: sha256:8ec936d68d4a3e32230d4fbab585fe241098007433f4a2969b6a25a4a9a27d04
+  code: |
+    fn main() -> ExitCode {
+- start_line: 146
+  end_line: 163
+  anchor: ExitCode::from(status)
+  content_hash: sha256:7f156fa2a39f04e126610227fc93bff97fcd76e4271467c8f8737eb6a6c284ac
+  code: |2
+            Invocation::Interactive(options) => {
+                // `ono` with no arguments means "read commands from standard input". When standard
+                // input is a terminal that is a conversation; when it is a pipe or a file it is a
+                // script, and starting a prompt would read the terminal instead and silently ignore
+                // what was piped in. Every other shell makes the same distinction.
+                if std::io::stdin().is_terminal() {
+                    let (mut session, reporter) = start(true, &options);
+                    repl::run(&mut session, &options, &reporter)
+                } else {
+                    let (mut session, reporter) = start(false, &options);
+                    let status =
+                        repl::run_from_reader(&mut session, &reporter, &mut std::io::stdin().lock());
+                    session.leaving().unwrap_or(status)
+                }
+            }
+        };
+
+        ExitCode::from(status)

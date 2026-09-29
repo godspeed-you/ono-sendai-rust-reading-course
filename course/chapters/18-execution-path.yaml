@@ -1,0 +1,1055 @@
+id: execution-path
+number: 18
+title: "Reading an execution path: `get process | where cpu > 20`"
+summary: |
+  Everything so far has been read one function at a time. Real reading means following one
+  input through many files and crates. This chapter follows the command
+  `get process | where cpu > 20` — the example Ono-Sendai's own documentation uses for this
+  pipeline — from the line the REPL reads to the table on the terminal: parsing, evaluation,
+  segmentation into native and external stages, resolution against the command contracts,
+  binding, assembly of spawned tasks, draining, and rendering.
+
+  Three lessons, each with several snippets. The last one ends with a read-subsystem exercise
+  over the whole path. Along the way you practise the navigation skills the spec names: tracing a
+  symbol across crates, following a trait call to its implementation, and deciding what to skip
+  on a first pass.
+lessons:
+  - id: execution-path-01
+    title: "From the prompt to the object pipeline"
+    stage: practice
+    summary: "Follow one line from the REPL through the parser and the evaluator to the point where a native pipeline takes over."
+    prerequisites: [tasks-channels-04, conversions-03]
+    concepts: [code-navigation, result, question-mark, pattern-matching, mutable-borrowing]
+    ono_topics: [evaluation, parsing, error-flow]
+    objectives:
+      - Name, in order, the functions a line passes through before `native::run`.
+      - "Read `Eval<T> = Result<T, Flow>` as control flow, not only as errors."
+      - "Explain which checks happen before anything runs, and why."
+      - Decide which parts of a long function can be skipped for a given input.
+    sections:
+      - type: prose
+        kind: context
+        title: The route
+        body: |
+          The binary `ono` is `crates/ono-cli`. In interactive mode, `main` hands a `Session`
+          to `repl::run`, whose loop reads a line and calls `run_source`. From there the route to
+          the object pipeline is:
+
+          | step | function | file |
+          |---|---|---|
+          | 1 | REPL loop, `run_source` | `crates/ono-cli/src/repl.rs` |
+          | 2 | `ono_parser::parse` → `parse_pipeline` → `parse_stage_list` | `crates/ono-parser/src/parser/` |
+          | 3 | `run_program` | `crates/ono-cli/src/eval/mod.rs` |
+          | 4 | `run_statement` | `crates/ono-cli/src/eval/statement.rs` |
+          | 5 | `run_pipeline` → `run_stage_list` | `crates/ono-cli/src/eval/pipeline.rs` |
+          | 6 | `native::run` | `crates/ono-cli/src/eval/native/mod.rs` |
+
+          Every step is synchronous. Async code starts only in the next lesson, inside
+          `block_on` ([chapter 16](lesson:async-04)).
+      - type: code
+        snippet: c18-repl-loop
+        caption: |
+          `crates/ono-cli/src/repl.rs`: the interactive loop, and the function that parses and
+          evaluates one piece of source.
+        annotations:
+          - lines: 435
+            token: "run_source(session, &line, reporter)"
+            kind: flow
+            body: |
+              The whole command runs inside this call; the loop continues when it returns an
+              `ExitStatus`. The line is only borrowed (`&line`); it is used again afterwards for
+              history.
+          - lines: 439-447
+            kind: ono
+            body: |
+              After the command: record it in the semantic history with its status and duration,
+              flush, and push it to the line editor's own history.
+          - lines: 814-821
+            kind: flow
+            body: |
+              A line with errors — or an incomplete one — never reaches the evaluator. The
+              diagnostics are reported and the status is `USAGE`.
+          - lines: 823-824
+            kind: rust
+            body: |
+              A closure `report` borrows `reporter`, and is passed as `&mut dyn FnMut(&ErrorValue)`
+              — a trait object for "something callable" — so `run_program` does not depend on
+              the REPL's reporter type.
+      - type: code
+        snippet: c18-parse
+        caption: |
+          `crates/ono-parser/src/parser/mod.rs`. The doctest uses our pipeline and asserts it
+          parses into one statement without diagnostics.
+      - type: code
+        snippet: c18-parse-stage-list
+        caption: |
+          `crates/ono-parser/src/parser/pipelines.rs`: a stage list is stages separated by `|`.
+        annotations:
+          - lines: 3-6
+            kind: ono
+            body: |
+              "A stage's argument mode is fixed by its head word" (ADR-0009). `get` reads its
+              arguments as words; `where` reads its argument as an expression. That is why `>` in
+              `where cpu > 20` is a comparison, not an output redirection.
+          - lines: 81-86
+            kind: flow
+            body: |
+              After the first stage, every `|` (lexed in words mode) starts another stage. Our
+              line yields a `StageList` with two stages.
+      - type: code
+        snippet: c18-run-program
+        caption: |
+          `crates/ono-cli/src/eval/mod.rs`: the evaluator's control-flow type and its top-level
+          loop.
+        annotations:
+          - lines: 36-50
+            kind: type
+            body: |
+              `Flow` is "why evaluation of a statement stopped early": two kinds of failure and
+              four kinds of jump. It travels in the `Err` side of `Eval<T>`, so `?` propagates a
+              `break` exactly as it propagates an error.
+          - lines: 52-56
+            kind: rust
+            body: |
+              `From<ErrorValue> for Flow` lets `?` convert a plain `ErrorValue` into
+              `Flow::Failed` automatically ([chapter 13](lesson:conversions-03)).
+          - lines: 73-90
+            kind: flow
+            body: |
+              The one place the evaluator turns a `Flow` back into a status: errors are
+              reported and set the status, `exit` leaves, and a stray jump ends the program
+              quietly.
+      - type: code
+        snippet: c18-run-statement
+        caption: |
+          `crates/ono-cli/src/eval/statement.rs` (excerpt): our line is a `Statement::Pipeline`.
+      - type: code
+        snippet: c18-run-pipeline-native
+        caption: |
+          `crates/ono-cli/src/eval/pipeline.rs`: `run_pipeline`, and the branch of
+          `run_stage_list` that hands a pipeline to the native engine. About 420 lines between
+          the two excerpts are other resolution steps, skipped here.
+        annotations:
+          - lines: 114
+            kind: flow
+            body: |
+              Enters the foreground line: the outermost run clears a stale Ctrl-C note (a nested
+              one, inside `each`, keeps it), as
+              [lesson tasks-channels-04](lesson:tasks-channels-04) explained.
+          - lines: 117
+            token: "super::native::check(session, pipeline, source).map_err(Flow::Failed)?;"
+            kind: ono
+            body: |
+              Spec §11.3: field names are checked against the declared schemas "before anything
+              runs, so a typo costs one message instead of one per object". `cpu` is a field of
+              `ono.process/1`, so the check passes.
+          - lines: 564-565
+            kind: flow
+            body: |
+              `native::claims` asks whether any stage of the list is a native command. `get` is.
+          - lines: 579-584
+            kind: flow
+            body: |
+              Without a trailing `&`, the foreground path: `native::run`. With one, the
+              background job of [lesson tasks-channels-03](lesson:tasks-channels-03).
+      - type: prose
+        kind: rust
+        title: "A guard: `let _running` and `impl Drop`"
+        body: |
+          Line 114 binds a value that is never mentioned again: `let _running =
+          ForegroundRun::begin();`. It is a **guard**. Its type, defined just above `run_pipeline` in
+          the same file, implements the standard `Drop` trait:
+      - type: code
+        snippet: c18-foreground-run-guard
+        annotations:
+          - lines: 82
+            kind: type
+            body: |
+              A tuple struct whose only field is `()`: the value carries no data. Its whole job is
+              to exist — and to be dropped.
+          - lines: 103-107
+            kind: rust
+            body: |
+              `impl Drop` gives the type a destructor. `drop(&mut self)` runs automatically when a
+              `ForegroundRun` value goes out of scope; nobody calls it by name.
+      - type: prose
+        kind: rust
+        title: "When `drop` runs"
+        body: |
+          `Drop::drop` is code Rust runs automatically when a value is [dropped](glossary:drop) —
+          here when `run_pipeline` returns, whether normally, through `?`, or by an early
+          `return`. `begin` counted one more running foreground pipeline; `drop` counts it down
+          again, on every path. The binding's name matters: `let _running = …` keeps the guard
+          alive until the end of the function (the leading underscore only silences the "unused"
+          warning), while `let _ = …` would not bind it at all and drop it at the end of the
+          statement.
+
+          You have met this mechanism from the outside: a `MutexGuard` unlocks, an `OwnedFd`
+          closes and a channel's `Receiver` closes the channel in their `Drop` implementations
+          ([chapter 7](lesson:ownership-moves-04), [chapter 15](lesson:smart-pointers-02),
+          [chapter 17](lesson:tasks-channels-01)). When a
+          type has an `impl Drop`, read its `drop` method as part of every function that owns such
+          a value — it is code that runs without being called.
+      - type: prose
+        kind: note
+        title: What to skip on a first pass
+        body: |
+          `run_stage_list` is over 500 lines long. It implements the resolution order of
+          ADR-0011: user functions, `NAME=value` prefixes, aliases, switched-off tiers, `kill %N`,
+          meta commands, temporal, plan and link commands, builtins, `explain`, `enter`, and more.
+          For `get process | where cpu > 20` none of those conditions hold, so every one of them
+          falls through. A good reader verifies that quickly — each branch starts with an `if`
+          on the head word or on a session feature — and does not read their bodies. The branch
+          that matters is the one on lines 560–585.
+      - type: prose
+        kind: rust
+        title: "`&mut Session` all the way down"
+        body: |
+          Every function on this route takes `session: &mut Session` and passes it on. Passing
+          a `&mut` reference to a callee *reborrows* it for the duration of the call; when the
+          callee returns, the caller has it back. So at any instant exactly one function on the
+          call stack is using the session, which is what makes a single, un-synchronized
+          `Session` safe. The price shows up in the next lesson: code that needs two things from
+          the session at once must ask for them together (`pipeline_context`).
+      - type: diagram
+        kind: control-flow
+        title: One line, from Enter to the native engine
+        art: |
+          repl::run loop
+            └─ run_source(session, &line)
+                 ├─ ono_parser::parse(source) ── errors? → report, USAGE
+                 └─ eval::run_program(session, program, source, &mut report)
+                      └─ for statement: run_statement ── Statement::Pipeline
+                           └─ run_pipeline
+                                ├─ ForegroundRun::begin()
+                                ├─ native::check  ── unknown field? → Err(Flow::Failed)
+                                └─ run_stage_list(head)
+                                     ├─ (functions, aliases, builtins, … fall through)
+                                     └─ native::claims → native::run(session, list, source)
+          status travels back up as Ok(ExitStatus) or Err(Flow) → run_program sets it
+        description: |
+          The REPL loop calls `run_source`, which parses the line; a line with errors is reported
+          and gets status `USAGE`. Otherwise `run_program` runs each statement. Our statement is a
+          pipeline, so `run_statement` calls `run_pipeline`, which begins a foreground run, checks
+          field names against schemas, and calls `run_stage_list`. All earlier resolution steps
+          fall through, `native::claims` is true, and `native::run` takes over. The status comes
+          back up as `Ok(ExitStatus)` or as an `Err(Flow)`, which `run_program` turns into a
+          reported error and a status.
+      - type: exercise
+        id: execution-path-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          The user types `get process | where cpuu > 20` (a typo). Where does the command stop?
+        choices:
+          - text: "In the parser: `run_source` reports a diagnostic and returns `USAGE`."
+            correct: false
+            feedback: |
+              The line is syntactically fine — `cpuu` is a valid field name as far as grammar
+              goes. The parser has no schemas.
+          - text: "In `native::check`, before any process is read: `?` returns `Flow::Failed`, and `run_program` reports `type.unknown_field`."
+            correct: true
+            feedback: |
+              Right. Line 117 runs before `run_stage_list`; its doc (in `native/mod.rs`) says a
+              typo "is caught before process enumeration begins", naming the nearest declared
+              field.
+          - text: "In the `where` stage: every process produces a per-row error."
+            correct: false
+            feedback: |
+              That is exactly what the pre-flight check exists to prevent: "a typo costs one
+              message instead of one per object".
+          - text: "In the process provider, which rejects the unknown field in its query."
+            correct: false
+            feedback: |
+              The provider never sees `cpuu`: the predicate belongs to the `where` stage, and the
+              check fails before any provider is asked.
+      - type: exercise
+        id: execution-path-01-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          The command was interrupted with Ctrl-C while the pipeline was running, and the
+          native engine returned `Err(Flow::FailedWith(error, ExitStatus::from_signal(2)))`.
+          Trace that value back to the prompt: through which functions and operators does it
+          travel, where does it stop being an `Err`, and what happens to the history entry?
+        hints:
+          - level: 1
+            body: |
+              Look for the `?` operators and the `match` in `run_program`.
+        solution:
+          summary: |
+            `native::run` returns the `Err` to `run_stage_list`, which returns it to
+            `run_pipeline` through `?` on line 119; `run_statement` returns it unchanged;
+            `run_program`'s `match` hits the `FailedWith` arm, reports the error and sets the
+            status to 130. `run_source` returns that status, and the REPL records the line in
+            history with status 130 before prompting again.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `return super::native::run(…)` (line 584) returns the `Eval` as-is.
+                `run_stage_list(…)?` in `run_pipeline` propagates the `Err` (no `&&`/`||` tail
+                runs). `run_statement` returns `run_pipeline`'s value directly.
+            - aspect: errors
+              body: |
+                The `?` would convert via `From`, but the error type is already `Flow`, so no
+                conversion happens. The `FailedWith` variant carries its own status; ADR-0008
+                requires that status to survive, which is why it is a separate variant.
+            - aspect: outputs
+              body: |
+                `run_program` calls `report(&error)` — the closure from `run_source`, which
+                forwards to the REPL's reporter — and `session.set_status(status)`.
+            - aspect: side-effects
+              body: |
+                Back in the loop, `history.record(&line, …, HistoryOutcome::new(status, …))`
+                stores the line with its failing status, then `poll_jobs` reaps finished jobs.
+          guarantees: |
+            `run_program` is the single place a `Flow` becomes a status; nothing above it sees an
+            `Err`.
+          semantics: |
+            `?` on `Result<T, Flow>` in a function returning `Result<U, Flow>` returns early with
+            the same error; `match` on `Err(Flow::FailedWith(error, status))` destructures it.
+          interpretation: |
+            Carrying jumps and failures in one `Result` lets the evaluator use `?` everywhere and
+            decide what an unwinding "means" only at the boundary that knows (the loop, the
+            function call, the program).
+      - type: exercise
+        id: execution-path-01-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `run_program` takes `report: &mut dyn FnMut(&ErrorValue)` instead of a `&Reporter`.
+          What does that choice buy, and what does `&mut` add?
+        solution:
+          summary: |
+            The evaluator only needs "something to call with each error". A `dyn FnMut` accepts
+            any closure — the REPL's forwarding closure in `run_source`, or the one the
+            configuration loader (`config.rs`) builds — without `eval` depending on the REPL's
+            `Reporter` type. `&mut` is needed
+            because an `FnMut` may mutate what it captures when called.
+          analysis:
+            - aspect: traits
+              body: |
+                `FnMut(&ErrorValue)` is the closure trait for callables that may mutate their
+                captured state; `dyn` makes it a trait object, so one compiled `run_program`
+                serves every caller.
+            - aspect: architecture
+              body: |
+                The dependency points from the REPL to the evaluator, not back. `repl.rs` builds
+                the closure (`let mut report = |error| reporter.error(error);`).
+            - aspect: ownership
+              body: |
+                The closure borrows `reporter`; `run_program` borrows the closure mutably for the
+                duration of the call.
+          guarantees: |
+            The signature guarantees `run_program` can only *call* the reporter; it cannot keep
+            it beyond the call.
+          semantics: |
+            Calling an `FnMut` requires `&mut` access; passing `&mut dyn FnMut` is dynamic
+            dispatch through a vtable.
+          interpretation: |
+            `run_program` has a second caller: `crates/ono-cli/src/config.rs` runs configuration
+            files through it with its own closure (scripts read by `run_from_reader` go through
+            `run_source`). Both closures happen to forward to a `Reporter` today; the closure
+            parameter is what would let a caller report differently.
+  - id: execution-path-02
+    title: "Resolve, bind, assemble: two stages become two tasks"
+    stage: practice
+    summary: "Follow the native engine as it segments the pipeline, binds both stages against their contracts, and assembles a producer task and a `where` task inside `block_on`."
+    prerequisites: [execution-path-01, async-03, generics-02, borrowing-04]
+    concepts: [code-navigation, trait-objects, closures, async-await, tasks]
+    ono_topics: [command-registry, command-dispatch, pipeline, providers]
+    objectives:
+      - "Explain how `segments` decides that both stages are native."
+      - Explain why every stage is bound before any stage runs.
+      - "Trace `table.run(...)` to `ProviderProducer::invoke` and to the `where` transform."
+      - "State precisely what exists — and what has already run — when assembly finishes."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `native::run` calls `run_from`, which asks `segments` how to cut the stage list, then
+          runs each segment. Our list becomes one native segment, handed to
+          `run_native_segment` in `crates/ono-cli/src/eval/native/foreground.rs`. Its module doc
+          names four phases: "bind, assemble, drive, deliver". This lesson covers segmentation,
+          binding and assembly; the next covers driving and delivery.
+      - type: code
+        snippet: c18-segments
+        caption: |
+          `crates/ono-cli/src/eval/native/segment.rs`: cutting a stage list into runs of native
+          and external stages.
+        annotations:
+          - lines: 126-137
+            kind: flow
+            body: |
+              `structured` carries "do objects reach this stage?" from one stage to the next.
+              It starts `false` (nothing is piped in). `get process` binds anyway, because its
+              contract's input is `"null"` — a producer needs nothing. After it, `structured` is
+              true, so `where` (input `stream<any>`) binds as a native transform.
+          - lines: 139-144
+            kind: flow
+            body: |
+              A `match` on the last segment with guards: extend a run of the same kind or start
+              a new one. Our list yields `[Segment::Native(vec![0, 1])]`.
+          - lines: 177-180
+            kind: crate
+            body: |
+              `CommandRegistry::resolve` (crate `ono-command`) finds the [contract](glossary:command-contract) a head word and
+              its arguments name — for `get process`, the contract `ono.process.get` declared in
+              `docs/contracts/commands/process.yaml`. Contracts are data compiled into the binary,
+              and the registry is a `&'static` value built once.
+      - type: code
+        snippet: c18-bind-stage
+        caption: |
+          `crates/ono-cli/src/eval/native/bind.rs`: binding one stage.
+      - type: code
+        snippet: c18-native-segment-assemble
+        caption: |
+          `run_native_segment`, excerpts: bind everything, borrow the runtime and providers,
+          build one `Invocation` per stage and run it, all inside one `block_on`.
+        annotations:
+          - lines: 47-48
+            kind: ono
+            body: |
+              "A pipeline that cannot be built runs no part of itself, so a typo in the third
+              stage never leaves the first two half-done."
+          - lines: 156-164
+            kind: ownership
+            body: |
+              `pipeline_context` returns the runtime and the provider registry *together*, both
+              borrowed from `&mut session` (its doc: asking separately "would mean two
+              overlapping borrows of the session"). The runtime `Handle` is cloned so it is owned.
+          - lines: 230-235
+            kind: rust
+            body: |
+              A builder chain on `Invocation`: everything one stage needs — contract, bound
+              arguments, providers, scope, context frames, adapters, temporal coordinate, and
+              whether its output reaches a person.
+          - lines: 236-238
+            kind: ownership
+            body: |
+              `stream.take()` moves the previous stage's `ValueStream` out of the `Option` and
+              into this invocation as its input. For the first stage there is none.
+          - lines: 256
+            token: "table.run(contract.id(), &mut invocation).await"
+            kind: flow
+            body: |
+              Dispatch by command id through the `CommandTable`, and await the `Outcome`. For
+              both stages here the future is complete immediately (next section).
+          - lines: 309-314
+            kind: flow
+            body: |
+              The `assemble` async block runs inside `block_on`, raced against Ctrl-C (chapter
+              17). Running it inside the runtime matters: the stages call `tokio::spawn`, which
+              needs a runtime context.
+      - type: prose
+        kind: context
+        title: "Inside `table.run`: from a command id to an implementation"
+        body: |
+          `CommandTable::run` (in `crates/ono-command/src/invoke.rs`) looks the id up in a
+          `BTreeMap<String, Arc<dyn CommandImpl>>`, refuses mutations at a historical temporal
+          coordinate, lets the context frames of `enter` fill in arguments the user did not type,
+          and then awaits `implementation.invoke_async(ctx)` —
+          [the trait method from chapter 16](lesson:async-03). Which implementation sits behind
+          an id is decided when the table is built (`ono_command::builtin_commands_for`): the
+          verbs `get`, `find`, `resolve` and `test` each map to a `ProviderProducer` (one per
+          command id), and
+          `ono.data.where` maps to a `TransformCommand` of kind `Where`. Both implement only the
+          synchronous `invoke`, so the default `invoke_async` runs it at once.
+      - type: code
+        snippet: c18-producer-invoke
+        caption: |
+          `crates/ono-command/src/impls/producer.rs`: one producer for every `get <target>`.
+        annotations:
+          - lines: 48
+            kind: ono
+            body: |
+              The contract turns the bound arguments into a provider `Query`. "A new target is a
+              new registry entry and no new code (ADR-0012, ADR-0021)."
+          - lines: 69-70
+            token: "let stream = ctx.providers().snapshot(&query)?;"
+            kind: flow
+            body: |
+              The provider's stream *is* this stage's output. Nothing is collected here.
+      - type: code
+        snippet: c18-registry-snapshot
+        caption: |
+          `crates/ono-provider-api/src/registry.rs`: the registry picks the provider for the
+          query's target and calls its `snapshot`. [Chapter 19](lesson:provider-boundary-02) reads
+          what `ProcessProvider::snapshot` does: list `/proc` synchronously, then return a stream
+          whose producer task reads each process.
+      - type: code
+        snippet: c18-transform-where
+        caption: |
+          `crates/ono-command/src/impls/transform.rs`, the `where` arm: the predicate becomes a
+          closure.
+        annotations:
+          - lines: 67
+            kind: ownership
+            body: |
+              `take_input` moves the upstream `ValueStream` out of the invocation. A transform
+              without input is an error.
+          - lines: 75-77
+            token: "input.transform(Where::new(move |value: &Value| {"
+            kind: rust
+            body: |
+              A `move` closure owning the predicate expression and an `Arc` of the scope,
+              evaluating `cpu > 20` against each value. `transform` checks boundedness first
+              (spec §11.1), then applies the transform.
+      - type: code
+        snippet: c18-evaluate-to-value
+        caption: |
+          `crates/ono-command/src/expr.rs`: a failed evaluation becomes an error *value*, so
+          `where` can treat it as one of its four outcomes instead of stopping the pipeline.
+      - type: code
+        snippet: c18-where-apply
+        caption: |
+          `crates/ono-pipeline/src/transforms/filter.rs`: `Where`, whose doc names our pipeline.
+        annotations:
+          - lines: 55
+            token: "fn apply(self: Box<Self>, input: ValueStream) -> ValueStream"
+            kind: rust
+            body: |
+              `self: Box<Self>` — `apply` owns the boxed transform, so the `move` closure below
+              can take the whole box (and the predicate in it) into the spawned task; the box is
+              freed when that task ends.
+          - lines: 58
+            kind: flow
+            body: |
+              `input.stage(...)` spawns the `where` task from [lesson tasks-channels-01](lesson:tasks-channels-01)
+              and immediately returns the stream of its output.
+          - lines: 60-81
+            kind: flow
+            body: |
+              The four outcomes of ADR-0014, plus a fifth arm for a predicate that did not
+              produce a boolean at all.
+      - type: prose
+        kind: ono
+        title: Assembling is not draining
+        body: |
+          When `block_on` on line 309 returns `Ok`, *assembly* is finished, but almost nothing
+          has been delivered. The `CommandImpl` doc explains why no command awaited anything:
+          "A producer hands back the provider's stream and a transform hands back a stage over
+          its input, so neither has to await anything: the awaiting happens inside the stream".
+
+          Be precise about what has run, though. The producer and the `where` stage are spawned
+          tasks, and a spawned task is scheduled at once: it can start running on a worker thread
+          before anyone awaits anything. They may already have read processes and filled their
+          channels — but each can get only about one channel's capacity (64 queued values, plus
+          the one it is trying to send) ahead of its consumer before its `send` waits.
+          Nothing further moves until the driver drains the final stream.
+      - type: diagram
+        kind: control-flow
+        title: Assembly of the two stages
+        art: |
+          run_native_segment (main thread)
+            bind stage 0: get process      → (ono.process.get, args)
+            bind stage 1: where cpu > 20   → (ono.data.where, predicate)
+            (runtime, providers) = session.pipeline_context()
+            handle.block_on(select!{ assemble, interrupted() })
+              assemble:
+                stage 0: table.run("ono.process.get")
+                           ProviderProducer::invoke → registry.snapshot(query)
+                             → [TemporalProvider →] ProcessProvider::snapshot
+                               lists /proc, spawns producer task A ──► stream A
+                stage 1: table.run("ono.data.where", input = stream A)
+                           TransformCommand::invoke → stream A.transform(Where)
+                             → spawns where task B ──► stream B
+              returns Ok((Some(stream B), failed_rows = false))
+        description: |
+          On the main thread, `run_native_segment` first binds both stages against their
+          contracts. It then borrows the runtime and providers and, inside one `block_on`,
+          assembles the pipeline. For stage 0, the command table runs the provider producer,
+          which asks the registry for a snapshot; the process provider (behind the temporal
+          wrapper in a full build) lists `/proc` and spawns producer task A, returning stream A.
+          For stage 1, the `where` transform takes stream A as input and spawns task B, returning
+          stream B. Assembly ends with stream B, which the driver will drain.
+      - type: exercise
+        id: execution-path-02-q1
+        exercise_type: predict
+        prompt: |
+          Predict the state of the world at the instant `handle.block_on(...)` on line 309
+          returns `Ok`. How many tasks has this segment spawned? Has `/proc` been read? Has any
+          row been rendered? What does `stream` hold?
+        hints:
+          - level: 1
+            body: |
+              Separate what `ProcessProvider::snapshot` does before `ValueStream::spawn` from what
+              its spawned task does.
+        solution:
+          summary: |
+            Two tasks exist (the process producer and the `where` stage). The `/proc` directory
+            has been listed synchronously inside `snapshot`; individual process files may or may
+            not have been read yet by task A, which can run ahead by at most a channel's capacity.
+            Nothing has been rendered. `stream` is `Some(stream B)`, the output of `where`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Both `table.run` calls returned `Ok(Outcome::Values(…))` without waiting, because
+                both commands only build streams.
+            - aspect: async
+              body: |
+                Spawned tasks run on worker threads independently of `block_on`; their progress is
+                limited by bounded sends, not by the driver's attention.
+            - aspect: ownership
+              body: |
+                Stream A was moved into the `where` task; the assembly holds only stream B.
+            - aspect: side-effects
+              body: |
+                Reading `/proc` is the only side effect so far; the terminal is untouched.
+          guarantees: |
+            The doc of `CommandImpl::invoke` guarantees producers and transforms answer without
+            awaiting; the bounded channels guarantee no stage runs further ahead than capacity.
+          semantics: |
+            `tokio::spawn` schedules a task immediately; it does not wait to be awaited.
+          interpretation: |
+            "Assembly" is cheap and fallible early; the expensive, unbounded part — reading every
+            process — happens under backpressure during draining.
+      - type: exercise
+        id: execution-path-02-q2
+        exercise_type: trace-value
+        prompt: |
+          Three process records reach the `where` task: A with `cpu = 35.0`, B with `cpu = 3.5`,
+          and C whose `cpu` is `null`. Trace each through `Where::apply`: what the predicate
+          returns, which arm runs, and what the consumer eventually sees.
+        solution:
+          summary: |
+            A: the predicate yields `Bool(true)`; A is sent downstream. B: `Bool(false)`; B is
+            dropped silently. C: comparing `null > 20` yields `null` (per the documented table);
+            C is dropped and counted by `record_excluded_unknown`, which the user sees later as a
+            note about excluded rows, not as a row.
+          analysis:
+            - aspect: control-flow
+              body: |
+                The `match self.predicate.test(&value)` arms: `Bool(true)` sends, `Bool(false)`
+                does nothing, `Null` records a count, `Error` fails with identity, anything else
+                is reported as a non-boolean predicate.
+            - aspect: ownership
+              body: |
+                `value` is owned by the loop iteration; only in the `true` arm is it moved into
+                `sink.send`. Otherwise it is dropped at the end of the iteration.
+            - aspect: side-effects
+              body: |
+                The excluded-unknown counter lives in the pipeline's shared `Diagnostics`, which
+                `run_native_segment` later reports once per run on stderr (`report_counts`).
+            - aspect: errors
+              body: |
+                If evaluating the predicate had failed (say, a field that cannot be compared),
+                `evaluate_to_value` would return an error *value*, and the `Error` arm would send
+                a per-item failure naming the record — the stream continues.
+          guarantees: |
+            The doc of `Where` fixes the four outcomes (ADR-0014) and states: "`get process |
+            where cpu > 20` does not report a process whose CPU is unknown".
+          semantics: |
+            `match` on `Value` with literal patterns `Value::Bool(true)` / `Value::Bool(false)`
+            and a binding `other` covers every case exhaustively.
+          interpretation: |
+            With the lifetime-share fallback of [chapter 19](lesson:provider-boundary-03), `cpu`
+            is null only when the kernel gave neither reading, so case C is rare in practice; the
+            filter still handles it honestly.
+      - type: exercise
+        id: execution-path-02-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `run_native_segment` binds *every* stage (lines 49–69) before building any
+          `Invocation`. Name two concrete failures this ordering prevents for our pipeline or a
+          slightly different one, and explain how the `Result` types make "bind first" cheap to
+          write.
+        solution:
+          summary: |
+            If a later native stage cannot be bound (an argument or option that does not resolve
+            against its contract, a switched-off spatial command, a glob that cannot be
+            expanded), the earlier stages are never started — no process enumeration begins, and
+            a mutation earlier in the pipeline is never executed half-way. (A misspelt command
+            such as `wherre` is different: `segments` does not classify it as native at all, so
+            it becomes an external segment of its own.) `bind_stage` returns
+            `Eval<Option<…>>`, so each failure leaves the function with `?` before any task
+            exists.
+          analysis:
+            - aspect: control-flow
+              body: |
+                The bind loop uses `?` and `let … else { return Err(…) }`; assembly begins only
+                after the loop completes.
+            - aspect: side-effects
+              body: |
+                Starting the producer means reading `/proc` and spawning a task; a mutation stage
+                could change the system. Neither happens for an unbuildable pipeline.
+            - aspect: errors
+              body: |
+                Errors surface as one structured `ErrorValue` in `Flow::Failed`, reported once.
+            - aspect: architecture
+              body: |
+                Contracts are data (`docs/contracts/commands/`), so binding can be done entirely
+                from declarations without touching providers.
+          guarantees: |
+            The comment on lines 47–48 guarantees the property: "A pipeline that cannot be built
+            runs no part of itself".
+          semantics: |
+            `?` returns from the whole function, so no code after the loop runs on a bind error.
+          interpretation: |
+            This mirrors the pre-flight field check in `run_pipeline`: Ono-Sendai prefers to fail
+            before side effects wherever the information is declarative.
+      - type: exercise
+        id: execution-path-02-q4
+        exercise_type: identify-abstraction
+        prompt: |
+          Classify the calls this lesson followed, as you would in unfamiliar code:
+          `registry.resolve(…)` in `bind_stage`, `handle.block_on(…)`,
+          `table.run(contract.id(), &mut invocation).await`, `ctx.providers().snapshot(&query)`,
+          the registry's `self.provider_for(…)?.snapshot(query)`, `Where::new(move |value| …)` and
+          `input.stage(…)` inside `Where::apply`. For each one decide:
+
+          1. Does it cross an abstraction boundary — into another crate, through a trait object,
+             or by handing a closure to code that does not know where it came from?
+          2. Is it synchronous or asynchronous, and on which thread does its work actually run?
+          3. Which external-crate API (outside Ono-Sendai and the standard library) does it rely
+             on, if any?
+
+          Finish by naming the first place you would inspect if `get process | where cpu > 20`
+          printed no rows on a busy machine.
+        hints:
+          - level: 1
+            body: |
+              A [`dyn`](glossary:trait-object) in the receiver's type marks a boundary you cannot see across from the call
+              site. A crate name in the path (`ono_command::…`) or a method on a type from another
+              crate marks the other kind.
+        solution:
+          summary: |
+            `resolve` crosses from `ono-cli` into `ono-command`, is synchronous and runs on the
+            main thread. `block_on` is the synchronous-to-asynchronous bridge (Tokio's runtime
+            `Handle`); the assembly future it runs is polled on the main thread. `table.run` crosses
+            into `ono-command` and then through `Arc<dyn CommandImpl>`; it is `async`, but for
+            both stages the default `invoke_async` has already run the synchronous `invoke`, so it
+            completes at once. `ctx.providers().snapshot` crosses into `ono-provider-api`, and the
+            registry's `snapshot` crosses again through `Arc<dyn Provider>` into whichever provider
+            answers (`ProcessProvider`, behind `TemporalProvider` in a full build); the call is
+            synchronous, but the provider spawns a Tokio task whose work runs on worker threads.
+            `Where::new` hands an evaluator closure from `ono-command` to `ono-pipeline`, which
+            stores it as `Box<dyn Predicate>`. `input.stage` spawns task B, again on the workers.
+            The external crate that matters is Tokio (runtime, `select!`, `spawn`, the bounded
+            `mpsc` channels inside `ValueStream`).
+          analysis:
+            - aspect: architecture
+              body: |
+                The route crosses crates in the direction of the crate map: `ono-cli` →
+                `ono-command` (resolution, the command table, the producer) → `ono-provider-api`
+                (the registry) → a provider crate (`ono-provider-linux`), and `ono-command` →
+                `ono-pipeline` (the `where` transform). No lower crate calls a higher one directly.
+            - aspect: traits
+              body: |
+                Three boundaries are trait objects, so the call site cannot see the code that
+                runs: `dyn CommandImpl` (which implementation serves an id), `dyn Provider` (which
+                provider answers a target) and `dyn Predicate` (the closure inside `Where`). Each
+                is "go to definition" territory: find the implementations, not the trait.
+            - aspect: async
+              body: |
+                Synchronous: `resolve`, both `snapshot` calls, `Where::new`, `input.stage` itself.
+                Asynchronous: `table.run(…)`'s future (trivially ready here) and the two spawned
+                tasks, which run on worker threads. `block_on` is where the main thread enters the
+                runtime and waits.
+            - aspect: external-apis
+              body: |
+                Tokio: `Handle::block_on`, `select!` (with `interrupted()`), `tokio::spawn` behind
+                `ValueStream::spawn`/`stage`, and `mpsc` channels between the stages. Everything
+                else on this path is Ono-Sendai or the standard library, so Tokio's documentation is
+                the only outside reference needed to follow it.
+            - aspect: next-steps
+              body: |
+                No rows means either no process passed the filter or none was produced. First read
+                `Where::apply`'s arms (a `Null` CPU is excluded and only counted), then the excluded
+                count that `report_counts` prints, then `ProcessProvider::snapshot` in
+                `crates/ono-provider-linux/src/process.rs` to see which reads it skips.
+          guarantees: |
+            The signatures guarantee the boundaries: `table.run` reaches implementations only
+            through `CommandImpl`, and the registry reaches providers only through `Provider`. The
+            `CommandImpl` doc guarantees that producers and transforms answer without awaiting.
+          semantics: |
+            A method call on `Arc<dyn Trait>` or `Box<dyn Trait>` is dynamic dispatch; a call on a
+            generic or `impl Trait` parameter is static. A synchronous function may spawn a task:
+            spawning returns at once, and the task's code runs later, elsewhere.
+          interpretation: |
+            Reading the boundaries first tells you which files a question leads to: a question
+            about *what* is produced goes through `dyn Provider` to a provider crate, a question
+            about *how* values are filtered goes through `dyn Predicate` back to the evaluator's
+            closure. That is an interpretation of the layout, not something the code states.
+  - id: execution-path-03
+    title: "Drain, deliver, render — and the whole path"
+    stage: practice
+    summary: "Follow the assembled stream through the driver, the status decision and the table renderer, then read the entire path as one subsystem."
+    prerequisites: [execution-path-02]
+    concepts: [code-navigation, pattern-matching, ownership, select-cancellation]
+    ono_topics: [rendering, pipeline, evaluation, error-flow]
+    objectives:
+      - "Explain why a table is collected before it is rendered."
+      - "Name the three destinations `write_result` chooses between and how."
+      - "Explain how the exit status of the pipeline is decided."
+      - "Describe the whole execution path of `get process | where cpu > 20` in your own words."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Assembly returned stream B. What remains in `run_native_segment` is to drain it — with
+          `drive_segment`, which you read in [lesson tasks-channels-04](lesson:tasks-channels-04)
+          — then decide the status and deliver the values. Our pipeline is the last segment, its
+          output is not redirected and nobody is capturing it, so the values end up as a table on
+          the terminal.
+      - type: code
+        snippet: c18-drain-deliver
+        caption: |
+          The end of `run_native_segment`: drain, stop the leftovers, decide the status, deliver.
+        annotations:
+          - lines: 365-373
+            kind: flow
+            body: |
+              The driver loop runs until the stream ends. For a bounded stream (the process
+              enumeration is bounded) it returns every value and every per-item failure.
+          - lines: 376-378
+            kind: ono
+            body: |
+              "Cancellation wins over capacity": anything still producing — which should be
+              nothing for a finished bounded stream — is cancelled through the shared token.
+          - lines: 388-391
+            kind: flow
+            body: |
+              A failure of the *provider* kind means the answer itself was lost (ADR-0085), and
+              makes the run fail even though the values that arrived are still written.
+              `report_failures` prints the per-item failures.
+          - lines: 401-405
+            kind: flow
+            body: |
+              Exit status: `FAILURE` if any action row failed or a provider could not answer,
+              otherwise `SUCCESS`. A filter that dropped rows does not fail the run.
+      - type: code
+        snippet: c18-write-result
+        caption: |
+          `crates/ono-cli/src/eval/native/result.rs`: where the last segment's values go.
+        annotations:
+          - lines: 179-186
+            kind: flow
+            body: |
+              A pipeline evaluated for its value (a capture) hands the values on instead of
+              showing them, and nothing is retained.
+          - lines: 190-192
+            kind: ono
+            body: |
+              What is shown is what `@-1` reuses later (spec §20.2): the values are retained in
+              the result history before being displayed.
+          - lines: 208-228
+            kind: flow
+            body: |
+              Our case: no redirection, not serialised. A `Sink` for stdout is built with the
+              environment (it decides, for example, whether colour is appropriate), the session's
+              theme and the configured row limit.
+      - type: code
+        snippet: c18-sink-write
+        caption: |
+          `crates/ono-cli/src/sink.rs`: rendering already-collected values.
+        annotations:
+          - lines: 104-108
+            kind: ono
+            body: |
+              "Rendering a table needs to know its widest cell, so a table is necessarily
+              collected first. That is a property of tables, not of the pipeline."
+          - lines: 145-151
+            kind: crate
+            body: |
+              The actual layout is `ono-render`'s: a `Layout` of the terminal width renders the
+              values in the chosen view — a table for a list of process records.
+      - type: diagram
+        kind: data-flow
+        title: "The whole path of `get process | where cpu > 20`"
+        art: |
+          main thread                                  worker threads
+          ───────────                                  ──────────────
+          repl::run → run_source → parse
+          run_program → run_statement → run_pipeline
+            native::check (schemas)
+            run_stage_list → native::run → run_from
+              segments: [Native(0,1)]
+              run_native_segment
+                bind get, bind where
+                block_on(assemble)  ─────────────────► task A: read /proc/<pid>/… → records
+                                                          │ mpsc(64)
+                                                       ► task B: where cpu > 20
+                                                          │ mpsc(64)
+                drive_segment: block_on(recv) ◄──────────┘
+                  → Vec<Value>, Vec<ErrorValue>
+                status; deliver_segment → write_result
+                  → retain for @-1 → Sink::write → ono-render table → stdout
+          ExitStatus back to run_program → history.record → next prompt
+        description: |
+          Everything on the left runs on the main thread: the REPL reads the line, it is parsed,
+          the evaluator reaches `run_native_segment`, which binds both stages and, inside
+          `block_on`, assembles two tasks. On worker threads, task A reads processes from `/proc`
+          and sends records through a bounded channel to task B, which keeps records whose CPU
+          is above 20 and sends them through a second bounded channel. Back on the main thread,
+          `drive_segment` drains that channel into vectors of values and failures. The status is
+          decided, the values are retained for `@-1` and rendered as a table on stdout, and the
+          status travels back to the REPL, which records the line in history.
+      - type: exercise
+        id: execution-path-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `Sink::write`'s doc says a table is "necessarily collected first", while `to json` and
+          the other serialising views could stream. Why must a table of
+          `get process | where cpu > 20` wait until every value is in hand?
+        choices:
+          - text: "Because the `where` stage buffers its whole input before filtering."
+            correct: false
+            feedback: |
+              No. `where` forwards each value as soon as it is tested; its output ends exactly
+              when its input does.
+          - text: "Because a table needs its widest cell before it can print the first row; serialising views do not."
+            correct: true
+            feedback: |
+              Right, as `Sink::write`'s doc says: collecting first is "a property of tables, not
+              of the pipeline". (Note what the code does at v0.6.2, though: for a bounded stream
+              `drive_segment` collects every segment's values into `drained.values` before
+              `write_result` runs, so a bounded `… | to json` is also written in one go; the
+              doc states what the representation permits, not what this path does.)
+          - text: "Because `block_on` can only return once, at the end."
+            correct: false
+            feedback: |
+              `drive_segment` calls `block_on` once per loop iteration, not once overall; the
+              reason a *table* must be complete before its first row is its column widths.
+          - text: "Because the process provider sends all records in one message."
+            correct: false
+            feedback: |
+              The provider sends one record per `send`, under backpressure.
+      - type: exercise
+        id: execution-path-03-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Trace `write_result` for three variants of our command: (a) typed at the prompt as is;
+          (b) `get process | where cpu > 20 | to json > procs.json`; (c) the pipeline of (a)
+          evaluated while the session is capturing its value (for example as the right-hand side
+          of a binding). For each: which branch runs, is anything retained for `@-1`, and what
+          is written where? Then say what happens to `get process | where cpu > 20 > procs.txt`.
+        solution:
+          summary: |
+            (a) The final `None` arm: values retained, then rendered as a table on stdout by
+            `Sink`. (b) The last stage is `to json`, so `serialised` is true: nothing is retained,
+            and the `Some(file)` arm writes `bytes_of(values)` — the JSON document — to
+            `procs.json`. (c) The capture branch at the top: the values are handed to
+            `session.capture` and the function returns; nothing is rendered or retained. The last
+            line never reaches `write_result`: `where` reads its arguments in expression mode, and
+            the parser rejects a redirection there ("a stage whose arguments are expressions
+            cannot be redirected", help: "`| to text > file`"), so `run_source` reports it with
+            status `USAGE`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                The capture check comes first and returns early. Then `!serialised` decides
+                retention. Then a three-way `match destination` with a guard: file, serialised
+                stdout, or rendered stdout.
+            - aspect: inputs
+              body: |
+                `serialised` is computed by the caller (`deliver_segment`) from the last
+                contract: false in (a) and (c), where the last contract is `where`, which does not
+                produce bytes and yields records, not text; true in (b), because `to json`
+                produces bytes.
+            - aspect: side-effects
+              body: |
+                Writing to the file uses `write_all` and `flush`, mapping I/O errors to
+                `Flow` through `write_failed`; the stdout table path ignores write errors inside
+                `Sink::write`.
+            - aspect: outputs
+              body: |
+                The function returns `Eval<()>`; the status was already decided by the caller.
+          guarantees: |
+            The comments guarantee that captured pipelines hand on "what it would have shown
+            instead of showing it", and that what is shown is what `@-1` reuses.
+          semantics: |
+            `match` arms with a guard (`None if serialised`) are tried in order, so the last
+            `None` arm means "not serialised".
+          interpretation: |
+            The redirection in (b) belongs to `to json`, a words-mode stage (ADR-0009: "`to`,
+            `from` and `format` are Words mode … This is what makes `get process | to json >
+            out.json` parse"). The parser code that enforces this (`parse_stage_inner` in
+            `pipelines.rs`) is outside these snippets.
+      - type: exercise
+        id: execution-path-03-q3
+        exercise_type: read-subsystem
+        prompt: |
+          Read the whole path as one subsystem. Using the snippets of this chapter and of
+          [chapter 17](lesson:tasks-channels-04)'s driver, write your own description of what happens between pressing Enter
+          on `get process | where cpu > 20` and the next prompt. Cover: purpose, the important
+          types that carry the command from stage to stage, control flow including the early
+          exits, where concurrency starts and ends, ownership of the streams, error handling,
+          side effects, and which files you would open next to understand a part that remains
+          unclear.
+        snippets: [c18-repl-loop, c18-run-pipeline-native, c18-native-segment-assemble, c17-drive-segment, c18-drain-deliver]
+        hints:
+          - level: 1
+            body: |
+              Organise your answer by *type*: `String` line → `Program`/`StageList` → bound
+              contracts → `Invocation` → `ValueStream` → `Vec<Value>` → table lines →
+              `ExitStatus`. Then attach each function to the step it performs.
+        solution:
+          summary: |
+            A line is parsed once into a `Program`, checked against schemas, cut into one native
+            segment, and bound against the command contracts before anything runs. Inside one
+            `block_on`, the command table turns each bound stage into a stream: the provider
+            producer asks the provider registry, whose process provider lists `/proc` and spawns
+            a producer task; the `where` transform spawns a filtering task over it. The driver
+            then drains the final stream on the main thread, `block_on` by `block_on`, while
+            Ctrl-C can cancel it at any await. The values are collected, the status is decided
+            from provider failures and failed rows, the values are retained for `@-1` and
+            rendered as a table, and the status returns to the REPL for history.
+          analysis:
+            - aspect: purpose
+              body: |
+                Answer a question about the system ("which processes use more than 20% of a CPU")
+                with typed records, filter them honestly (unknown CPU is excluded and counted),
+                and show them.
+            - aspect: types
+              body: |
+                `Program`/`Statement::Pipeline`/`StageList` (parser); `&'static CommandContract` +
+                `BoundArguments` (binding); `Invocation` (one call); `Outcome::Values(ValueStream)`
+                (stream per stage); `StreamEvent` (value or per-item failure); `Drained`
+                (`Vec<Value>`, `Vec<ErrorValue>`, optional `Flow`); `Eval<T> = Result<T, Flow>`
+                throughout.
+            - aspect: control-flow
+              body: |
+                Early exits: parse errors (`USAGE`), unknown fields (`native::check`), unbindable
+                stages (bind loop), assembly errors or Ctrl-C (`select!` in `block_on`), Ctrl-C
+                during draining (`drive_segment`). Every exit becomes a `Flow` that
+                `run_program` reports.
+            - aspect: async
+              body: |
+                Concurrency begins when `ProcessProvider::snapshot` spawns task A and `Where`
+                spawns task B, and ends when the driver has drained stream B. The main thread
+                never runs pipeline stages; it only polls the final receiver and the interrupt.
+            - aspect: ownership
+              body: |
+                Each `ValueStream` has exactly one owner: stream A moves into task B; stream B
+                moves from the assembly into `drive_segment`. Dropping a stream is how its
+                producer learns to stop.
+            - aspect: errors
+              body: |
+                Whole-command failures are `Err(Flow)`; per-process failures travel on the
+                stream's error channel and are reported after the values without stopping them;
+                provider-kind failures make the status `FAILURE`.
+            - aspect: side-effects
+              body: |
+                Reads of `/proc` (and NSS lookups for user names), the table on stdout, a notice
+                on stderr about excluded rows when any were dropped, the retained result for
+                `@-1`, and a history entry.
+            - aspect: next-steps
+              body: |
+                To go deeper: `crates/ono-provider-linux/src/process.rs` (what a record contains,
+                [chapter 19](lesson:provider-boundary-02)); `crates/ono-command/src/invoke.rs` (`CommandTable::run`);
+                `crates/ono-render` (the table layout); `docs/contracts/commands/process.yaml` and
+                `data.yaml` (the contracts); ADR-0013 and ADR-0014 in `docs/adr/`.
+          guarantees: |
+            Explicit in the code and its comments: nothing runs for an unbuildable pipeline;
+            field typos fail before enumeration; every send is bounded and cancellable; unknown
+            CPU is excluded, not treated as below 20; a table is collected before it is rendered;
+            what is shown is retained for `@-1`.
+          semantics: |
+            From Rust: one `&mut Session` threaded through synchronous calls; `?` propagating
+            `Flow`; `Send + 'static` tasks owning their streams; dropping receivers closing
+            channels; `select!` dropping the losing future.
+          interpretation: |
+            Architecturally, the path separates *describing* work (parse, check, bind: pure,
+            synchronous, fallible early) from *doing* it (tasks under backpressure), and keeps the
+            session on one thread while the concurrent part lives entirely in owned streams. That
+            reading is an interpretation of the design; ADR-0013 is where to check it.

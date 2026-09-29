@@ -1,0 +1,279 @@
+title: Ono-Sendai Rust Reading Course
+tagline: Learn to read Rust by reading a real shell.
+
+# Course order. Didactic order, not repository order (spec §14.1).
+chapters:
+  - chapters/01-reading-rust.yaml
+  - chapters/02-functions-types.yaml
+  - chapters/03-structs-methods.yaml
+  - chapters/04-enums-matching.yaml
+  - chapters/05-option.yaml
+  - chapters/06-result-errors.yaml
+  - chapters/07-ownership-moves.yaml
+  - chapters/08-borrowing.yaml
+  - chapters/09-mutability.yaml
+  - chapters/10-traits.yaml
+  - chapters/11-generics.yaml
+  - chapters/12-iterators-closures.yaml
+  - chapters/13-conversions.yaml
+  - chapters/14-derives-macros.yaml
+  - chapters/15-smart-pointers.yaml
+  - chapters/16-async.yaml
+  - chapters/17-tasks-channels.yaml
+  - chapters/18-execution-path.yaml
+  - chapters/19-provider-boundary.yaml
+  - chapters/20-unseen-with-solutions.yaml
+  - chapters/21-independent-reading.yaml
+
+# The "Learn Rust" axis (spec §8.1).
+concepts:
+  - id: reading-files
+    title: Reading a Rust file
+    summary: What a crate root, a module file and a test file contain, and in which order to read them.
+  - id: modules
+    title: Modules and paths
+    summary: "`mod`, `crate::`, `super::` and how a crate is split into files."
+  - id: visibility
+    title: Visibility
+    summary: "`pub`, `pub(crate)`, `pub(super)` and what a crate exposes."
+  - id: use-imports
+    title: "`use` and re-exports"
+    summary: "Bringing names into scope, and `pub use` facades."
+  - id: doc-comments
+    title: Doc comments
+    summary: "`///` and `//!`, doctests, and why production code is heavily documented."
+  - id: attributes
+    title: Attributes
+    summary: "`#[derive]`, `#[cfg]`, `#![forbid]`, `#[allow]` and other annotations that change how code is compiled or checked."
+  - id: functions
+    title: Function signatures
+    summary: Parameters, return types and reading a signature before its body.
+  - id: bindings
+    title: Bindings and shadowing
+    summary: "`let`, type inference, shadowing and blocks as expressions."
+  - id: mutability
+    title: Mutability
+    summary: "`let mut`, `&mut` and `mut self`: where change is allowed and who may make it."
+  - id: scalar-types
+    title: Scalar and basic types
+    summary: Integers, floats, `bool`, `char`, `as` casts and constants.
+  - id: expressions
+    title: Expressions and control flow
+    summary: "`if`, `loop`, `while`, `for`, early `return` and why almost everything is an expression."
+  - id: structs
+    title: Structs
+    summary: Named-field structs, tuple structs and newtypes.
+  - id: impl-blocks
+    title: "`impl` blocks"
+    summary: Attaching associated functions and methods to a type.
+  - id: methods
+    title: Methods and receivers
+    summary: "`self`, `&self`, `&mut self` and associated functions such as `new`."
+  - id: enums
+    title: Enums
+    summary: Types with a closed set of variants that may carry data.
+  - id: pattern-matching
+    title: Pattern matching
+    summary: "`match`, `if let`, `let else`, guards, or-patterns and `matches!`."
+  - id: destructuring
+    title: Destructuring
+    summary: Taking structs, tuples and enum variants apart in patterns.
+  - id: option
+    title: "`Option<T>`"
+    summary: Explicit absence instead of null, and the combinators that handle it.
+  - id: result
+    title: "`Result<T, E>`"
+    summary: Explicit failure as a value.
+  - id: error-types
+    title: Error types
+    summary: Structured error types, `Display`, `std::error::Error` and `thiserror`.
+  - id: question-mark
+    title: The `?` operator
+    summary: Early return on failure, including the `From` conversion it performs.
+  - id: ownership
+    title: Ownership
+    summary: Every value has one owner; dropping the owner frees the value.
+  - id: moves
+    title: Moves
+    summary: Passing or assigning a non-`Copy` value transfers ownership.
+  - id: copy-clone
+    title: "`Copy` and `Clone`"
+    summary: Implicit bitwise copies versus explicit clones, and what a clone actually costs.
+  - id: borrowing
+    title: Borrowing
+    summary: Shared references `&T` and the rules the compiler enforces for them.
+  - id: mutable-borrowing
+    title: Mutable borrowing
+    summary: Exclusive references `&mut T` and why there can only be one.
+  - id: slices-strings
+    title: Slices and strings
+    summary: "`&str` versus `String`, `&[T]` versus `Vec<T>`: borrowed views of owned data."
+  - id: lifetimes
+    title: Lifetimes
+    summary: Reading lifetime parameters as statements about where a borrow comes from.
+  - id: collections
+    title: Collections
+    summary: "`Vec`, `HashMap`, `BTreeMap` and friends as they appear in Ono-Sendai."
+  - id: traits
+    title: Traits
+    summary: Named sets of behaviour that types implement.
+  - id: trait-objects
+    title: Trait objects and dynamic dispatch
+    summary: "`dyn Trait`, `Box<dyn Trait>`, `Arc<dyn Trait>` and choosing an implementation at run time."
+  - id: generics
+    title: Generics
+    summary: Type parameters and static dispatch.
+  - id: trait-bounds
+    title: Trait bounds and `where` clauses
+    summary: Constraining what a type parameter must be able to do.
+  - id: impl-trait
+    title: "`impl Trait`"
+    summary: Anonymous generic parameters and opaque return types.
+  - id: associated-types
+    title: Associated types
+    summary: "Types chosen by an implementation, such as `Iterator::Item` or `FromStr::Err`."
+  - id: iterators
+    title: Iterators
+    summary: Lazy sequences, adapters such as `map` and `filter`, and consumers such as `collect`.
+  - id: closures
+    title: Closures
+    summary: Anonymous functions that capture their environment, and `move`.
+  - id: conversions
+    title: Conversions
+    summary: "`From`, `Into`, `TryFrom`, `FromStr`, `Display` and `as`."
+  - id: newtypes
+    title: Newtypes and domain types
+    summary: Wrapping a primitive to give it meaning and rules.
+  - id: derives
+    title: Derives
+    summary: "`#[derive(...)]` and the trait implementations it generates."
+  - id: macros
+    title: Macros
+    summary: "`macro_rules!` and the macros whose expansion matters for reading."
+  - id: serde
+    title: Serde
+    summary: Serialization derives and field attributes.
+  - id: conditional-compilation
+    title: Conditional compilation
+    summary: "`#[cfg(...)]` and Cargo features."
+  - id: smart-pointers
+    title: Smart pointers
+    summary: "`Box`, `Arc` and `Cow`: ownership with extra behaviour."
+  - id: shared-ownership
+    title: Shared ownership
+    summary: "`Arc` and reference counting; why sharing is not the same as synchronizing."
+  - id: interior-mutability
+    title: Interior mutability and locks
+    summary: "`Mutex`, `RwLock`, atomics and `Cell`: mutation behind a shared reference."
+  - id: send-sync
+    title: "`Send` and `Sync`"
+    summary: The marker traits that decide what may cross or be shared between threads.
+  - id: async-await
+    title: "`async` and `.await`"
+    summary: Functions that return futures, and the points where they may suspend.
+  - id: futures
+    title: Futures
+    summary: Lazy values that make progress only when polled by a runtime.
+  - id: tokio
+    title: Tokio runtime
+    summary: "The executor Ono-Sendai uses: `block_on`, `spawn`, `spawn_blocking`, timeouts."
+  - id: tasks
+    title: Tasks and threads
+    summary: Spawned tasks, OS threads and join handles.
+  - id: channels
+    title: Channels
+    summary: "`mpsc` and `oneshot` channels, bounded capacity and backpressure."
+  - id: select-cancellation
+    title: "`select!` and cancellation"
+    summary: Racing futures, dropping the loser, and cooperative shutdown.
+  - id: testing
+    title: Tests as documentation
+    summary: "`#[test]`, `#[cfg(test)]`, integration tests and what they tell a reader."
+  - id: code-navigation
+    title: Navigating a codebase
+    summary: Tracing symbols, finding call sites and implementations, and deciding what to skip.
+
+# The "Understand Ono-Sendai" axis (spec §8.2).
+ono_topics:
+  - id: crate-map
+    title: The crate map
+    summary: How the workspace is layered, from the dependency-free `ono-core` up to the `ono` binary.
+  - id: core-vocabulary
+    title: Core vocabulary
+    summary: "Spans, exit statuses and error codes shared by every crate (`ono-core`)."
+  - id: value-model
+    title: The value model
+    summary: "`Value`, semantic scalars and why every compound value sits behind an `Arc`."
+  - id: records-schemas
+    title: Records and schemas
+    summary: Typed records stored by schema position, and the three meanings of "nothing".
+  - id: error-flow
+    title: Error flow
+    summary: Error codes, structured `ErrorValue`s, errors as data, and how failures travel.
+  - id: parsing
+    title: Parsing
+    summary: The mode-sensitive lexer, the AST and the recoverable parser.
+  - id: command-registry
+    title: Command contracts and registry
+    summary: Commands described as data, resolved before anything runs.
+  - id: command-dispatch
+    title: Command dispatch
+    summary: How a resolved command reaches its native implementation.
+  - id: pipeline
+    title: Typed pipelines
+    summary: Streams of values between stages, transforms and backpressure.
+  - id: providers
+    title: Providers
+    summary: The boundary between the shell and the systems it describes.
+  - id: rendering
+    title: Rendering
+    summary: Turning values into tables and text, separate from the data itself.
+  - id: process-execution
+    title: Running Unix programs
+    summary: External commands, descriptors, process groups and signals.
+  - id: async-execution
+    title: Async execution
+    summary: A synchronous evaluator driving a lazily built Tokio runtime.
+  - id: cancellation
+    title: Cancellation and Ctrl-C
+    summary: How an interrupt stops a running pipeline.
+  - id: evaluation
+    title: The evaluator
+    summary: How a parsed program is run, statement by statement.
+  - id: remote-protocol
+    title: Remote links and the wire protocol
+    summary: Frames, streams and credit between an `ono` and its agent.
+  - id: history
+    title: History and state
+    summary: What the shell remembers between commands and sessions.
+  - id: system-integration
+    title: System integrations
+    summary: "`/proc`, netlink, NSS, DNS and other operating-system interfaces."
+  - id: change-recovery
+    title: Changes and recovery
+    summary: Planned changes, protection and crash-safe restoration.
+  - id: adapters
+    title: External command adapters
+    summary: Turning the output of Unix tools into typed values.
+  - id: spatial-context
+    title: Places and context
+    summary: The spatial model and how entering a place narrows later commands.
+  - id: tests-as-docs
+    title: Tests as executable documentation
+    summary: What Ono-Sendai's tests reveal about intended behaviour.
+
+checklists:
+  independent-reading:
+    title: Independent-reading checklist
+    items:
+      - I can summarize the purpose of this code.
+      - I identified the major inputs and outputs.
+      - I can describe the important types.
+      - I followed the main control flow.
+      - I identified the failure paths.
+      - I understand which values are owned, borrowed, moved, cloned, or shared.
+      - I identified the important trait boundaries.
+      - I understand the relevant async or concurrency behaviour.
+      - I know which side effects occur.
+      - I understand how this code fits into Ono-Sendai.
+      - I know which source I would inspect next if something remains unclear.

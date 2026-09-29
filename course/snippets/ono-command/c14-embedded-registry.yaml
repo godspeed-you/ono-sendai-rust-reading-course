@@ -1,0 +1,78 @@
+id: c14-embedded-registry
+source:
+  file: crates/ono-command/src/registry.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 8
+  anchor: alone cost a quarter of a cold start
+  content_hash: sha256:62790907f4473f96f39d1b95615ac2471126f33ccbe40be905cd62715cd9165b
+  code: |
+    //! The command registry: the contract files of `docs/contracts/commands/`, available at runtime.
+    //!
+    //! The files are embedded at compile time. Spec §34 budgets a cold start of under 100 ms with a
+    //! target of 50 ms, which a dozen YAML reads would spend before the prompt appears; and a shell
+    //! whose command set depends on files being installed correctly is a shell that breaks when they
+    //! are not. The registry is therefore part of the binary, parsed once on first use — and parsed
+    //! from JSON, which `build.rs` transcodes from the YAML at build time, because the YAML parse
+    //! alone cost a quarter of a cold start (ADR-0571).
+- start_line: 23
+  end_line: 46
+  anchor: static EMBEDDED
+  content_hash: sha256:eea2207570cef9a1bc32090e8e310f68f0832030e3009ac8470052d706e89f88
+  code: |
+    /// The command families of `docs/contracts/commands/`, embedded as the JSON `build.rs` wrote.
+    const COMMAND_FILES: &[&str] = &[
+        include_str!(concat!(env!("OUT_DIR"), "/commands/change.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/container.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/data.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/file.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/identity.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/kuang.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/meta.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/network.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/package.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/process.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/remote.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/service.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/spatial.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/storage.json")),
+        include_str!(concat!(env!("OUT_DIR"), "/commands/temporal.json")),
+    ];
+
+    const VERB_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/verbs.json"));
+    const TARGET_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/targets.json"));
+    const CAPABILITY_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/capabilities.json"));
+
+    static EMBEDDED: OnceLock<Result<CommandRegistry, String>> = OnceLock::new();
+- start_line: 89
+  end_line: 114
+  anchor: pub fn embedded() -> Result<&'static Self, ErrorValue> {
+  content_hash: sha256:d6c7f3e47463d489edf5c1ba66f404c587db27e5d9d764362ae93437946082cf
+  code: |2
+        pub fn embedded() -> Result<&'static Self, ErrorValue> {
+            match EMBEDDED.get_or_init(|| Self::load().map_err(|error| error.message().to_owned())) {
+                Ok(registry) => Ok(registry),
+                Err(message) => Err(ErrorValue::new(
+                    ErrorCode::ProviderSchemaViolation,
+                    message.clone(),
+                )
+                .with_help(
+                    "the command contracts are compiled into the binary; this is a build defect",
+                )),
+            }
+        }
+
+        /// Parses the embedded contract files into a fresh registry.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error when a file is not valid YAML or an entry is not a valid
+        /// contract.
+        pub fn load() -> Result<Self, ErrorValue> {
+            let mut commands = Vec::new();
+            for source in COMMAND_FILES {
+                let family: RawFamily = serde_json::from_str(source).map_err(document_error)?;
+                for raw in family.commands {
+                    commands.push(raw.into_contract(&family.family)?);
+                }

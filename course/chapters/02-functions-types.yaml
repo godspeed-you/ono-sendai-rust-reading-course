@@ -1,0 +1,887 @@
+id: functions-types
+number: 2
+title: Functions, bindings, values and types
+summary: |
+  Rust code is read signature first: a function's name, its parameters and their types, and its
+  return type tell you most of what it does before you read its body. This chapter reads small,
+  real functions from the bottom of Ono-Sendai — the exit-status contract, byte units,
+  percentages, spans, human-readable durations and the routine that shortens text to fit a
+  terminal column. Along the way you meet integer and floating-point types, literals, `let`
+  bindings and `let mut`, `as` casts, `if` and `for`, early `return`, and the rule that makes most
+  Rust bodies look unfamiliar at first: **the last expression of a block is its value**.
+lessons:
+  - id: functions-types-01
+    title: "Reading a signature: ExitStatus"
+    stage: guided
+    summary: "A one-field type wrapping a `u8`, its named constants, and four tiny functions whose signatures say almost everything."
+    prerequisites: [reading-rust-04]
+    concepts: [functions, scalar-types, expressions, newtypes]
+    ono_topics: [core-vocabulary]
+    objectives:
+      - "Read a function signature: name, parameters with types, return type after `->`"
+      - Recognise a body whose final expression, without a semicolon, is the returned value
+      - "Explain `u8`, a typed literal such as `128u8`, and `saturating_add`"
+      - "Read `self.0` as the first field of a tuple struct"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          When a command finishes, a shell reports an **exit status**: a number from 0 to 255,
+          where 0 means success. Scripts test it (`if cmd; then …`), so its values are a public
+          contract. In [the last chapter](lesson:reading-rust-04) you read the tests for Ono-Sendai's
+          `ExitStatus` and learned its rules from the outside: `NOT_FOUND` is 127, a process
+          killed by signal 9 reports 137. Now read the code behind them, in
+          `crates/ono-core/src/exit.rs`.
+      - type: code
+        snippet: c02-exit-status
+        caption: |
+          Lines 22–32 (the constants `USAGE` to `INTERRUPTED`) are omitted; they follow the same
+          pattern as `SUCCESS` and `FAILURE`.
+        annotations:
+          - lines: 16
+            token: "Copy"
+            kind: rust
+            body: |
+              Among the derived abilities is [`Copy`](glossary:copy): an `ExitStatus` is duplicated by simply
+              copying its single byte. Keep this in mind for the methods below.
+          - lines: 17
+            token: "pub struct ExitStatus(u8);"
+            kind: type
+            body: |
+              A **tuple struct**: a struct whose fields have no names, only positions. This one has
+              a single field of type `u8`, an unsigned 8-bit integer (0 to 255) — exactly the
+              range of a Unix exit status. A struct that wraps one value to give it a meaning is
+              called a [**newtype**](glossary:newtype). The field is private: outside code cannot write
+              `ExitStatus(42)` itself. It must use the named constants or the functions below
+              (`from_code`, `from_signal`), so every status is created in one of the ways this
+              file defines.
+          - lines: 19
+            token: "impl ExitStatus {"
+            kind: rust
+            body: |
+              `impl ExitStatus { ... }` attaches constants and functions to the type. [Chapter 3](lesson:structs-methods-01)
+              looks at `impl` blocks in detail; for now, everything inside belongs to
+              `ExitStatus`.
+          - lines: 21
+            token: "pub const SUCCESS: Self = Self(0);"
+            kind: rust
+            body: |
+              An **associated constant**, used as `ExitStatus::SUCCESS`. Inside an `impl` block,
+              `Self` is a short name for the type being implemented, here `ExitStatus`. On the
+              right, `Self(0)` builds a value of the tuple struct with the field set to 0.
+          - lines: 34
+            token: "#[must_use]"
+            kind: rust
+            body: |
+              `#[must_use]` makes the compiler warn if a caller calls the function and ignores the
+              result. A function that only computes a value is pointless when its result is thrown
+              away.
+          - lines: 35
+            token: "pub const fn from_code(code: u8) -> Self {"
+            kind: rust
+            body: |
+              Read a signature left to right. `pub`: callable from other crates. `const fn`: a
+              function that may also be evaluated at compile time (read it as a plain `fn` for
+              now). `from_code`: the name. `(code: u8)`: one parameter named `code` of type `u8`
+              — Rust writes the name first, then a colon, then the type. `-> Self`: it returns an
+              `ExitStatus`. There is no `self` parameter, so it is called on the type:
+              `ExitStatus::from_code(42)`.
+          - lines: 36
+            token: "Self(code)"
+            kind: flow
+            body: |
+              The body is a single **expression** with no semicolon after it. In Rust, the last
+              expression of a block is the block's value, and the value of a function's body is
+              what the function returns. No `return` keyword is needed.
+          - lines: 44
+            token: "signal: u8"
+            kind: type
+            body: |
+              The parameter is also a `u8`, so a caller cannot even pass a negative number or a
+              number above 255: the type rules them out before the function runs.
+          - lines: 45
+            token: "128u8.saturating_add(signal)"
+            kind: rust
+            body: |
+              `128u8` is the number 128 written with a **type suffix**: it is a `u8`. Numbers are
+              values with methods, so you can call `.saturating_add(signal)` on it. Saturating
+              addition stops at the largest value instead of overflowing: `128 + 9` is 137, but
+              `128 + 200` is 255, not 328 (which does not fit in a `u8`).
+          - lines: 50
+            token: "code(self)"
+            kind: ownership
+            body: |
+              A parameter called `self` makes this a **method**: it is called on a value,
+              `status.code()`. Taking `self` (rather than `&self`, which you will meet in
+              [chapter 3](lesson:structs-methods-02)) means the method receives the value itself. Because `ExitStatus` is
+              `Copy`, the method receives a copy and the caller's `status` stays usable.
+          - lines: 51
+            token: "self.0"
+            kind: rust
+            body: |
+              `.0` reads the first (and only) field of a tuple struct. This is how the rest of the
+              program gets at the raw number without being able to change it.
+          - lines: 56-57
+            token: "-> bool"
+            kind: type
+            body: |
+              `bool` is `true` or `false`. `self.0 == 0` is a comparison whose result is a `bool`,
+              and as the last expression it is the return value. Success is exactly zero; a
+              test further down `tests/exit_status.rs` checks all 255 other values.
+      - type: prose
+        kind: rust
+        title: Statements, expressions and the missing return
+        body: |
+          Most of what you write in Rust is an **expression** — something that produces a value:
+          `self.0 == 0`, `Self(code)`, a function call, even an `if`. A **statement** does
+          something and produces no useful value; `let x = 5;` is one, and adding `;` after an
+          expression turns it into a statement that throws its value away.
+
+          So `fn f() -> u8 { 7 }` returns 7, while `fn f() -> u8 { 7; }` does not compile: the body
+          ends in a statement, its value is the empty value `()`, and `()` is not a `u8`. The
+          keyword `return` exists, but idiomatic code uses it mainly to leave a function
+          **early**; you will see that in [lesson 3](lesson:functions-types-03).
+      - type: prose
+        kind: ono
+        title: Why a u8 in a struct, and why saturate?
+        body: |
+          The doc comment above the struct (lines 5–9 of the file) gives the reason for the
+          numbers: "Ono uses the Bourne-family conventions because every tool that consumes a
+          shell's status already assumes them (ADR-0008)", and an external program's own status
+          "passes through unchanged".
+
+          The saturation has its reason spelled out in lines 41–42: signals above 127 "saturate
+          rather than wrap, so a nonsensical signal number can never be mistaken for success".
+          Plain `+` on a `u8` would not be a safe alternative: in a debug build an overflowing
+          `+` stops the program with a panic, and in a release build it wraps around by default,
+          so `128 + 128` would become `0` — success. `saturating_add` makes the intended
+          behaviour explicit in every build.
+      - type: exercise
+        id: functions-types-01-q1
+        exercise_type: predict
+        prompt: |
+          Predict the results of `ExitStatus::from_signal(200).code()` and
+          `ExitStatus::from_signal(200).is_success()`.
+        snippets: [c02-exit-status]
+        hints:
+          - level: 1
+            body: |
+              Start at line 45. What is the largest value a `u8` can hold?
+          - level: 2
+            body: |
+              `saturating_add` never goes past the maximum of its type.
+        solution: |
+          `from_signal(200)` computes `128u8.saturating_add(200)`. The true sum, 328, does not fit
+          in a `u8` (maximum 255), so saturating addition returns 255. `code()` returns that byte:
+          **255**. `is_success()` compares it with 0: **false**. That is the guarantee the doc
+          comment makes: however nonsensical the signal number, the result never looks like
+          success.
+      - type: exercise
+        id: functions-types-01-q2
+        exercise_type: multiple-choice
+        prompt: |
+          Given `let status = ExitStatus::NOT_FOUND;` followed by `let c = status.code();`, can the
+          code still use `status` afterwards?
+        snippets: [c02-exit-status]
+        choices:
+          - text: "Yes, because `ExitStatus` is `Copy`, so `code` received a copy"
+            correct: true
+            feedback: |
+              Right. `code(self)` takes the value itself, but for a `Copy` type passing it means
+              copying its bits. The original `status` is untouched and still usable.
+          - text: "No, because `code(self)` takes ownership and `status` is gone"
+            feedback: |
+              That would be true for a type that is **not** `Copy` — [chapter 7](lesson:ownership-moves-01) is about exactly
+              that. `ExitStatus` derives `Copy` (line 16), so passing it by value copies it.
+          - text: "Yes, because `code` only borrows `status`"
+            feedback: |
+              The answer is yes, but the reason is wrong. A borrowing method would be written
+              `code(&self)`. This signature says `self`, by value; it is harmless only because the
+              value is copied.
+          - text: "Only if the caller writes `status.clone().code()`"
+            feedback: |
+              Not needed: `Copy` types are copied implicitly. An explicit `clone()` would also
+              work, but it adds nothing here.
+      - type: exercise
+        id: functions-types-01-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 57, `self.0 == 0`, as a complete answer to "what does `is_success`
+          return and how?"
+        snippets: [c02-exit-status]
+        hints:
+          - level: 1
+            body: |
+              Break the line into three parts: `self.0`, `==`, and the missing semicolon.
+          - level: 2
+            body: |
+              The signature on line 56 says the function returns a `bool`.
+        solution: |
+          `self` is the `ExitStatus` the method was called on (a copy of it, since the type is
+          `Copy`). `self.0` reads its single `u8` field, the raw status. `== 0` compares that
+          number with zero and produces a `bool`. Because the expression is the last thing in the
+          body and has no semicolon, it is the function's return value. So `is_success` returns
+          `true` exactly when the raw status is 0 and `false` for all of 1 to 255 — the rule
+          stated in its doc comment on line 55.
+
+  - id: functions-types-02
+    title: "Numbers with units: ByteUnit::factor and Percent"
+    stage: guided
+    summary: "Integer and floating-point types, numeric literals, a `match` that produces a value, and methods that return new values instead of changing old ones."
+    prerequisites: [functions-types-01]
+    concepts: [scalar-types, functions, expressions, newtypes]
+    ono_topics: [value-model]
+    objectives:
+      - "Read the integer types `u8`, `u32`, `u128`, `i128` and the float type `f64`"
+      - "Read numeric literals: `1 << 10`, `1_000_000`, `0.0`, `100.0`"
+      - "Read a `match` whose arms each produce a value"
+      - "Recognise methods that return a new value (`plus`) rather than modify their input"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          [Chapter 1](lesson:reading-rust-01) quoted the README: in Ono-Sendai, a process's `memory` is "a quantity with a
+          unit, not the string `3.21 GiB`". Those quantities live in
+          `crates/ono-value/src/units.rs`. Its module doc explains the idea: "A unit-carrying value
+          knows its dimension, so `512MiB > 1GiB` is a comparison and `10s + 512MiB` is an error.
+          Parsing normalises every unit of a dimension onto one base quantity — bytes and
+          nanoseconds — which is what makes automatic conversion free."
+
+          So when you type `512MiB`, the shell stores a number of **bytes**. It needs to know how
+          many bytes one `MiB` is — that is the job of `factor`.
+      - type: code
+        snippet: c02-byte-unit-factor
+        annotations:
+          - lines: 91
+            token: "-> u128"
+            kind: type
+            body: |
+              `u128` is an unsigned 128-bit integer. Rust names its integer types by signedness
+              and width: `u8`, `u16`, `u32`, `u64`, `u128` are unsigned; `i8` … `i128` are signed.
+              The byte-size value in the same file, `ByteSize`, stores its count of bytes as a
+              `u128` too, so the factor has the same type.
+          - lines: 91
+            token: "factor(self)"
+            kind: rust
+            body: |
+              A method on `ByteUnit`, which is an [**enum**](glossary:enum): a type whose value is one of a fixed
+              list of named variants (`B`, `KiB`, `MiB`, …). [Chapter 4](lesson:enums-matching-01) is about enums; here you
+              only need to know that `self` is one of those units.
+          - lines: 92
+            token: "match self {"
+            kind: flow
+            body: |
+              `match` compares `self` with each pattern in turn and runs the arm that fits. Each
+              arm is `pattern => value,`. The whole `match` is an expression, and since it is the
+              last expression of the function, its value is what `factor` returns.
+          - lines: 94
+            token: "1 << 10"
+            kind: rust
+            body: |
+              `<<` shifts bits to the left: `1 << 10` is 2 to the power 10, which is 1024 — one
+              kibibyte. The binary units KiB, MiB, GiB, TiB, PiB are powers of 1024. The literal
+              `1` has no suffix, so Rust **infers** its type from context: the function returns
+              `u128`, so the number is a `u128`.
+          - lines: 99
+            token: "1_000"
+            kind: rust
+            body: |
+              Underscores in number literals are ignored by the compiler and only help the human
+              eye: `1_000_000` is one million. The decimal units KB, MB, GB, TB, PB are powers of
+              1000.
+      - type: prose
+        kind: ono
+        title: Two families side by side
+        body: |
+          Both `MiB` (2^20 bytes) and `MB` (10^6 bytes) exist, and they are different amounts. The
+          function right after `factor` in the same file, `from_suffix`, says why the difference
+          is enforced: "Matching is case-sensitive so `MB` and `MiB` can never be confused for one
+          another." Because every unit is turned into bytes with its own factor, `1MiB > 1MB` is
+          simply a comparison of two byte counts.
+
+          Percentages are the third semantic scalar in this file. They carry a fraction of a
+          whole, so they use a floating-point number.
+      - type: code
+        snippet: c02-percent
+        caption: |
+          `Percent` and its first few methods. Lines 539–556 (`parse`, which can fail) are
+          omitted; failure is [chapter 6](chapter:result-errors).
+        annotations:
+          - lines: 515
+            token: "PartialEq, PartialOrd, Default"
+            kind: rust
+            body: |
+              Compare this derive list with `ExitStatus`: there is no `Eq`, `Ord` or `Hash`. A
+              floating-point number can be `NaN` ("not a number"), which is not equal even to
+              itself, so `f64` itself only provides `PartialEq` and `PartialOrd`, and a struct
+              wrapping it cannot derive the stronger ones.
+          - lines: 516
+            token: "Percent(f64)"
+            kind: type
+            body: |
+              `f64` is a 64-bit floating-point number (a "double" in many languages). `f32`
+              exists too, but Ono-Sendai uses `f64`.
+          - lines: 520
+            token: "Self(0.0)"
+            kind: rust
+            body: |
+              `0.0` is a floating-point literal. Writing `0` would be an integer literal, and Rust
+              never converts an integer to a float silently: `Self(0)` would not compile here.
+          - lines: 522-524
+            kind: ono
+            body: |
+              The doc comment removes an ambiguity that plagues percentage APIs: `new(24.8)` means
+              24.8 %, not 2480 %. The type makes the convention part of its contract.
+          - lines: 530
+            token: "value(self) -> f64"
+            kind: type
+            body: |
+              Like `ExitStatus::code`, a method that hands out the wrapped number. `Percent` is
+              `Copy`, so `self` is a cheap copy.
+          - lines: 537
+            token: "self.0 / 100.0"
+            kind: rust
+            body: |
+              Floating-point division. Both operands must have the same type: `f64 / f64`.
+              `self.0 / 100` would not compile, because `100` is an integer literal and Rust has
+              no implicit conversion between integers and floats.
+          - lines: 559
+            token: "plus(self, other: Self) -> Self"
+            kind: rust
+            body: |
+              Two parameters: the receiver `self` and a second `Percent` called `other`. The
+              method returns a **new** `Percent`. Neither input is changed — they are copies, and
+              nothing in the body assigns to them.
+          - lines: 560
+            token: "Self(self.0 + other.0)"
+            kind: flow
+            body: |
+              Add the two inner numbers, wrap the sum in a new `Percent`, return it (last
+              expression, no semicolon).
+      - type: prose
+        kind: rust
+        title: Values that do not change
+        body: |
+          Nothing on this page mutates anything. `plus` does not add to `self`; it returns a new
+          value. In Rust, variables and parameters are **immutable unless declared otherwise**
+          (`let mut`, which you meet in [lesson 4](lesson:functions-types-04)). Small value types like `Percent`, `ExitStatus`
+          and `ByteUnit` are therefore designed as values you combine into new values, much like
+          numbers themselves.
+      - type: exercise
+        id: functions-types-02-q1
+        exercise_type: predict
+        prompt: |
+          Predict the values of `ByteUnit::MiB.factor()` and `ByteUnit::MB.factor()`. Which one is
+          larger, and by how much (roughly, in percent)?
+        snippets: [c02-byte-unit-factor]
+        hints:
+          - level: 1
+            body: |
+              Find the two arms for `MiB` and `MB`.
+          - level: 2
+            body: |
+              `1 << 20` is 2 to the power 20; 2^10 is 1024.
+        solution: |
+          `MiB` → `1 << 20` = 1024 × 1024 = **1 048 576**. `MB` → `1_000_000` = **1 000 000**.
+          A mebibyte is larger by 48 576 bytes, about 4.9 %. The difference grows with each step:
+          a `TiB` is about 10 % larger than a `TB`. This is why the file keeps the two families
+          apart and why suffix matching is case-sensitive.
+      - type: exercise
+        id: functions-types-02-q2
+        exercise_type: multiple-choice
+        prompt: |
+          Given `let a = Percent::new(20.0);` and `let b = Percent::new(5.0);`, what is true after
+          `let total = a.plus(b);`?
+        snippets: [c02-percent]
+        choices:
+          - text: "`total` is 25 %, and `a` and `b` are still 20 % and 5 %"
+            correct: true
+            feedback: |
+              Right. `plus` builds and returns a new `Percent` (line 560). It received copies of
+              `a` and `b` (the type is `Copy`) and changed neither.
+          - text: "`a` is now 25 %, and `total` refers to `a`"
+            feedback: |
+              That is how a mutating `add` might work in some languages. Here, `plus(self, …)`
+              receives a copy of `a`, nothing is assigned, and the result is a new value.
+          - text: "`a` and `b` can no longer be used, because `plus` took them by value"
+            feedback: |
+              Taking `self` by value moves a non-`Copy` type, but `Percent` derives `Copy`
+              (line 515). The method received copies.
+          - text: "`total` is 0.25, because percentages are stored as fractions"
+            feedback: |
+              The doc comment on line 522 says the opposite: `Percent` stores a number of percent,
+              not a fraction. `as_fraction` exists precisely to convert when a fraction is needed.
+      - type: exercise
+        id: functions-types-02-q3
+        exercise_type: explain-line
+        prompt: |
+          Explain line 94, `ByteUnit::KiB => 1 << 10,`. What does each part mean, and what type
+          does the number have?
+        snippets: [c02-byte-unit-factor]
+        hints:
+          - level: 1
+            body: |
+              The line is one arm of the `match` on line 92.
+          - level: 2
+            body: |
+              A literal without a suffix gets its type from where it is used. Where is this value
+              used?
+        solution: |
+          It is one arm of the `match self` expression. `ByteUnit::KiB` is the pattern: the arm
+          runs when `self` is the unit `KiB`. `=>` separates the pattern from the value the arm
+          produces. `1 << 10` shifts the number 1 ten bits to the left, which gives 2^10 = 1024,
+          the number of bytes in a kibibyte. Because the `match` is the function's final
+          expression and the function returns `u128`, the literal is inferred to be a `u128`.
+          So `ByteUnit::KiB.factor()` returns `1024u128`.
+
+  - id: functions-types-03
+    title: "Bindings, casts and choosing a result: Span::of and Duration"
+    stage: guided
+    summary: "`let` bindings, `as` casts between integer types, an early `return`, and a long `if / else if` chain that is itself the function's result."
+    prerequisites: [functions-types-01]
+    concepts: [bindings, scalar-types, expressions, functions]
+    ono_topics: [core-vocabulary, value-model, rendering]
+    objectives:
+      - "Read `let name = expression;` and know that the binding cannot change"
+      - "Explain why `as usize` is needed and what `as` does between integer types"
+      - "Tell an early `return` from the final expression"
+      - "Read an `if / else if / else` chain as a value"
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          Back in `crates/ono-core/src/span.rs`. In [chapter 1](lesson:reading-rust-03) you saw that a span is a pair of
+          byte offsets and that `Span::new(4, 11).of("get process")` returns `"process"`. `of` is
+          the function a diagnostic uses to print the text it complains about. Its doc comment
+          sets a hard requirement.
+      - type: code
+        snippet: c02-span-of
+        annotations:
+          - lines: 83
+            kind: ono
+            body: |
+              "Rendering a diagnostic must never panic, however wrong the span it was handed is."
+              A **panic** is Rust's way of stopping the program (or the current thread) on an
+              unrecoverable error. An error message that crashes the shell would be worse than no
+              error message, so `of` must cope with any span at all.
+          - lines: 85
+            token: "source: &str"
+            kind: type
+            body: |
+              `&str` is a [**borrowed string slice**](glossary:string-slice): a view of some text owned by somebody else.
+              The function reads `source` without taking it over. It returns another `&str`, a
+              view into the same text. How Rust knows the result points into `source` is a
+              lifetime question, answered in [chapter 8](lesson:borrowing-01).
+          - lines: 86
+            token: "let start = self.start as usize;"
+            kind: rust
+            body: |
+              `let` introduces a **binding**: the name `start` now stands for this value, and it
+              cannot be reassigned. The type (`usize`) is not written; Rust infers it from the
+              right side. `as usize` **casts** the field from `u32` to `usize`, the integer type
+              Rust uses for sizes and positions in memory — string lengths and slice positions are
+              `usize`. A local `start` and the field `self.start` are different things; the
+              binding just happens to reuse the name.
+          - lines: 88
+            token: "||"
+            kind: flow
+            body: |
+              `||` is boolean "or". The condition is true if the span is backwards or if it ends
+              beyond the text. (`Span::new` already puts the two ends in order, as [chapter 3](lesson:structs-methods-01)
+              shows, so the first half is a defensive check: `of` does not rely on it.) `source.len()` is the length of the text in **bytes**, a `usize` —
+              which is why the offsets were cast to `usize` first: Rust does not compare a `u32`
+              with a `usize` without an explicit conversion.
+          - lines: 89
+            token: "return \"\";"
+            kind: flow
+            body: |
+              `return` leaves the function immediately with the given value — here the empty
+              text. This is the idiomatic use of `return`: an **early exit**. The normal result is
+              the last expression on line 91.
+          - lines: 91
+            token: "source.get(start..end).unwrap_or(\"\")"
+            kind: rust
+            body: |
+              `start..end` is a **range**. `source.get(range)` asks for that part of the text and
+              answers "here it is" or "there is none" — for example when the range would cut a
+              multi-byte character in half. `.unwrap_or("")` takes the part if there is one and
+              `""` otherwise. The "maybe a value" type behind this is [`Option`](glossary:option), the subject of
+              [chapter 5](chapter:option). No semicolon: this is the returned value.
+      - type: prose
+        kind: rust
+        title: Two exits, one guarantee
+        body: |
+          `of` has two ways out. Line 89 returns early for spans that are clearly impossible;
+          line 91 handles everything else and still falls back to `""` for ranges that do not land
+          on character boundaries. Neither path can panic. Slicing with square brackets,
+          `&source[start..end]`, *would* panic on a bad range — that is precisely why the code uses
+          `get` instead.
+
+          The second function in this lesson shows the opposite style: no early return, but one
+          large expression that picks a result.
+      - type: prose
+        kind: black-box
+        title: How a type prints itself
+        body: |
+          The next snippet starts with `impl fmt::Display for Duration` and
+          `fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result`. Read these two lines as
+          "this is how a `Duration` is turned into text when it is printed". Inside, `write!(f,
+          ...)` and `f.write_str(...)` append text to the output and report whether that worked;
+          the `?` after `f.write_str("-")` on line 484 means "if writing failed, give up and pass
+          the failure on". Traits are [chapter 10](lesson:traits-01), `?` is [chapter 6](lesson:result-errors-03). Everything else in the
+          snippet is ordinary arithmetic and control flow.
+      - type: code
+        snippet: c02-duration-display
+        annotations:
+          - lines: 481
+            kind: ono
+            body: |
+              "The human form of spec §13.4": how `ps`-like tables show a duration. The module doc
+              adds that this form "is deliberately lossy"; a separate `exact` rendering parses
+              back to the identical value.
+          - lines: 483
+            token: "if self.0 < 0 {"
+            kind: flow
+            body: |
+              A `Duration` wraps an `i128` count of nanoseconds (signed, because durations can be
+              negative). This `if` has no `else` and is used only for its effect: print a minus
+              sign first.
+          - lines: 486
+            token: "unsigned_abs()"
+            kind: type
+            body: |
+              `unsigned_abs` turns the signed `i128` into its absolute value as an unsigned
+              `u128`. The sign has already been printed; from here on everything is positive.
+          - lines: 487
+            token: "DurationUnit::Days.nanoseconds()"
+            kind: rust
+            body: |
+              Six immutable bindings: nanoseconds per day, hour, minute, second, millisecond and
+              microsecond, each taken from the unit's `nanoseconds()` method (a `match` like
+              `ByteUnit::factor`) and converted to `u128` so they can be combined with `nanos`.
+          - lines: 494
+            token: "if nanos == 0 {"
+            kind: flow
+            body: |
+              From here to line 510 is **one** expression: an `if / else if / … / else` chain.
+              Exactly one branch runs, the first whose condition holds. Each branch produces the
+              result of a write, and because the whole chain is the last expression of `fmt`, that
+              result is what `fmt` returns.
+          - lines: 497
+            token: "{:02}"
+            kind: rust
+            body: |
+              `nanos / day` is **integer division**: it discards the remainder, giving whole days.
+              `nanos % day` is the remainder, which is then divided into whole hours. `{:02}`
+              formats a number at least two digits wide, padded with zeros: 3 prints as `03`.
+          - lines: 503
+            token: "nanos as f64 / second as f64"
+            kind: rust
+            body: |
+              For durations between one second and one minute, both numbers are cast to `f64` so
+              the division keeps the fraction; `{:.2}` prints two digits after the decimal point.
+              Integer division would print 1 for 1.5 seconds.
+          - lines: 509
+            token: "{nanos}"
+            kind: rust
+            body: |
+              A variable name inside the braces is formatted directly: `{nanos}` prints the value
+              of `nanos`.
+      - type: exercise
+        id: functions-types-03-q1
+        exercise_type: trace-control-flow
+        prompt: |
+          Trace `Span::new(0, 900).of("short")` line by line. Which lines run, and what is
+          returned? Then do the same for `Span::new(1, 3).of("short")`. The test below states the
+          first result; your trace should explain *why*.
+        snippets: [c02-span-of, c02-span-outside-test]
+        hints:
+          - level: 1
+            body: |
+              Compute `start`, `end` and `source.len()` first.
+          - level: 2
+            body: |
+              Evaluate the condition on line 88 with those numbers. If it is true, which line
+              ends the function?
+        solution: |
+          First call: line 86 binds `start = 0`, line 87 binds `end = 900`. On line 88,
+          `start > end` is false but `end > source.len()` is `900 > 5`, true; with `||` the whole
+          condition is true. Line 89 runs `return "";` and the function ends — line 91 never
+          runs. Result: `""`, exactly what the test on line 39 asserts.
+
+          Second call: `start = 1`, `end = 3`, `source.len() = 5`. The condition on line 88 is
+          false, so the `if` body is skipped. Line 91 asks for bytes 1 to 2 of `"short"`, gets
+          `"ho"`, and `unwrap_or` passes it through. Because line 91 is the final expression, the
+          function returns `"ho"`.
+      - type: exercise
+        id: functions-types-03-q2
+        exercise_type: predict
+        prompt: |
+          Predict what the `Display` code prints for durations of (a) 90 seconds, (b) 1.5 seconds,
+          (c) 2 days and 5 hours, (d) minus 843 milliseconds.
+        snippets: [c02-duration-display]
+        hints:
+          - level: 1
+            body: |
+              For each duration, find the **first** condition in lines 494–508 that is true.
+          - level: 2
+            body: |
+              Only case (b) uses floating-point division. Case (d) prints something before the
+              chain even starts.
+        solution: |
+          (a) 90 s is at least a minute but less than an hour, so line 501 runs: `90 / 60 = 1`
+          minute, `(90 % 60) = 30` seconds, zero-padded → **`1m 30s`**.
+
+          (b) 1.5 s is at least a second but less than a minute: line 503 divides as floats,
+          `1.5`, printed with two decimals → **`1.50s`**.
+
+          (c) 2 days and 5 hours is at least a day: line 497 prints whole days `2` and the
+          remaining hours `5` padded to two digits → **`2d 05h`**. Minutes are dropped — the form
+          is deliberately lossy.
+
+          (d) The value is negative, so line 484 first writes `-`. Then `nanos` is 843 ms as a
+          positive number, which is at least a millisecond but less than a second: line 505
+          → **`-843ms`**.
+      - type: exercise
+        id: functions-types-03-q3
+        exercise_type: multiple-choice
+        prompt: |
+          What would happen if someone added a semicolon at the end of line 91, making it
+          `source.get(start..end).unwrap_or("");`?
+        snippets: [c02-span-of]
+        choices:
+          - text: "The code would no longer compile"
+            correct: true
+            feedback: |
+              Right. With the semicolon, the line becomes a statement and the body ends without a
+              final expression, so its value is `()`. The signature promises a `&str`, and the
+              compiler rejects the mismatch.
+          - text: "The function would always return `\"\"`"
+            feedback: |
+              Rust has no implicit default return value. A body that ends in a statement has the
+              value `()`, which is not a `&str`, so the program does not compile at all.
+          - text: "Nothing would change; the semicolon is optional"
+            feedback: |
+              In Rust the semicolon is meaningful: it turns an expression into a statement and
+              discards its value.
+          - text: "The function would panic at run time"
+            feedback: |
+              The problem is found by the compiler, long before anything runs: the body's type
+              does not match the declared return type.
+
+  - id: functions-types-04
+    title: "Loops and counters that change: shorten and take_cells"
+    stage: guided
+    summary: "`let mut`, a `for` loop over the characters of a string, `break`, `+=`, and a function that returns a newly built `String`."
+    prerequisites: [functions-types-03]
+    concepts: [bindings, mutability, expressions, slices-strings]
+    ono_topics: [rendering]
+    objectives:
+      - "Read `let mut` as permission to change a binding, and spot where it changes"
+      - "Follow a `for` loop with an early `break`"
+      - "Tell `&str` (borrowed text) from `String` (owned, growable text) in a signature"
+      - Explain why the code counts terminal cells rather than bytes or characters
+    sections:
+      - type: prose
+        kind: context
+        body: |
+          `ono-render` turns values into terminal tables. When a value is wider than its column,
+          it must be shortened, and the shortening must be visible. These two functions from
+          `crates/ono-render/src/table.rs` do that, and their doc comments state the constraint
+          that shapes every line: "Never splits a character, and never returns something wider
+          than asked for — a line that escapes the terminal wraps and destroys the alignment of
+          everything below it."
+
+          Width here means **terminal cells**. Most characters take one cell; many East Asian
+          characters take two; some control characters take none. And in bytes, `日` is three
+          bytes long. Bytes, characters and cells are three different measures.
+      - type: code
+        snippet: c02-shorten
+        caption: |
+          The marker constant from the top of the file, and the two functions near its end.
+        annotations:
+          - lines: 13-15
+            kind: ono
+            body: |
+              Spec §13.3 requires truncation to be visible and "favours ASCII-safe output", so the
+              marker is three ASCII full stops rather than the single character `…`.
+          - lines: 15
+            token: "const TRUNCATION_MARKER: &str"
+            kind: rust
+            body: |
+              A **constant** at module level, without `pub`: private to this module. Its type is
+              `&str`, a piece of text.
+          - lines: 715
+            token: "pub(crate)"
+            kind: rust
+            body: |
+              `pub(crate)` means "public inside this crate only": the rest of `ono-render` may call
+              `shorten`, other crates may not. [Chapter 3](lesson:structs-methods-03) compares all visibility levels.
+          - lines: 715
+            token: "-> String"
+            kind: type
+            body: |
+              The parameter `text: &str` is [**borrowed**](glossary:borrow) text; the result is a `String`, text the
+              caller will **own**: a new piece of text that can grow. The function reads the input
+              and builds a separate output.
+          - lines: 716
+            token: "text.width()"
+            kind: crate
+            body: |
+              `width()` comes from the external crate `unicode-width`: it is a method of that
+              crate's trait `UnicodeWidthStr`, imported at the top of the file with
+              `use unicode_width::UnicodeWidthStr;`. It returns the number of terminal cells the
+              text occupies; read it as exactly that. ([Chapter 10](lesson:traits-01) explains why
+              such a method needs its `use` line.)
+          - lines: 717
+            token: "text.to_owned()"
+            kind: ownership
+            body: |
+              The text already fits, so it is returned unchanged — but the function promises a
+              `String`, and `text` is only a borrowed `&str`. `to_owned()` makes an owned copy.
+          - lines: 719-720
+            kind: flow
+            body: |
+              A column of three cells or fewer has no room for `...` plus any text, so the text is
+              simply cut without a marker.
+          - lines: 722
+            token: "width - TRUNCATION_MARKER.len()"
+            kind: rust
+            body: |
+              Keep room for the marker: `len()` of `"..."` is 3 (bytes, which equal cells for
+              ASCII). The subtraction cannot go below zero, because line 719 already returned for
+              any `width` of 3 or less — important for an unsigned `usize`.
+          - lines: 723
+            token: "format!(\"{kept}{TRUNCATION_MARKER}\")"
+            kind: rust
+            body: |
+              `format!` builds a new `String` from a template, like `write!` but into a fresh
+              string. The result is the kept prefix followed by `...`.
+          - lines: 731
+            token: "let mut used = 0;"
+            kind: rust
+            body: |
+              `let mut` declares a binding that **may change**. Without `mut`, the assignment on
+              line 738 would be a compile error. `used` counts cells consumed so far; its type is
+              inferred as `usize` from how it is used with `width` and `cells`.
+          - lines: 732
+            token: "String::new()"
+            kind: type
+            body: |
+              An empty `String`, owned by this function, which will grow one character at a time.
+              It is `mut` because pushing characters changes it.
+          - lines: 733
+            token: "for character in text.chars()"
+            kind: flow
+            body: |
+              `text.chars()` yields the text's characters one by one (not its bytes), and the
+              `for` loop runs its body once per character, binding it to `character`.
+          - lines: 734
+            token: "unwrap_or(0)"
+            kind: crate
+            body: |
+              The cell width of one character. For a few characters (control characters) there is
+              no defined width; `unwrap_or(0)` counts those as zero cells. The "maybe a value"
+              mechanism is [chapter 5](chapter:option).
+          - lines: 735-736
+            kind: flow
+            body: |
+              If this character would push past the limit, `break` leaves the loop at once. A wide
+              character that does not fit is dropped, never half-printed.
+          - lines: 738-739
+            kind: rust
+            body: |
+              `used += cells` adds to the counter in place. `kept.push(character)` appends one
+              character to the string. Both change their binding, which is why both were declared
+              `mut`.
+          - lines: 741
+            token: "kept"
+            kind: ownership
+            body: |
+              The last expression: the finished `String` is handed to the caller, who owns it from
+              now on. [Chapter 7](lesson:ownership-moves-01) explains what "handing over" means in Rust.
+      - type: prose
+        kind: rust
+        title: Immutable by default
+        body: |
+          `shorten` has no `mut` at all; `take_cells` has exactly two. That makes them easy to
+          scan: in `take_cells`, only `used` and `kept` change, and you can find every change by
+          looking for them. Everything else — `text`, `width`, `cells`, `character` — is fixed once
+          bound. This default is deliberate in Rust: a reader can assume that a binding without
+          `mut` keeps the value it was given. (This is a first approximation: [chapter 9](lesson:mutability-01) adds
+          the full story, including `&mut`, and [chapter 15](lesson:smart-pointers-02) shows the few types that are built to
+          be changed through a shared reference.)
+      - type: exercise
+        id: functions-types-04-q1
+        exercise_type: predict
+        prompt: |
+          Predict the results of `shorten("processes", 6)` and `shorten("nginx", 3)`. All the
+          characters are ASCII, so each takes one cell.
+        snippets: [c02-shorten]
+        hints:
+          - level: 1
+            body: |
+              For each call, check the three conditions of `shorten` in order: lines 716, 719,
+              and the path through line 722.
+          - level: 2
+            body: |
+              `"processes"` is 9 cells wide and `"nginx"` 5. One of the calls never adds the
+              marker.
+        solution: |
+          `shorten("processes", 6)`: the text is 9 cells, more than 6, so line 717 is skipped.
+          `6 <= 3` is false, so line 720 is skipped. Line 722 calls `take_cells("processes", 3)`,
+          which keeps `"pro"`. Line 723 appends the marker: **`"pro..."`**, exactly 6 cells.
+
+          `shorten("nginx", 3)`: 5 cells is more than 3. Now `3 <= 3` is true, so line 720
+          returns `take_cells("nginx", 3)` = **`"ngi"`** — no marker, because there is no room
+          for one.
+      - type: exercise
+        id: functions-types-04-q2
+        exercise_type: trace-value
+        prompt: |
+          Trace `used` and `kept` through `take_cells("日本", 3)`. Each of the two characters is
+          two cells wide. The test below shows two related cases.
+        snippets: [c02-shorten, c02-take-cells-test]
+        hints:
+          - level: 1
+            body: |
+              Start with `used = 0` and `kept = ""`, then go through the loop once per character.
+          - level: 2
+            body: |
+              The check on line 735 happens **before** the character is added.
+        solution: |
+          Start: `used = 0`, `kept = ""`.
+
+          First iteration, `character = '日'`: `cells = 2`. Is `0 + 2 > 3`? No. So `used`
+          becomes 2 and `kept` becomes `"日"`.
+
+          Second iteration, `character = '本'`: `cells = 2`. Is `2 + 2 > 3`? Yes, so `break`
+          leaves the loop; nothing is added.
+
+          The function returns `"日"`, 2 cells — within the limit of 3, with one cell left
+          unused rather than half a character printed. The tests show the extreme cases:
+          `take_cells("日", 1)` is `""` because even the first character does not fit, and
+          `take_cells("日", 2)` is `"日"`.
+      - type: exercise
+        id: functions-types-04-q3
+        exercise_type: multiple-choice
+        prompt: |
+          Suppose line 731 were written `let used = 0;` (without `mut`). What happens?
+        snippets: [c02-shorten]
+        choices:
+          - text: "The compiler rejects line 738, because `used` cannot be assigned to"
+            correct: true
+            feedback: |
+              Right. `used += cells` changes `used`, and a binding without `mut` cannot be
+              changed. The error points at the assignment and suggests adding `mut`.
+          - text: "It compiles, but `used` stays 0, so every character is kept"
+            feedback: |
+              Rust does not silently ignore an assignment to an immutable binding. The program
+              would not compile at all.
+          - text: "It compiles; `mut` is only a hint to the reader"
+            feedback: |
+              `mut` is enforced by the compiler. That is what makes it trustworthy for a reader:
+              no `mut`, no change.
+          - text: "It panics at run time when line 738 is reached"
+            feedback: |
+              Mutability is checked at compile time; nothing about it is left for run time.

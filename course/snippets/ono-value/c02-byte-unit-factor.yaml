@@ -1,0 +1,27 @@
+id: c02-byte-unit-factor
+source:
+  file: crates/ono-value/src/units.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 89
+  end_line: 105
+  anchor: ByteUnit::KiB => 1 << 10,
+  content_hash: sha256:36ed38d07e9a940447b3fd237b8fa794546a8b239e8ecc1837f1c720c1fb556b
+  code: |2
+        /// How many bytes one of this unit is.
+        #[must_use]
+        pub const fn factor(self) -> u128 {
+            match self {
+                ByteUnit::B => 1,
+                ByteUnit::KiB => 1 << 10,
+                ByteUnit::MiB => 1 << 20,
+                ByteUnit::GiB => 1 << 30,
+                ByteUnit::TiB => 1 << 40,
+                ByteUnit::PiB => 1 << 50,
+                ByteUnit::KB => 1_000,
+                ByteUnit::MB => 1_000_000,
+                ByteUnit::GB => 1_000_000_000,
+                ByteUnit::TB => 1_000_000_000_000,
+                ByteUnit::PB => 1_000_000_000_000_000,
+            }
+        }

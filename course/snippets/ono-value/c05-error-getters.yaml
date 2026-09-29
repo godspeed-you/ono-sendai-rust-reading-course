@@ -1,0 +1,48 @@
+id: c05-error-getters
+source:
+  file: crates/ono-value/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 92
+  end_line: 101
+  anchor: 'target: Option<ValueRef>,'
+  content_hash: sha256:24eaa42ab4aa1ef032acc3c0a8883a71dcb2a1d77bb6d6a8b95588a3cc59b730
+  code: |
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ErrorValue {
+        code: ErrorCode,
+        message: Arc<str>,
+        target: Option<ValueRef>,
+        source: Option<Arc<ErrorValue>>,
+        help: Option<Arc<str>>,
+        retryable: Option<bool>,
+        metadata: MapValue,
+    }
+- start_line: 171
+  end_line: 193
+  anchor: self.source.as_deref()
+  content_hash: sha256:25e510e56ad48c9264810ec72d89fe87261f35c516bdcd3d68ea6d24ae9fbfe4
+  code: |2
+        /// What the error is about, if it is about a particular thing.
+        #[must_use]
+        pub const fn target(&self) -> Option<&ValueRef> {
+            self.target.as_ref()
+        }
+
+        /// The error this one was raised from.
+        #[must_use]
+        pub fn cause(&self) -> Option<&ErrorValue> {
+            self.source.as_deref()
+        }
+
+        /// The suggestion shown under the message.
+        #[must_use]
+        pub fn help(&self) -> Option<&str> {
+            self.help.as_deref()
+        }
+
+        /// Whether repeating the operation could succeed, or `None` when nothing is known about it.
+        #[must_use]
+        pub const fn retryable(&self) -> Option<bool> {
+            self.retryable
+        }

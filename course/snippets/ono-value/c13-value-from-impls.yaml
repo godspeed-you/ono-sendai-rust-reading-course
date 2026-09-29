@@ -1,0 +1,57 @@
+id: c13-value-from-impls
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 619
+  end_line: 665
+  anchor: impl From<i64> for Value {
+  content_hash: sha256:d7c25d3d4624f7bb9a73bbc2cb644365494e5433434103650f027b5b1d9592ae
+  code: |
+    impl From<bool> for Value {
+        fn from(value: bool) -> Self {
+            Value::Bool(value)
+        }
+    }
+
+    impl From<i128> for Value {
+        fn from(value: i128) -> Self {
+            Value::Int(value)
+        }
+    }
+
+    impl From<i64> for Value {
+        fn from(value: i64) -> Self {
+            Value::Int(i128::from(value))
+        }
+    }
+
+    impl From<u32> for Value {
+        fn from(value: u32) -> Self {
+            Value::Int(i128::from(value))
+        }
+    }
+
+    impl From<f64> for Value {
+        fn from(value: f64) -> Self {
+            Value::Float(value)
+        }
+    }
+
+    impl From<&str> for Value {
+        fn from(value: &str) -> Self {
+            Value::String(value.into())
+        }
+    }
+
+    impl From<String> for Value {
+        fn from(value: String) -> Self {
+            Value::String(value.into())
+        }
+    }
+
+    impl From<RecordValue> for Value {
+        fn from(record: RecordValue) -> Self {
+            record.into_value()
+        }
+    }

@@ -1,0 +1,23 @@
+id: c02-span-outside-test
+source:
+  file: crates/ono-core/tests/span.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 29
+  end_line: 41
+  anchor: assert_eq!(Span::new(0, 900).of("short"), "");
+  content_hash: sha256:515171d07559bbff927fcab5ccd87871b015857e06df44b8d7e0e4512831e664
+  code: |
+    #[test]
+    fn should_slice_the_source_it_points_at_when_applied() {
+        let source = "get process | where cpu > 20";
+        assert_eq!(Span::new(0, 11).of(source), "get process");
+        assert_eq!(Span::new(14, 19).of(source), "where");
+    }
+
+    #[test]
+    fn should_yield_nothing_when_it_points_outside_the_source() {
+        // A diagnostic must never panic while rendering, however wrong its span is.
+        assert_eq!(Span::new(0, 900).of("short"), "");
+        assert_eq!(Span::new(900, 901).of("short"), "");
+    }

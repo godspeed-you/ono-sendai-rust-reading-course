@@ -1,0 +1,152 @@
+id: c21-netlink-watch
+source:
+  file: crates/ono-provider-netlink/src/provider.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 146
+  end_line: 156
+  anchor: 'fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {'
+  content_hash: sha256:fd86269d4409c25e7a318f4bd92831edee791e1b8ca348bd1dfd6b4cbb87734f
+  code: |2
+        /// `watch interface`, through the rtnetlink multicast groups (spec §18.2, ADR-0235).
+        ///
+        /// Links and both address families, because an interface record carries its addresses: an
+        /// address that appears is the interface changing.
+        fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+            subscribe_table(
+                sys::RTMGRP_LINK | sys::RTMGRP_IPV4_IFADDR | sys::RTMGRP_IPV6_IFADDR,
+                query,
+                read_interfaces,
+            )
+        }
+- start_line: 550
+  end_line: 675
+  anchor: std::thread::spawn(move || wait_for_changes(&socket, &sender));
+  content_hash: sha256:75ff0b1b00f8bf20ec5e10063cdca067920b58381b2c1c90a0636dfa4d9e4b9a
+  code: |
+    /// How long a multicast reader waits for the kernel before coming up for air.
+    ///
+    /// Nothing is re-read when it expires: it is only how often the reader notices that nobody is
+    /// listening, so a cancelled watch stops within it.
+    const REAP: u16 = 200;
+
+    /// Subscribes to `groups` and reports what `read` sees change (spec §18.2, ADR-0235).
+    ///
+    /// The kernel says *that* something changed; the answer to *what* is a fresh dump through the
+    /// same decoders a `get` uses, diffed by object identity. That keeps one description of an
+    /// interface or a route in the crate rather than two that can drift, and it costs one dump per
+    /// change rather than one per tick — on an idle machine, none at all.
+    ///
+    /// # Errors
+    ///
+    /// Whatever opening or binding the multicast socket refused. The watch runtime falls back to
+    /// polling on any error, so a refusal costs latency and never the answer.
+    fn subscribe_table<F>(groups: u32, query: &Query, read: F) -> Result<EventStream, ErrorValue>
+    where
+        F: Fn() -> Result<Decoded, ErrorValue> + Send + Sync + 'static,
+    {
+        let socket = NetlinkSocket::open_route_multicast(groups)?;
+        let read = Arc::new(read);
+        // The watch narrows exactly as the listing does: `watch interface lo` is about `lo`, and a
+        // change to another interface is not an answer to it.
+        let query = query.clone();
+        // A dump before the first wake, so the first change is a change against the real table and
+        // not against emptiness.
+        let mut known = table(&read()?, &query);
+
+        Ok(EventStream::spawn(
+            PipelineConfig::new(),
+            move |sink| async move {
+                let (sender, mut receiver) = tokio::sync::mpsc::channel::<jiff::Timestamp>(8);
+                std::thread::spawn(move || wait_for_changes(&socket, &sender));
+
+                // The instant the kernel's own notification arrived, kept across the re-dump that
+                // answers it. §3.3 asks for when the change happened as far as the source can say,
+                // and rtnetlink carries no timestamp of its own, so the arrival is the earliest
+                // instant there is evidence for — earlier than the re-dump the shell answers with,
+                // which is a fact about this provider rather than about the interface (ADR-0717).
+                while let Some(announced_at) = receiver.recv().await {
+                    let reader = Arc::clone(&read);
+                    let Ok(Ok(fresh)) = tokio::task::spawn_blocking(move || reader()).await else {
+                        // The table could not be read this time; the next change asks again.
+                        continue;
+                    };
+                    let seen = table(&fresh, &query);
+                    for (id, record) in &seen {
+                        let event = match known.get(id) {
+                            None => ObjectEvent::added(record),
+                            Some(previous) if previous == record => continue,
+                            Some(previous) => ObjectEvent::changed(record, moved(previous, record)),
+                        };
+                        if sink
+                            .send(event.with_observed_at(announced_at))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    for (id, record) in &known {
+                        if !seen.contains_key(id)
+                            && sink
+                                .send(ObjectEvent::removed(record).with_observed_at(announced_at))
+                                .await
+                                .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    known = seen;
+                }
+            },
+        ))
+    }
+
+    /// The decoded records the query keeps, by identity — which is what a change is measured against.
+    fn table(decoded: &Decoded, query: &Query) -> std::collections::BTreeMap<String, RecordValue> {
+        decoded
+            .records()
+            .iter()
+            .filter(|record| keep(record, query))
+            .filter_map(|record| {
+                ono_provider_api::ObjectId::of(record).map(|id| (id.to_string(), record.clone()))
+            })
+            .collect()
+    }
+
+    /// The fields whose values moved between two observations of one object.
+    fn moved(previous: &RecordValue, current: &RecordValue) -> Vec<String> {
+        current
+            .schema()
+            .fields()
+            .iter()
+            .filter(|field| previous.get(field.name()) != current.get(field.name()))
+            .map(|field| field.name().to_owned())
+            .collect()
+    }
+
+    /// Waits on the multicast socket and says *when* the kernel spoke, until nobody is listening.
+    ///
+    /// The instant is taken the moment the socket becomes readable, before anything is decoded and
+    /// before the re-dump that answers the notification. That is the earliest instant this provider
+    /// has evidence for, and it is what the resulting events are dated by (ADR-0717).
+    fn wait_for_changes(socket: &NetlinkSocket, sender: &tokio::sync::mpsc::Sender<jiff::Timestamp>) {
+        use nix::poll::{PollFd, PollFlags, PollTimeout};
+
+        loop {
+            if sender.is_closed() {
+                return;
+            }
+            let mut fds = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+            match nix::poll::poll(&mut fds, PollTimeout::from(REAP)) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => return,
+            }
+            let announced_at = jiff::Timestamp::now();
+            if socket.drain() && sender.blocking_send(announced_at).is_err() {
+                return;
+            }
+        }
+    }

@@ -1,0 +1,19 @@
+id: c05-exit-signal
+source:
+  file: crates/ono-core/src/exit.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 60
+  end_line: 68
+  anchor: pub const fn signal(self) -> Option<u8> {
+  content_hash: sha256:d0f18f590c5c428a417497a0140fb6504a3a9bdb4b079f0e566a870f33113ab4
+  code: |2
+        /// The signal that terminated the process, if this status describes one.
+        #[must_use]
+        pub const fn signal(self) -> Option<u8> {
+            if self.0 > 128 {
+                Some(self.0 - 128)
+            } else {
+                None
+            }
+        }

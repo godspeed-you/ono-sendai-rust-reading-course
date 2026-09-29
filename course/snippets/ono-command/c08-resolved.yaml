@@ -1,0 +1,58 @@
+id: c08-resolved
+source:
+  file: crates/ono-command/src/registry.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 48
+  end_line: 58
+  anchor: pub struct Resolved<'r, 'a> {
+  content_hash: sha256:00627a4442066ab9da5462ea21aec4de2a127193e1f607e75b52cd1f84c822fe
+  code: |
+    /// A command resolved from a stage head, together with the arguments that remain after the
+    /// target word has been consumed.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Resolved<'r, 'a> {
+        /// The command the head named. It borrows the registry, not the stage, so a caller holding a
+        /// `&'static CommandRegistry` keeps a `&'static CommandContract`.
+        pub contract: &'r CommandContract,
+        /// The arguments still to be bound: everything after the verb and, where the command takes
+        /// one, after the target word.
+        pub arguments: &'a [Argument],
+    }
+- start_line: 428
+  end_line: 459
+  anchor: pub fn resolve<'r, 'a>(
+  content_hash: sha256:9f6c375686986b7d29b25cff4c69e4a73df275a96ef614dd6da26ed5e1bc2c97
+  code: |2
+        /// Resolves a stage head against the registry, consuming the target word when the command
+        /// takes one.
+        ///
+        /// This is step 4 of ADR-0011's resolution order. A head that names no native command is
+        /// reported rather than guessed at, so the caller can go on to look for an executable on
+        /// `PATH`.
+        ///
+        /// # Errors
+        ///
+        /// `resolve.target_not_found` when the verb is known but the target word is not, and
+        /// `resolve.command_not_found` when nothing in the registry answers to the head. Both carry
+        /// the near misses spec §15.4 asks for.
+        pub fn resolve<'r, 'a>(
+            &'r self,
+            head: &str,
+            arguments: &'a [Argument],
+        ) -> Result<Resolved<'r, 'a>, ErrorValue> {
+            let first_word = arguments.first().and_then(Argument::as_word);
+            if let Some(word) = first_word
+                && let Some(contract) = self.find(head, Some(word))
+            {
+                return Ok(Resolved {
+                    contract,
+                    arguments: &arguments[1..],
+                });
+            }
+            if let Some(contract) = self.find(head, None) {
+                return Ok(Resolved {
+                    contract,
+                    arguments,
+                });
+            }

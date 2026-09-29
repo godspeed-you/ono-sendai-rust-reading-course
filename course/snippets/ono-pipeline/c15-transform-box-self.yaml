@@ -1,0 +1,32 @@
+id: c15-transform-box-self
+source:
+  file: crates/ono-pipeline/src/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 40
+  end_line: 61
+  anchor: 'fn apply(self: Box<Self>, input: ValueStream) -> ValueStream;'
+  content_hash: sha256:8f72a7ca8905a09559f6e0ecf1b49ed390315b1edf5d084587888de0f171384b
+  code: |
+    /// One stage of a native pipeline: a function from a stream of values to a stream of values.
+    ///
+    /// Parameters are already resolved by the time a transform is built. `where` holds a predicate,
+    /// not an expression; `sort` holds a key function, not an AST. Turning `where cpu > 20` into a
+    /// predicate is the evaluator's job, which is what keeps this crate — and its tests — free of a
+    /// dependency on the parser (ADR-0005).
+    pub trait Transform: Send + 'static {
+        /// The transform's name, as the language spells it. Used in the errors it raises.
+        fn name(&self) -> &'static str;
+
+        /// What the transform needs from its input. Streaming unless stated otherwise.
+        fn input_requirement(&self) -> InputRequirement {
+            InputRequirement::Streaming
+        }
+
+        /// Runs the transform over `input`.
+        ///
+        /// Implementations build their output with [`ValueStream::stage`], which inherits the
+        /// pipeline's capacity, cancellation scope and diagnostics. By the time this is called the
+        /// boundedness check has already passed and any window has already been applied.
+        fn apply(self: Box<Self>, input: ValueStream) -> ValueStream;
+    }

@@ -1,0 +1,48 @@
+id: c08-field-step
+source:
+  file: crates/ono-value/src/record.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 84
+  end_line: 121
+  anchor: pub const fn name(&self) -> &'a str {
+  content_hash: sha256:40722edd8d34fa3b605bc6f7dfd4c8259156f3ba7fbc63b36dd226130c6441ff
+  code: |
+    /// One step of a field path, as written with `.` or `?.` (spec §11.4).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct FieldStep<'a> {
+        name: &'a str,
+        optional: bool,
+    }
+
+    impl<'a> FieldStep<'a> {
+        /// A `.name` step: an absent field is an error.
+        #[must_use]
+        pub const fn required(name: &'a str) -> Self {
+            Self {
+                name,
+                optional: false,
+            }
+        }
+
+        /// A `?.name` step: an absent field, or a null receiver, yields null.
+        #[must_use]
+        pub const fn optional(name: &'a str) -> Self {
+            Self {
+                name,
+                optional: true,
+            }
+        }
+
+        /// The field being read.
+        #[must_use]
+        pub const fn name(&self) -> &'a str {
+            self.name
+        }
+
+        /// Whether the step tolerates an absent field.
+        #[must_use]
+        pub const fn is_optional(&self) -> bool {
+            self.optional
+        }
+    }

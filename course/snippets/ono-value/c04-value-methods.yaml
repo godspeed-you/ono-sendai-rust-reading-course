@@ -1,0 +1,44 @@
+id: c04-value-methods
+source:
+  file: crates/ono-value/src/value.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 85
+  end_line: 96
+  anchor: pub const fn type_name(&self)
+  content_hash: sha256:8778da1f5d6954053f51e8f7aaed6900855d097d8f165d438c690a7f6ec4377a
+  code: |
+    impl Value {
+        /// The stable name of the value's type, as `type` reports it and as error messages spell it.
+        #[must_use]
+        pub const fn type_name(&self) -> &'static str {
+            match self {
+                Value::Null => "null",
+                Value::Bool(_) => "bool",
+                Value::Int(_) => "int",
+                Value::Float(_) => "float",
+                Value::Decimal(_) => "decimal",
+                Value::String(_) => "string",
+                Value::Bytes(_) => "bytes",
+- start_line: 108
+  end_line: 124
+  anchor: pub const fn is_null(&self) -> bool {
+  content_hash: sha256:91247f9471d8e2b007ed5b85e567989f9e1b49a387acf8f7cd431b299b6c4053
+  code: |2
+                Value::Map(_) => "map",
+                Value::Record(_) => "record",
+                Value::Error(_) => "error",
+            }
+        }
+
+        /// Whether the value is the unknown of spec §10.5.
+        #[must_use]
+        pub const fn is_null(&self) -> bool {
+            matches!(self, Value::Null)
+        }
+
+        /// Whether the value is a structured error.
+        #[must_use]
+        pub const fn is_error(&self) -> bool {
+            matches!(self, Value::Error(_))
+        }

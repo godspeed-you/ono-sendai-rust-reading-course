@@ -1,0 +1,64 @@
+id: c18-run-pipeline-native
+source:
+  file: crates/ono-cli/src/eval/pipeline.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 109
+  end_line: 131
+  anchor: super::native::check(session, pipeline, source).map_err(Flow::Failed)?;
+  content_hash: sha256:dde0092f77c223b74e2b742d27877d26a50e380654fab1e4dc9f304ad9459d10
+  code: |
+    /// Runs a pipeline, honouring `&&`, `||` and a trailing `&`.
+    pub fn run_pipeline(session: &mut Session, pipeline: &Pipeline, source: &str) -> Eval<ExitStatus> {
+        // The outermost of these begins the foreground line and drops the interrupt note the prompt
+        // may have left behind; the nested ones — a pipeline per item of an `each { … }` — keep the
+        // one the line is being cancelled by, which used to be lost here (ADR-0782).
+        let _running = ForegroundRun::begin();
+        // Spec §11.3: field names are checked against the declared schemas before anything runs, so
+        // a typo costs one message instead of one per object.
+        super::native::check(session, pipeline, source).map_err(Flow::Failed)?;
+
+        let mut status = run_stage_list(session, &pipeline.head, source, pipeline.background)?;
+
+        for chained in &pipeline.tail {
+            let should_run = match chained.op {
+                ono_parser::ChainOp::And => status.is_success(),
+                ono_parser::ChainOp::Or => !status.is_success(),
+            };
+            if should_run {
+                status = run_stage_list(session, &chained.list, source, pipeline.background)?;
+            }
+        }
+        Ok(status)
+    }
+- start_line: 560
+  end_line: 585
+  anchor: return super::native::run(session, list, source);
+  content_hash: sha256:9260506471a7cfb4406b9027338bfbd69cf9cadb5dfcc2b81b8c657f7a6694e5
+  code: |2
+        // A pipeline with a native command in it runs through the object pipeline of spec §5, which
+        // threads bytes across the boundary of spec §12.3 where a child process sits on one side.
+        // So does an all-external pipeline whose last stage an adapter renders at the terminal
+        // (spec v0.3 §1.4), which is what makes `lsblk` typed at the prompt a table.
+        if super::native::claims(session, list)
+            || (!background && !session.capturing() && super::native::adapts_at_terminal(session, list))
+        {
+            // A pipeline the shell has already been told to abandon is not started. Inside a block
+            // this is the cancellation point between two items: the driver is away from its runtime
+            // while an item runs, so the item itself has to be the thing that looks (v0.5 §32.6).
+            if !background && interrupt_reached() {
+                return Err(interrupted_flow_now());
+            }
+            // A native command is as much "running something" as a child process is: `set file`
+            // reaches the registry now (ADR-0068), and a configuration file that could change a
+            // file's mode would be a startup script wearing a settings file's name (ADR-0010).
+            if session.mode() == Mode::Config {
+                return Err(Flow::Failed(config_refusal("this command")));
+            }
+            if background {
+                // Spec §18.4: a backgrounded native pipeline is a job — listed, addressable,
+                // stoppable — never a hidden thread (ADR-0024).
+                return super::native::run_background(session, list, source);
+            }
+            return super::native::run(session, list, source);
+        }

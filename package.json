@@ -1,0 +1,14 @@
+{
+  "name": "ono-sendai-rust-reading-course-tests",
+  "private": true,
+  "description": "Browser tests for the generated course. Not needed to build or to use the course.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
+    "axe-core": "4.13.0"
+  }
+}

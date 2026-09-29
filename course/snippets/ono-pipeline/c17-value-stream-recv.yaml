@@ -1,0 +1,25 @@
+id: c17-value-stream-recv
+source:
+  file: crates/ono-pipeline/src/stream.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 452
+  end_line: 466
+  anchor: if self.cancel.claim_report() {
+  content_hash: sha256:58b4dd40c5a14203cb3bf040405c782b136afdb8f8f5ca6bd4ca7ddde4e1cc82
+  code: |2
+        /// The next value or failure, or `None` when the stream has ended.
+        ///
+        /// A cancelled pipeline yields one [`ErrorCode::StreamCancelled`] failure before it ends, so
+        /// a consumer never has to guess why the values stopped (spec §18.5).
+        pub async fn recv(&mut self) -> Option<StreamEvent> {
+            if let Some(event) = self.recv_raw().await {
+                self.saw_failure |= matches!(event, StreamEvent::Failure(_));
+                return Some(event);
+            }
+            if self.cancel.claim_report() {
+                self.saw_failure = true;
+                return Some(StreamEvent::Failure(cancelled_error()));
+            }
+            None
+        }

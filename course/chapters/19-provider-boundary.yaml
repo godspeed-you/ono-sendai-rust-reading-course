@@ -1,0 +1,989 @@
+id: provider-boundary
+number: 19
+title: A provider boundary
+summary: |
+  A *provider* is where Ono-Sendai stops being a shell and starts describing a system: `/proc`,
+  D-Bus, netlink, DNS. Every provider implements one trait, `Provider`, and the shell reaches
+  every provider through one registry of `Arc<dyn Provider>`. This chapter reads that boundary
+  from both sides: the trait and its honest defaults, the registry's ordered dispatch, the
+  complete `ProcessProvider` that answered `get process` in [chapter 18](lesson:execution-path-02),
+  the injected seams that make it testable, a decorator that wraps every provider, and a
+  second, much smaller implementation for comparison.
+
+  One lesson is about a reading skill rather than a piece of code: **how to use tests to decode
+  production code**. In one place in this chapter a doc comment and the code disagree, and a
+  test settles the question.
+lessons:
+  - id: provider-boundary-01
+    title: "The `Provider` contract and the registry"
+    stage: practice
+    summary: "Read the trait every provider implements — required methods, honest defaults, sync streams versus async actions — and the registry that dispatches through `Arc<dyn Provider>`."
+    prerequisites: [execution-path-03, traits-03, traits-04]
+    concepts: [traits, trait-objects, async-await, send-sync, shared-ownership]
+    ono_topics: [providers, error-flow]
+    objectives:
+      - "Separate the required methods of `Provider` from the defaulted ones and say what each default answers."
+      - "Explain why `snapshot` is synchronous while `resolve` and `act` are async."
+      - "Trace `ProviderRegistry::provider_for` through its three outcomes."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `crates/ono-provider-api` is small and depends on almost nothing but the value model
+          and the pipeline. Its module doc states the requirement that shaped it: a later plugin
+          system (KUANG/11) must consume the same shapes "without special cases", so "a KUANG/11
+          provider is a [`Provider`], not a special case of one". Everything above it — commands,
+          the evaluator — talks to [providers](glossary:provider) only through this trait.
+      - type: code
+        snippet: c19-provider-trait
+        caption: |
+          `crates/ono-provider-api/src/lib.rs`: the trait (the long doc comment of
+          `identity_token` is omitted).
+        annotations:
+          - lines: 51-52
+            kind: type
+            body: |
+              [`#[async_trait]`](glossary:async-trait) because `resolve` and `act` are async ([chapter 16](lesson:async-03)).
+              The supertraits `Send + Sync + Debug` make `Arc<dyn Provider>` shareable between
+              pipeline tasks on different worker threads.
+          - lines: 55-58
+            kind: rust
+            body: |
+              Required methods (no body): identity and targets. `targets` returns a borrowed
+              slice of `&str`, usually a literal like `&["process", "signal"]`.
+          - lines: 87-89
+            kind: flow
+            body: |
+              A default method: "available". Providers that depend on something that may be
+              missing override it "rather than failing later with an empty result".
+          - lines: 98
+            token: "fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue>;"
+            kind: type
+            body: |
+              Synchronous, and required. It returns a *stream*; the waiting happens in the
+              stream's producer task. `Err` means "cannot be answered at all"; a partial
+              failure belongs "on the stream's error channel instead" (lines 95–97).
+          - lines: 113-120
+            kind: rust
+            body: |
+              A default that refuses, with a reason. `let _ = query;` marks the parameter as
+              intentionally unused, which keeps the lint quiet without renaming it `_query`.
+          - lines: 152
+            kind: type
+            body: |
+              Required and async: resolving a selector may require reading the system and
+              awaiting.
+          - lines: 162-168
+            kind: flow
+            body: |
+              Default `act`: "answers queries only". An attempted action that *failed* is an
+              `ActionOutcome`, not an `Err` — "because a bulk operation must be able to report
+              per-target outcomes".
+      - type: prose
+        kind: rust
+        title: "Default methods as the honest answer"
+        body: |
+          A trait method with a body is a default: an implementation inherits it unless it
+          overrides it ([chapter 10](lesson:traits-03) met the temporal pair). In `Provider`, every default is the answer that is *true for a provider
+          that did nothing special*: available; no identity token; cannot subscribe
+          (`ProviderUnsupported`, with help); claims no temporal capability
+          (`TemporalCapabilities::none()`); cannot answer about the past; answers queries only.
+          The doc comments insist on this — for `temporal`: "The default claims nothing, which is
+          the only honest default … nothing downstream may read its silence as coverage."
+
+          That makes the trait safe to implement minimally: a new provider that forgets
+          `subscribe` does not silently pretend to watch.
+      - type: code
+        snippet: c19-provider-registry
+        caption: |
+          `crates/ono-provider-api/src/registry.rs`: an ordered list of trait objects, and
+          dispatch by target.
+        annotations:
+          - lines: 20-23
+            kind: ownership
+            body: |
+              `Vec<Arc<dyn Provider>>`. `#[derive(Clone)]` clones the `Vec` of `Arc`s — reference
+              count increments, not copies of providers. That is what `run_background` relied on
+              in [lesson tasks-channels-03](lesson:tasks-channels-03).
+          - lines: 56-61
+            kind: rust
+            body: |
+              [Dynamic dispatch](glossary:dynamic-dispatch): `provider.targets()` is a call through each trait object's
+              vtable. `contains(&target)` compares `&str`s.
+          - lines: 81-88
+            kind: flow
+            body: |
+              The first claiming provider that is *available* wins; each unavailable one
+              contributes its reason. You traced this loop line by line in
+              [chapter 12](lesson:iterators-closures-01); here it is the dispatch side of the
+              boundary.
+          - lines: 107-109
+            kind: flow
+            body: |
+              `?` returns the registry's error; otherwise the chosen provider's own `snapshot`
+              result is returned as-is.
+      - type: code
+        snippet: c19-register-linux
+        caption: |
+          `crates/ono-provider-linux/src/lib.rs`: the Linux providers, registered in order. Note
+          the comment about the two package databases.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          Order is part of the contract: "the first provider claiming a target answers for it,
+          and a later one claiming the same target extends rather than replaces — which is what
+          lets a KUANG/11 package add a container runtime without displacing the one already
+          there (spec §31.23)". The Linux registration uses exactly that: dpkg and rpm are both
+          registered "on every machine", and "the registry answers with the first that is
+          available".
+
+          The two errors of `provider_for` are distinguished on purpose: "The two are different
+          questions and a user needs to be told which one they are looking at." The help text
+          says why: an unavailable provider "is not the same as there being none of the thing you
+          asked for".
+      - type: diagram
+        kind: control-flow
+        title: "`provider_for(target)`"
+        art: |
+          for_target(target) ── none claim it ──► Err(ResolveTargetNotFound, "no provider answers …")
+                │ claiming, in registration order
+                ▼
+          for each: availability()
+                Available ───────────────────────► Ok(provider)
+                Unavailable(reason) → push "id: reason", try next
+                │ none available
+                ▼
+          Err(ProviderUnavailable, "`target` cannot be answered here — reasons…")
+        description: |
+          `provider_for` first collects the providers claiming the target, in registration order.
+          If none claims it, it returns a "target not found" error. Otherwise it asks each
+          claiming provider for its availability: the first available one is returned; each
+          unavailable one adds its id and reason to a list. If none is available, it returns a
+          "provider unavailable" error that names every reason.
+      - type: exercise
+        id: provider-boundary-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          `snapshot` is a synchronous method, yet `get process` reads hundreds of files and
+          awaits NSS lookups. How does that fit together?
+        choices:
+          - text: "`snapshot` blocks the calling thread until every process is read."
+            correct: false
+            feedback: |
+              No. `snapshot` returns quickly with a `ValueStream`; [chapter 18](lesson:execution-path-02) showed that
+              assembly finishes before the values are drained.
+          - text: "`snapshot` prepares the query synchronously and returns a stream whose spawned producer task does the reading and awaiting."
+            correct: true
+            feedback: |
+              Right. The trait keeps the call synchronous so a producer command needs no await;
+              the asynchronous work lives in the stream, "where backpressure and cancellation
+              already live".
+          - text: "`#[async_trait]` turns `snapshot` into an async method too."
+            correct: false
+            feedback: |
+              `async_trait` only rewrites methods declared `async fn`. `snapshot` is a plain
+              `fn`.
+          - text: "The registry calls `snapshot` on a blocking thread."
+            correct: false
+            feedback: |
+              `ProviderRegistry::snapshot` calls it directly, on whatever thread runs the
+              producer command.
+      - type: exercise
+        id: provider-boundary-01-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Using `provider_for` and the Linux registration order, predict what `get package`
+          answers on (a) a Debian machine with a working dpkg database and no rpm; (b) a Red Hat
+          machine with rpm and no dpkg; (c) a container with neither. Then (d): what does
+          `get nosuchthing` produce?
+        hints:
+          - level: 1
+            body: |
+              Both package providers claim the same target; only their `availability()` differs.
+        solution:
+          summary: |
+            (a) The dpkg provider (`PackageProvider`, registered first) is available and answers.
+            (b) dpkg is unavailable, its reason is recorded, rpm is available and answers.
+            (c) Both are unavailable: `ProviderUnavailable` naming both reasons, with the help
+            that this is not the same as having no packages. (d) Nothing claims the target:
+            `ResolveTargetNotFound`, "no provider answers `nosuchthing`" — assuming the command
+            resolves that far at all.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `for_target` filters in registration order; the `for` loop returns at the first
+                `Availability::Available`; only if the loop finishes does the second error
+                appear.
+            - aspect: errors
+              body: |
+                Two distinct `ErrorCode`s, each with help text, answer two different questions:
+                "nobody can answer this" versus "somebody could, but not here".
+            - aspect: architecture
+              body: |
+                Both package providers expose the same target and schema; registration order
+                plus availability is the whole selection mechanism, with no special case in the
+                registry.
+          guarantees: |
+            The doc of `provider_for` guarantees the two different errors and that the
+            unavailable error carries "the provider's own reason".
+          semantics: |
+            `return Ok(provider)` inside the loop exits the function; `reasons.join("; ")`
+            builds the combined message only when needed.
+          interpretation: |
+            For (d), the command layer may refuse an unknown target before the registry is ever
+            asked (the contract for `get <target>` must exist); the registry's error is the last
+            line of defence. The snippets here do not show which happens first.
+      - type: exercise
+        id: provider-boundary-01-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          Why is the registry a `Vec<Arc<dyn Provider>>` rather than, say, a generic
+          `ProviderRegistry<P: Provider>` or a `HashMap<String, Box<dyn Provider>>` keyed by
+          target? Give one reason for each of `Vec`, `Arc` and `dyn`.
+        solution:
+          summary: |
+            `dyn`: one registry holds many different provider types chosen at run time (and later
+            plugins), which a single type parameter cannot. `Arc`: providers are shared — cloned
+            into background tasks, wrapped by `TemporalProvider`, handed out as `&Arc<dyn
+            Provider>` — without copying them. `Vec`: order matters and several providers may
+            claim one target, which a map keyed by target could not express.
+          analysis:
+            - aspect: traits
+              body: |
+                A generic registry would be monomorphised for one provider type; heterogeneous
+                providers need trait objects and therefore a dyn-compatible trait (which
+                `#[async_trait]` keeps it).
+            - aspect: ownership
+              body: |
+                `Arc` gives shared ownership; the providers synchronize their own interior state
+                (a `Mutex` cache in `NssAccounts`, for instance). `Arc` itself synchronizes
+                nothing.
+            - aspect: types
+              body: |
+                A `Vec` preserves registration order, which is the documented tie-breaker, and
+                allows one target to have several claimants.
+          guarantees: |
+            The doc comment guarantees ordered, explicit registration where later providers
+            extend rather than replace.
+          semantics: |
+            `Arc<dyn Provider>` requires `Provider: Send + Sync` for the `Arc` to be sendable
+            across threads; the supertraits provide that.
+          interpretation: |
+            The same shape appears in `CommandTable` (`BTreeMap<String, Arc<dyn CommandImpl>>`)
+            where ids are unique and replacement is intended — so the choice of container
+            encodes each registry's replacement rule.
+  - id: provider-boundary-02
+    title: "`ProcessProvider`: one implementation, end to end"
+    stage: practice
+    summary: "Read the complete `impl Provider for ProcessProvider`: honest metadata, a `snapshot` that prepares synchronously and streams from a task, and the per-process reader behind it."
+    prerequisites: [provider-boundary-01, smart-pointers-03]
+    concepts: [traits, tasks, closures, error-types, option]
+    ono_topics: [providers, system-integration, records-schemas]
+    objectives:
+      - "Read a trait implementation method by method against the trait's contract."
+      - "Separate what `snapshot` does before `ValueStream::spawn` from what its task does."
+      - "Explain which read failures are skipped and which are reported, and why."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `crates/ono-provider-linux/src/process.rs` answers the `process` target "from `/proc`
+          alone": "Nothing here runs `ps` or reads its output, which spec §50 forbids". This is
+          the provider behind stage 0 of `get process | where cpu > 20`. Read it in three parts:
+          the metadata methods, `snapshot`, and `Reader::read`, which builds one [record](glossary:record).
+      - type: code
+        snippet: c19-process-provider-meta
+        caption: |
+          The metadata part of the implementation.
+        annotations:
+          - lines: 946
+            kind: ono
+            body: |
+              Two targets. `signal` is the target of `send signal`; "nothing enumerates it".
+          - lines: 965-974
+            kind: flow
+            body: |
+              Overrides the default `availability`: without a mounted procfs the provider says
+              so, and the registry reports that reason.
+          - lines: 976-987
+            kind: ono
+            body: |
+              An honest temporal claim: a current snapshot and checkpointable, nothing more,
+              because "`procfs` is primarily a snapshot source" (v0.5 §22.1). The struct-update
+              syntax `..TemporalCapabilities::none()` fills every other field with "no".
+      - type: code
+        snippet: c19-process-snapshot
+        caption: |
+          `snapshot`: prepare, then stream.
+        annotations:
+          - lines: 993-996
+            kind: rust
+            body: |
+              `bool::then(|| …)` gives `Option<Result<Arc<Schema>, ErrorValue>>`; `.transpose()`
+              turns it into `Result<Option<…>, …>` so `?` can reject a missing schema while "no
+              detail requested" stays `None`.
+          - lines: 997-1002
+            kind: flow
+            body: |
+              Synchronous preparation: a refreshed copy of the reader, and the pid list — one
+              pid when the query pins it, otherwise a listing of `/proc`. A failed listing
+              fails the whole query with `?`.
+          - lines: 1034-1038
+            kind: ownership
+            body: |
+              `query.clone()` shadows the borrowed `query` with an owned one, so the `move`
+              closure owns `reader`, `pids`, `schema`, `detail`, `query` and the rest — the
+              `'static` requirement of `ValueStream::spawn`.
+          - lines: 1043-1046
+            kind: flow
+            body: |
+              `--sample`: record CPU counters, then `tokio::time::sleep` for the interval — an
+              await that pauses this task only.
+          - lines: 1086-1088
+            kind: flow
+            body: |
+              A failed send means the consumer is gone: stop reading `/proc`.
+          - lines: 1091-1100
+            kind: ono
+            body: |
+              A process that exited between listing and reading is skipped while enumerating
+              (ADR-0029); any other read failure, and any failure for a pid the user named, goes
+              to the error channel.
+      - type: code
+        snippet: c19-reader-read
+        caption: |
+          `Reader::read`: one process as one typed record.
+        annotations:
+          - lines: 501-505
+            kind: flow
+            body: |
+              A missing `stat` file becomes an `ErrorValue` with the process as target and a help
+              text explaining the likely cause. This is the `IoNotFound` that `snapshot` skips
+              while enumerating.
+          - lines: 511
+            token: ".await"
+            kind: flow
+            body: |
+              The only await: resolving uid and gid to names through `Accounts` — the bounded
+              NSS lookup of [lesson async-04](lesson:async-04).
+          - lines: 521-553
+            kind: rust
+            body: |
+              A builder chain where each `.set(...)` returns a `Result` and `?` stops at the
+              first field the schema rejects. `cpu` is `Value::Null` only when no share could be
+              computed; unknown `container` is explicitly `Null`, "never a guess".
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The module doc lists the behaviours that "are easy to get wrong and expensive to get
+          wrong": identity is `(pid, started)`, and "a field this user may not read is an error,
+          not a zero" — other users' `cmdline`, `exe` and `cwd` carry an `ErrorValue` in the field
+          rather than a fabricated default. The trait's doc demanded the same thing in general
+          ("reports what it does not know as `null` rather than as zero"). `snapshot` implements
+          the split of `Result` versus error channel exactly as the trait prescribes: only "cannot
+          list processes at all" is an `Err`.
+      - type: exercise
+        id: provider-boundary-02-q1
+        exercise_type: read-function
+        prompt: |
+          Read `snapshot` completely. Describe its inputs and outputs, what happens before and
+          inside the spawned task, the branches (`--sample`, `--tree`, `--detail`, a pinned pid,
+          `max`), and every way the task can end.
+        hints:
+          - level: 1
+            body: |
+              Draw a line under line 1037: everything above it (including `query.clone()` and
+              the call to `ValueStream::spawn`) runs when `snapshot` is called; everything inside
+              the `async move` block runs later, in the spawned task on a worker.
+        solution:
+          summary: |
+            `snapshot` resolves the schema(s), refreshes the reader, lists pids (or takes the
+            pinned one), validates `--sample`, and computes the population when enumerating
+            without selectors — all synchronously, failing with `Err` if any of that fails. It
+            then returns a bounded `ValueStream` whose task first records that population in the
+            pipeline's diagnostics, optionally samples and sleeps, then
+            either builds a whole tree before sending roots (`--tree`) or reads and sends
+            processes one by one until `max` is reached.
+          analysis:
+            - aspect: inputs
+              body: |
+                `&self` (the provider and its reader) and `&Query` (target, selectors, options such
+                as `detail`, `tree`, `sample`, `max`).
+            - aspect: outputs
+              body: |
+                `Result<ValueStream, ErrorValue>`: `Err` for a missing schema, an unreadable
+                `/proc`, or a malformed `--sample`; otherwise a stream of process records plus
+                per-process failures on its error channel.
+            - aspect: control-flow
+              body: |
+                Inside the task: `--tree` collects all matching records, nests them, sends at most
+                `limit` roots and returns. Otherwise a `for` over pids with `break` at `limit`,
+                `continue` for non-matching records and for vanished processes, and `return` when
+                a send or fail reports the consumer gone. The loop's end ends the task.
+            - aspect: ownership
+              body: |
+                The closure owns clones: the reader (whose `Arc` fields share accounts, clock and
+                the CPU sample cache), the pid `Vec`, the schemas and the query.
+            - aspect: async
+              body: |
+                Awaits: `sleep` for `--sample`, `reader.read(...)` (NSS lookups), and every
+                `send`/`fail` — the backpressure and cancellation points.
+            - aspect: errors
+              body: |
+                `IoNotFound` while enumerating is skipped silently (the process no longer exists);
+                every other read failure is sent on the error channel with its identity.
+          guarantees: |
+            The code guarantees the stream is `Bounded`, that every selector filters
+            (`understood_selectors_match`), and that the population count is recorded only when
+            nothing can refuse a pid afterwards (ADR-0576, comment on lines 1028–1032).
+          semantics: |
+            `move |sink| async move { … }` transfers ownership of all captured values into the
+            spawned task; `continue`/`break`/`return` inside the async block behave as in any loop
+            and function body.
+          interpretation: |
+            Doing the cheap, fallible, synchronous work first means a broken query fails at
+            assembly time, before a task exists — the same "fail before side effects" preference
+            seen in [chapter 18](lesson:execution-path-02).
+      - type: exercise
+        id: provider-boundary-02-q2
+        exercise_type: multiple-choice
+        prompt: |
+          `get process` is enumerating, and pid 7002 exits after `/proc` was listed but before
+          its `stat` file is read. What does the consumer observe for pid 7002?
+        choices:
+          - text: "A record with every field `null`."
+            correct: false
+            feedback: |
+              No record is built: `read` fails at the `stat` file with `?` before the builder.
+          - text: "Nothing at all: the `IoNotFound` is skipped while enumerating."
+            correct: true
+            feedback: |
+              Right. Lines 1097–1100: while enumerating, `IoNotFound` means the process no longer
+              exists, and "omitting something that is not there is not the same as hiding a
+              failure".
+          - text: "A per-item failure on the error channel."
+            correct: false
+            feedback: |
+              That is what happens for other read failures, or when the user *named* pid 7002
+              (`get process 7002`), because then the process is a target.
+          - text: "The whole snapshot fails with `Err`."
+            correct: false
+            feedback: |
+              The task cannot return an `Err` — the stream already exists. Whole-query failures
+              happen only before `ValueStream::spawn`.
+      - type: exercise
+        id: provider-boundary-02-q3
+        exercise_type: trace-value
+        prompt: |
+          Follow `self.reader` from the provider into the task and into the second `get process`
+          of a session. Which parts of the reader are copied, which are shared, and why does the
+          second `get process` report a CPU share over the interval since the first?
+        solution:
+          summary: |
+            `refreshed()` clones the `Reader` and re-reads uptime. Plain fields (paths, numbers,
+            `Option`s) are copied/cloned; the `Arc` fields — accounts, clock, and
+            `samples: Arc<Mutex<HashMap<…>>>` — are shared. The first run's `cpu()` inserts each
+            process's sample into the shared map; the second run's clone sees those samples and
+            computes a rate over the time between them.
+          analysis:
+            - aspect: ownership
+              body: |
+                `Reader` derives `Clone`; cloning an `Arc` field increments a count, so every clone
+                refers to the same sample cache that the provider keeps.
+            - aspect: mutation
+              body: |
+                `cpu()` mutates the cache through `&self` via `lock()`, recording `(pid,
+                starttime) → Sample` and getting the previous sample back from `insert`.
+            - aspect: types
+              body: |
+                The key `(pid, starttime)` means a recycled pid does not inherit an old process's
+                sample.
+          guarantees: |
+            The doc of `Reader` says it is "cheap enough to hand to a streaming task"; `cpu()`'s
+            doc says that where an earlier observation exists — "a second `get process` in a
+            session" — "the window is the interval between them".
+          semantics: |
+            `Arc` shares ownership; the `Mutex` inside provides the synchronization for
+            concurrent tasks.
+          interpretation: |
+            The shared cache is what makes CPU a *rate* across commands of one session without any
+            global state outside the provider.
+  - id: provider-boundary-03
+    title: "Reading tests to decode production code"
+    stage: practice
+    summary: "Learn a method for reading tests as specifications, and use it on the process provider's injected seams, its pid-reuse refusal, and a doc comment the code has outgrown."
+    prerequisites: [provider-boundary-02, traits-01]
+    concepts: [testing, trait-objects, shared-ownership, code-navigation]
+    ono_topics: [tests-as-docs, providers, process-execution]
+    objectives:
+      - "Apply a four-step method to read a test: name, arrange, act, assert."
+      - "Use a test double to find the seam it replaces in production code."
+      - "Map a test's assertions back to the production lines that make them true."
+      - "Resolve a disagreement between a doc comment and the code using a test."
+    sections:
+      - type: prose
+        kind: context
+        title: Why tests are worth reading
+        body: |
+          A test is the one kind of documentation that is *executed*: if it said something false,
+          the build would fail. Ono-Sendai's tests are written to be read — names are sentences
+          (`should_refuse_to_signal_when_the_start_time_changed`), assertion messages state the
+          rule being defended, and the shared fixtures say of themselves that "every helper here
+          asserts an observable outcome or builds input data" (`ono-pipeline`'s test fixtures).
+          When production code is unclear, the tests next to it are often the fastest way in.
+
+          A method that works for any test:
+
+          1. **Read the name** as a claim about behaviour. It tells you what to look for.
+          2. **Read the arrange part**: what is built, and what is *replaced*. A fake passed into
+             a constructor reveals an injection seam in the production type.
+          3. **Read the act part**: the single call under test. That is your entry point into
+             production code.
+          4. **Read the asserts and their messages**: these are the guarantees. Then find the
+             production lines that make each one true.
+      - type: code
+        snippet: c19-process-seams
+        caption: |
+          `crates/ono-provider-linux/src/process.rs`: the `Signals` trait, its real
+          implementation, the `Reader` and `ProcessProvider` types, the constructors, and the
+          `with_signals` setter a test uses.
+        annotations:
+          - lines: 82-86
+            kind: ono
+            body: |
+              The seam's reason is stated: "Injectable so that the pid-reuse refusal of ADR-0015 T13
+              can be proven without a test run ever being able to signal an unrelated process".
+          - lines: 172-185
+            kind: type
+            body: |
+              Every outside dependency of reading is a field: a `proc_root` path, `Arc<dyn
+              Accounts>`, `Arc<dyn Clock>`, and the shared sample cache. Each is a place a test can
+              substitute something.
+          - lines: 223-240
+            kind: flow
+            body: |
+              `rooted(root)` points the provider at `<root>/proc` — a fixture directory in tests —
+              and installs the real accounts, clock, signals and priorities.
+          - lines: 258-261
+            kind: rust
+            body: |
+              A by-value builder (`mut self` → `Self`) replacing one trait object.
+      - type: code
+        snippet: c19-pid-reuse-test
+        caption: |
+          `crates/ono-provider-linux/tests/process.rs`: an integration test in the crate's
+          `tests/` directory, so it can use only the crate's public API.
+        annotations:
+          - lines: 415-418
+            token: "let signals = RecordingSignals::new();"
+            kind: ownership
+            body: |
+              Arrange. `RecordingSignals::new()` returns `Arc<RecordingSignals>`. The test keeps
+              that `Arc` and passes a clone *coerced* to `Arc<dyn Signals>` — the same object seen
+              through the trait, so the test can inspect what the provider did to it.
+          - lines: 427-442
+            kind: flow
+            body: |
+              The story of pid reuse, told with fixture files: the selected identity is pid 4242
+              started 1 000 seconds after boot (`starttime: 1_000 * USER_HZ` ticks); then
+              `/proc/4242/stat` is rewritten with a start 9 000 seconds after boot.
+          - lines: 444-447
+            kind: flow
+            body: |
+              Act: one call, `provider.act(...)`, awaited. The `expect` message is itself a rule:
+              "a refusal is an outcome, not a provider failure".
+          - lines: 449-457
+            kind: flow
+            body: |
+              Assert: the outcome failed, its error code is `IoNotFound`, and nothing was sent.
+      - type: code
+        snippet: c19-recording-signals
+        caption: |
+          `tests/common/mod.rs`: the test double. It records instead of delivering.
+      - type: code
+        snippet: c19-process-act-confirm
+        caption: |
+          The production code the test reaches: `Reader::confirm` and `ProcessProvider::act`.
+        annotations:
+          - lines: 720-731
+            kind: flow
+            body: |
+              The start time read *now* is compared with the one the selection recorded; a
+              mismatch is `IoNotFound` "pid … is no longer the process that was selected".
+          - lines: 1160-1162
+            kind: flow
+            body: |
+              The refusal becomes `Ok(ActionOutcome::failed(...))` — an outcome — before
+              `self.signals.send` on line 1169 is ever reached.
+      - type: prose
+        kind: rust
+        title: What the test tells you about the Rust
+        body: |
+          `Arc::clone(&signals) as Arc<dyn ono_provider_linux::Signals>` is an *unsized
+          coercion*: an `Arc` of a concrete type becomes an `Arc` of a [trait object](glossary:trait-object) pointing at
+          the same allocation. Both `Arc`s share one `RecordingSignals`, and its `Mutex<Vec<…>>`
+          lets `send(&self, …)` record through a shared reference. `#[tokio::test]` builds a
+          runtime for the test so the `async fn` test body can `.await` the provider.
+      - type: code
+        snippet: c19-cpu-doc-and-code
+        caption: |
+          The same file: the module doc about CPU, and the code of `cpu()`. Read both before the
+          next test.
+        annotations:
+          - lines: 9-13
+            kind: ono
+            body: |
+              The module doc: "the first `get process` reports `cpu` as `null`".
+          - lines: 441-453
+            kind: flow
+            body: |
+              The code: with an earlier sample, a rate over the interval; without one,
+              `self.lifetime_share(stat)` — a share over the process's lifetime, which is `None`
+              only when `/proc/uptime` could not be read (or the computed lifetime is not a
+              positive, finite number).
+      - type: code
+        snippet: c19-lifetime-share-test
+        caption: |
+          A test of the first observation.
+      - type: prose
+        kind: ono
+        title: When the comment and the code disagree
+        body: |
+          The module doc and `cpu()` disagree about the first observation. The code's own doc
+          comment (lines 420–429, ADR-0232) describes the lifetime fallback, and the test above
+          pins it: "the window is the process's lifetime: uptime minus its start", with an exact
+          CPU value. The test runs on every build; the module paragraph does not. So the behaviour
+          of v0.6.2 is: the first `get process` reports a lifetime share, not `null`. The module
+          doc is older text the code has outgrown.
+
+          That is the general lesson. When prose and code disagree, believe the code, and let the
+          tests tell you which behaviour is *intended* — here the test's comment even explains
+          why: "spec §28.1's own example is `get process | where cpu > 20`, a question one
+          invocation must be able to ask."
+      - type: exercise
+        id: provider-boundary-03-q1
+        exercise_type: read-function
+        prompt: |
+          Apply the four-step method to `should_refuse_to_signal_when_the_start_time_changed`.
+          For each assertion, name the production line(s) in `act` and `confirm` that make it
+          true, and name the seam that makes the last assertion possible.
+        hints:
+          - level: 1
+            body: |
+              Walk `act` from the top with `operation = "kill"` and a target of `[4242,
+              <timestamp of boot + 1 000 s>]`.
+        solution:
+          summary: |
+            Name: a recycled pid must not be signalled. Arrange: a fixture `/proc`, fake accounts,
+            and a recording `Signals` injected with `with_signals`. Act: `act(kill)` on the old
+            identity. Asserts: not a success, error `IoNotFound`, nothing sent. `act` passes the
+            operation check, extracts pid and expected start, calls `confirm`, which sees a
+            different start and returns `IoNotFound`; `act` wraps it as `ActionOutcome::failed`
+            and returns before `self.signals.send`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Line 1133: `"kill"` is allowed. Lines 1140–1154: pid 4242, `expected =
+                Some(start)`. Not `"set"`. Line 1159: a signal is chosen. Line 1160: `confirm`
+                fails → line 1161 returns the failed outcome.
+            - aspect: errors
+              body: |
+                `confirm` returns `Err(IoNotFound, "pid 4242 is no longer the process that was
+                selected")`; `act` returns it as `Ok(outcome)`, which is why the test's `expect`
+                succeeds and `outcome.error()` has that code.
+            - aspect: traits
+              body: |
+                `Signals` is the seam. `RecordingSignals` implements it by pushing into a
+                `Mutex<Vec<(i32, i32)>>`; `signals.sent().is_empty()` proves `send` was never
+                called.
+            - aspect: side-effects
+              body: |
+                The only production side effect, `kill(2)`, is replaced; nothing on the test
+                machine can be signalled, which is the seam's documented reason.
+          guarantees: |
+            The test guarantees, on every build: a changed start time means no signal and an
+            `IoNotFound` outcome, reported as an outcome rather than a provider error.
+          semantics: |
+            The coerced `Arc<dyn Signals>` and the test's `Arc<RecordingSignals>` share one
+            allocation, so the recording is visible to the test.
+          interpretation: |
+            Reading the test first gave the production code's purpose in one sentence before any
+            of its 40 lines were read — the point of the method.
+      - type: exercise
+        id: provider-boundary-03-q2
+        exercise_type: multiple-choice
+        prompt: |
+          A process has never been observed in this session, and `/proc/uptime` is readable. What
+          does the first `get process` report in its `cpu` field at v0.6.2?
+        choices:
+          - text: "`null`, as the module documentation says."
+            correct: false
+            feedback: |
+              The module paragraph says so, but the code does not: without a previous sample,
+              `cpu()` returns `lifetime_share(stat)`.
+          - text: "Its share of one CPU over its lifetime, with `cpu_window` equal to the lifetime."
+            correct: true
+            feedback: |
+              Right, and `should_report_the_share_over_the_process_lifetime_when_nothing_earlier_was_observed`
+              asserts exactly that, including the window.
+          - text: "`0.0`, because no interval has passed."
+            correct: false
+            feedback: |
+              Ono-Sendai never reports an unknown as zero; and here the value is known.
+          - text: "An `ErrorValue` in the field, because a rate needs two readings."
+            correct: false
+            feedback: |
+              Errors in fields are for things the user may not read. A share can be computed
+              here.
+      - type: exercise
+        id: provider-boundary-03-q3
+        exercise_type: trace-control-flow
+        prompt: |
+          Read the test below with the four-step method. Then point to the production lines it
+          protects, and say what would make it fail if someone "simplified" `snapshot` to send
+          every read error to the error channel.
+        snippets: [c19-vanished-process-test]
+        solution:
+          summary: |
+            The test builds a `/proc` with a complete process 11 and a directory 12 without
+            `stat` — "exactly what the kernel leaves behind" for a just-exited process. It asserts
+            one record and *no* errors. The protecting lines are 1097–1100 of `snapshot` (skip
+            `IoNotFound` while enumerating). Sending every error would put pid 12's `IoNotFound`
+            on the error channel, and the `collected.errors() == []` assertion would fail.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `reader.read(12, …)` fails at `fs::read_to_string(stat)` with `IoNotFound`;
+                `enumerating` is true (no pinned pid); the `continue` skips it.
+            - aspect: errors
+              body: |
+                The assertion message cites ADR-0029 and the reason: on a busy machine, reporting
+                vanished processes "would otherwise be unusable for the noise".
+            - aspect: inputs
+              body: |
+                The fixture is the input: a directory tree, not a mock of `fs`. The provider reads
+                it through the same `proc_root` seam as the real `/proc`.
+          guarantees: |
+            The test guarantees that a vanished process is neither a record nor a reported
+            failure during enumeration.
+          semantics: |
+            `drain` collects the bounded stream under a 10-second timeout, so a hang would fail
+            the test rather than stall it.
+          interpretation: |
+            The neighbouring test, `should_report_a_named_process_that_does_not_exist_rather_than_answering_with_nothing`,
+            covers the other half of the same `if` — a named pid is a target and its absence is
+            reported. Tests often come in such pairs; finding the pair maps both branches.
+  - id: provider-boundary-04
+    title: "Wrapping a provider: `TemporalProvider`, and a second implementation"
+    stage: practice
+    summary: "Read a decorator that implements `Provider` by delegating to an inner `Arc<dyn Provider>`, and compare `ProcessProvider` with the much smaller `DnsProvider`."
+    prerequisites: [provider-boundary-03]
+    concepts: [trait-objects, traits, conditional-compilation, async-await]
+    ono_topics: [providers, history, system-integration]
+    objectives:
+      - Recognise the decorator pattern over a trait object.
+      - "Explain why `TemporalProvider` overrides every method, not only `snapshot`."
+      - Compare two implementations of the same trait and name what differs and why.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Ono-Sendai can evaluate `get <target>` at a past instant (`--at`, or a session
+          coordinate). Rather than teaching every command about time, the shell wraps *every*
+          provider in a `TemporalProvider` when it builds the registry. In
+          [chapter 18](lesson:execution-path-02) that wrapper sat between the registry and
+          `ProcessProvider`. It exists only in builds with the `temporal` feature, which the full
+          build enables.
+      - type: code
+        snippet: c19-temporal-provider
+        caption: |
+          `crates/ono-cli/src/providers.rs`: where every provider is wrapped, and the wrapper.
+        annotations:
+          - lines: 109-117
+            kind: flow
+            body: |
+              `through_time` builds a new registry: each registered `Arc<dyn Provider>` is
+              `Arc::clone`d (a count increment) into a new `TemporalProvider`, itself put in an
+              `Arc` and registered in the same order.
+          - lines: 119-127
+            kind: rust
+            body: |
+              The same function under [`#[cfg(not(feature = "temporal"))]`](glossary:conditional-compilation): exactly one of the two
+              definitions is compiled, so callers never know which build they are in.
+          - lines: 169-171
+            kind: type
+            body: |
+              The decorator holds the thing it decorates as a [trait object](glossary:trait-object). It does not know or
+              care which provider is inside.
+          - lines: 207-212
+            kind: flow
+            body: |
+              The one method with its own behaviour: a past coordinate reads a reconstruction
+              from the ledger; the present delegates to the inner provider. `?` on
+              `coordinate_of` refuses an unreadable `--at` rather than silently answering from
+              the present.
+          - lines: 226-232
+            kind: rust
+            body: |
+              Async delegation under `#[async_trait]`: await the inner provider's future and
+              return its result.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The doc comment quotes the rule the type exists for, §55.9: "If `at -10m` changes the
+          prompt but `look`/`map` still show present objects, the feature is invalid." And:
+          "Wrapping the providers rather than teaching `ProviderProducer` about time is what keeps
+          §4.5's 'MUST NOT implement a separate historical code path' true: there is one seam".
+          Why wrap at the registry rather than at each `register`? "because `register_with_env`
+          mounts several providers of its own, and a seam with a hole in it is not one
+          (ADR-0780)".
+
+          Every other method is delegated "untouched" so "the registry, `spec-check` and the
+          conformance suites see exactly the surface they saw before". That is why the
+          decorator overrides even the methods that have defaults: inheriting the trait's default
+          `availability` or `temporal` would *replace* the inner provider's answer with the
+          default one.
+      - type: code
+        snippet: c19-dns-provider
+        caption: |
+          `crates/ono-provider-net/src/dns.rs`: the whole `Provider` implementation of the DNS
+          resolver. Its `run_bounded` was the exercise of [lesson async-04](lesson:async-04).
+        annotations:
+          - lines: 316-330
+            kind: ono
+            body: |
+              Every temporal field is spelled out, with the reason: "a cached answer is a fact
+              about a cache, not about a name".
+          - lines: 338-358
+            kind: flow
+            body: |
+              The same shape as `ProcessProvider::snapshot`: fallible preparation
+              (`Lookup::from_query(query)?`), then a bounded stream whose task does the slow part
+              and reports a failed lookup on the error channel.
+      - type: exercise
+        id: provider-boundary-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Suppose `TemporalProvider` deleted its `availability` method and relied on the trait
+          default. What would `get service` report on a machine without systemd?
+        choices:
+          - text: "Exactly what it reports now; the default forwards to the inner provider."
+            correct: false
+            feedback: |
+              Trait defaults know nothing about `inner`. The default `availability` returns
+              `Available` unconditionally.
+          - text: "The wrapper would claim `Available`, so the registry would pick it and the failure would come later from the inner provider instead of as a clear unavailability."
+            correct: true
+            feedback: |
+              Right. The registry asks the *wrapper*. Delegating every method keeps the inner
+              provider's honest answer visible — "exactly the surface they saw before".
+          - text: "A compile error, because `availability` is required."
+            correct: false
+            feedback: |
+              It has a default body in the trait, so omitting it compiles.
+          - text: "The registry would skip the provider entirely."
+            correct: false
+            feedback: |
+              The registry only skips providers that report `Unavailable`; the default reports
+              `Available`.
+      - type: exercise
+        id: provider-boundary-04-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          Name the pattern `TemporalProvider` implements, and explain what makes it possible in
+          Rust here: which trait feature, which pointer type, and which property of `Provider`.
+          Then name one cost of the pattern visible in the code.
+        solution:
+          summary: |
+            A decorator: a type that implements the same trait as the object it wraps, delegating
+            most calls and changing one. It needs a dyn-compatible trait (so `inner: Arc<dyn
+            Provider>` can hold any provider), shared ownership (`Arc`, so the original registry's
+            providers can be re-wrapped without copying), and `Provider: Send + Sync` so the
+            wrapper is itself a valid provider for multi-threaded use. The cost: every method must
+            be forwarded by hand, and forgetting one silently changes behaviour to the trait
+            default.
+          analysis:
+            - aspect: traits
+              body: |
+                `impl Provider for TemporalProvider` plus `#[async_trait]` for the two async
+                methods; `snapshot` has its own logic, the rest delegate.
+            - aspect: ownership
+              body: |
+                `Arc::clone(provider)` shares the inner provider between the unwrapped and wrapped
+                registries until the unwrapped one is dropped at the end of
+                `registry_with_tables`.
+            - aspect: architecture
+              body: |
+                The seam sits at the only door every `get` passes through, so time is handled once
+                for all providers and all verbs that enumerate (`get`, `find`).
+            - aspect: types
+              body: |
+                `#[derive(Debug)]` on the wrapper satisfies the `Debug` supertrait because
+                `Arc<dyn Provider>` is `Debug` (the trait requires it).
+          guarantees: |
+            The doc guarantees one seam for historical evaluation and an unchanged surface for
+            everything but `snapshot`.
+          semantics: |
+            Default methods are resolved per implementing type; a wrapper does not inherit the
+            inner object's overrides.
+          interpretation: |
+            The `cfg(not(feature = "temporal"))` twin of `through_time` shows the design keeps the
+            registry's shape identical in both builds, so no caller needs a feature check.
+      - type: exercise
+        id: provider-boundary-04-q3
+        exercise_type: read-function
+        prompt: |
+          Read `impl Provider for DnsProvider` and compare it with `ProcessProvider`. List what is
+          the same, what differs (targets, capabilities, availability, temporal claims, `snapshot`,
+          `resolve`, `act`), and explain each difference from the nature of the system it reads.
+        hints:
+          - level: 1
+            body: |
+              Check which trait methods `DnsProvider` does *not* implement, and what the trait
+              gives it for them.
+        solution:
+          summary: |
+            Same skeleton: `#[async_trait]`, id, targets, schemas, capabilities, a
+            `snapshot` that prepares synchronously and spawns a bounded producer, and an async
+            `resolve`. Differences: one target (`dns`) and one read capability; always
+            available (the C library is always there; failure is per lookup); a temporal claim
+            with every field explicit and nothing checkpointable; a stream with one lookup instead
+            of an enumeration; `resolve` answers only a `query` field selector; no `act` override,
+            so the default "answers queries only" applies.
+          analysis:
+            - aspect: traits
+              body: |
+                Omitted methods (`act`, `subscribe`, `history`, `identity_token`) take the trait's
+                honest defaults: refuse to act, cannot watch, no history, no token.
+            - aspect: control-flow
+              body: |
+                `snapshot`'s task runs one `run_bounded` and either sends every record or fails
+                once; `ProcessProvider` loops over pids.
+            - aspect: errors
+              body: |
+                A failed lookup is a per-item failure on the stream (retryable when it timed out),
+                not an `Err` from `snapshot`; only an unusable query is.
+            - aspect: external-apis
+              body: |
+                DNS goes through `getaddrinfo(3)`/`getnameinfo(3)` (or, with `--server`, the
+                crate's own DNS client) on a blocking thread; processes through `/proc` files read
+                in the task.
+            - aspect: architecture
+              body: |
+                `checkpointable: false` because "nothing that would survive into a checkpoint as
+                state"; `ProcessProvider` is checkpointable because a process table is state.
+          guarantees: |
+            Both implementations state their temporal reach explicitly, and both keep "cannot
+            answer at all" (`Err`) separate from "one item failed" (error channel).
+          semantics: |
+            A trait implementation may override any subset of default methods; required methods
+            must all be present or the `impl` does not compile.
+          interpretation: |
+            Comparing two implementations of one trait is a fast way to learn what the trait
+            *really* demands: what both do is the contract; what differs is the system.

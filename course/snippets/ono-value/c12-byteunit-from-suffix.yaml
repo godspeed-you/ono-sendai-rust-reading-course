@@ -1,0 +1,19 @@
+id: c12-byteunit-from-suffix
+source:
+  file: crates/ono-value/src/units.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 107
+  end_line: 115
+  anchor: never be confused for one another.
+  content_hash: sha256:04e8344a93909020eb9fc26c2c9678344a9adacba2503abd3bfb0cdc047c6535
+  code: |2
+        /// Resolves a unit from its exact suffix. Matching is case-sensitive so `MB` and `MiB` can
+        /// never be confused for one another.
+        #[must_use]
+        pub fn from_suffix(suffix: &str) -> Option<Self> {
+            Self::ALL
+                .iter()
+                .copied()
+                .find(|unit| unit.suffix() == suffix)
+        }

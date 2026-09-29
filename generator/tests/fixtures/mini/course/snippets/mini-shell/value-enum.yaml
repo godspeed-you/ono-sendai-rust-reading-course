@@ -1,0 +1,10 @@
+id: value-enum
+source:
+  file: crates/mini-shell/src/value.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 1
+  end_line: 13
+  anchor: "pub enum Value"
+  content_hash: sha256:da21c40a038b646633c89ee723350a3786f1a4f9123548513ff3cebe867f0778
+  code: "//! Values that flow through a pipeline.\n//! Design notes: https://example.com/ono/values\n\nuse std::fmt;\n\n/// A value produced by a command.\n#[derive(Debug, Clone, PartialEq)]\npub enum Value {\n    Nothing,\n    Int(i64),\n    Text(String),\n    List(Vec<Value>),\n}\n"

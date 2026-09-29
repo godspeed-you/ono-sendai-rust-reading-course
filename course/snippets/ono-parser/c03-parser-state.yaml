@@ -1,0 +1,38 @@
+id: c03-parser-state
+source:
+  file: crates/ono-parser/src/parser/state.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 10
+  end_line: 37
+  anchor: 'pub(super) const MAX_DEPTH: u32 = 96;'
+  content_hash: sha256:fc35e3cdd9af75b92afa1a1a469c7bdec7d523bb9572c1264033f31032d65bf8
+  code: |
+    /// How deeply constructs may nest before the parser stops descending.
+    ///
+    /// Adversarial input is a given for a shell (spec §35.6); the limit keeps a line of ten thousand
+    /// open parentheses a diagnostic rather than a stack overflow.
+    pub(super) const MAX_DEPTH: u32 = 96;
+
+    pub(super) struct Parser<'a> {
+        pub(super) source: &'a str,
+        pub(super) limit: usize,
+        pub(super) pos: u32,
+        pub(super) diagnostics: Vec<Diagnostic>,
+        pub(super) record: Option<Vec<Token>>,
+        pub(super) depth: u32,
+        pub(super) no_brace: bool,
+    }
+
+    impl<'a> Parser<'a> {
+        pub(super) fn new(source: &'a str) -> Self {
+            Self {
+                source,
+                limit: source.len(),
+                pos: 0,
+                diagnostics: Vec::new(),
+                record: None,
+                depth: 0,
+                no_brace: false,
+            }
+        }

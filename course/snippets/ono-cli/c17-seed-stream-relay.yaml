@@ -1,0 +1,29 @@
+id: c17-seed-stream-relay
+source:
+  file: crates/ono-cli/src/eval/native/foreground.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 193
+  end_line: 211
+  anchor: while let Some(event) = receiver.recv().await {
+  content_hash: sha256:5e27de99e89b4d495d673a777680d4474a16749db7cfa98407fa0532a8d5c926
+  code: |2
+                Seed::Stream {
+                    receiver,
+                    boundedness,
+                } => Some(ValueStream::spawn(
+                    ono_pipeline::PipelineConfig::new(),
+                    boundedness,
+                    |sink| async move {
+                        let mut receiver = receiver;
+                        while let Some(event) = receiver.recv().await {
+                            let delivered = match event {
+                                StreamEvent::Value(value) => sink.send(value).await.is_ok(),
+                                StreamEvent::Failure(error) => sink.fail(error).await.is_ok(),
+                            };
+                            if !delivered {
+                                break;
+                            }
+                        }
+                    },
+                )),

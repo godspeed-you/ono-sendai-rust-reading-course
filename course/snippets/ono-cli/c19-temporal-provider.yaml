@@ -1,0 +1,122 @@
+id: c19-temporal-provider
+source:
+  file: crates/ono-cli/src/providers.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 102
+  end_line: 127
+  anchor: through_time(&registry)
+  content_hash: sha256:e757afe6413d5e04e2cc5fe0c27fe1803ebc9c28bf515637db22a82f8c61b177
+  code: |2
+        // v0.5 §4.5, §9.6: every provider is asked through the temporal seam, so `get <target>` at a
+        // historical coordinate reads the reconstruction and never the live system (§55.2). The
+        // wrapping happens here rather than at each `register` because `register_with_env` mounts
+        // several providers of its own, and a seam with a hole in it is not one (ADR-0780).
+        through_time(&registry)
+    }
+
+    /// The same providers, each behind the temporal seam of [`TemporalProvider`].
+    #[cfg(feature = "temporal")]
+    fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
+        let mut wrapped = ProviderRegistry::new();
+        for provider in registry.providers() {
+            wrapped.register(Arc::new(TemporalProvider::new(Arc::clone(provider))));
+        }
+        wrapped
+    }
+
+    /// A build without the temporal tier asks every provider in the present, directly (ADR-0910).
+    #[cfg(not(feature = "temporal"))]
+    fn through_time(registry: &ProviderRegistry) -> ProviderRegistry {
+        let mut direct = ProviderRegistry::new();
+        for provider in registry.providers() {
+            direct.register(Arc::clone(provider));
+        }
+        direct
+    }
+- start_line: 153
+  end_line: 233
+  anchor: Some(past) => reconstructed(query, past.at, past.ledger.as_ref()),
+  content_hash: sha256:9c28021296cf6da54ff67b53b573d44240b5cb4fd70bdea731119cb079b3d813
+  code: |
+    /// One provider, asked at the session's temporal coordinate rather than only in the present
+    /// (spec v0.5 §4.5, §9.6, §55.2, §55.9).
+    ///
+    /// §55.9 is the rule this type exists for: "If `at -10m` changes the prompt but `look`/`map`
+    /// still show present objects, the feature is invalid." The spatial commands already answer from
+    /// [`crate::spatial::HistoricalWorld`]; `get <target>` reached the provider registry directly, so
+    /// the coordinate had to be honoured where the registry is asked. Wrapping the providers rather
+    /// than teaching `ProviderProducer` about time is what keeps §4.5's "MUST NOT implement a
+    /// separate historical code path" true: there is one seam, and both spellings of the coordinate
+    /// pass through it.
+    ///
+    /// Everything except [`Provider::snapshot`] is delegated untouched. The provider's identity, its
+    /// targets, its capabilities and its declared temporal reach are the inner provider's, so the
+    /// registry, `spec-check` and the conformance suites see exactly the surface they saw before.
+    #[cfg(feature = "temporal")]
+    #[derive(Debug)]
+    struct TemporalProvider {
+        inner: Arc<dyn Provider>,
+    }
+
+    #[cfg(feature = "temporal")]
+    impl TemporalProvider {
+        const fn new(inner: Arc<dyn Provider>) -> Self {
+            Self { inner }
+        }
+    }
+
+    #[cfg(feature = "temporal")]
+    #[async_trait::async_trait]
+    impl Provider for TemporalProvider {
+        fn id(&self) -> &str {
+            self.inner.id()
+        }
+
+        fn targets(&self) -> &[&str] {
+            self.inner.targets()
+        }
+
+        fn identity_token(&self) -> Option<&str> {
+            self.inner.identity_token()
+        }
+
+        fn schemas(&self) -> Vec<Arc<ono_value::Schema>> {
+            self.inner.schemas()
+        }
+
+        fn capabilities(&self) -> Vec<Capability> {
+            self.inner.capabilities()
+        }
+
+        fn availability(&self) -> Availability {
+            self.inner.availability()
+        }
+
+        fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+            match coordinate_of(query)? {
+                Some(past) => reconstructed(query, past.at, past.ledger.as_ref()),
+                None => self.inner.snapshot(query),
+            }
+        }
+
+        fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+            self.inner.subscribe(query)
+        }
+
+        fn temporal(&self) -> TemporalCapabilities {
+            self.inner.temporal()
+        }
+
+        fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+            self.inner.history(query, window)
+        }
+
+        async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue> {
+            self.inner.resolve(selector).await
+        }
+
+        async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+            self.inner.act(action).await
+        }
+    }

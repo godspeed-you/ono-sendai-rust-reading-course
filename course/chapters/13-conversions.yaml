@@ -1,0 +1,995 @@
+id: conversions
+number: 13
+title: Conversions and domain types
+summary: |
+  Ono-Sendai converts values at every boundary: native Rust data into pipeline `Value`s, its own
+  exit status into the operating system's exit code, contract text into typed declarations,
+  evaluated integers into counts, and one crate's error type into the shell's structured
+  `ErrorValue`. Rust gives these conversions names — `From`/`Into`, `FromStr`, `TryFrom` — and
+  once you recognise them, a line like `Ok(text_of(&value)?)` stops looking odd.
+
+  This chapter also finishes a story started in [chapter 6](chapter:result-errors): `?` does not
+  only return early, it converts the error with `From::from`. You will see the exact `From` impl
+  that the evaluator relies on, and a case where an explicit conversion is required because
+  `return Err(…)` performs none.
+lessons:
+  - id: conversions-01
+    title: "`From` and `Into`: one conversion, two spellings"
+    stage: practice
+    summary: Read `From` impls that build pipeline values from native data and turn Ono's exit status into the process exit code.
+    prerequisites: [iterators-closures-04, result-errors-01]
+    concepts: [conversions, newtypes, traits]
+    ono_topics: [value-model, core-vocabulary]
+    objectives:
+      - Read an `impl From<X> for Y` block and say which direction it converts.
+      - Explain why implementing `From` also gives `Into`.
+      - Tell a lossless conversion (`From`) from one that can fail (`TryFrom`, next lesson).
+      - Say what each `Value` conversion allocates, copies or moves.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Providers build records from native Rust data — integers from `/proc`, strings from
+          NSS, booleans from flags. The value crate offers a set of `From` impls so that code can
+          write `Value::from(x)` or `x.into()` instead of spelling out the variant each time.
+      - type: code
+        snippet: c13-value-from-impls
+        annotations:
+          - lines: 631-635
+            kind: rust
+            body: |
+              `impl From<i64> for Value` reads "a `Value` can be made **from** an `i64`". The one
+              method, `from`, takes the source by value and returns `Self`. Inside,
+              `i128::from(value)` is itself a `From` conversion: widening `i64` to `i128` cannot
+              lose information, so the standard library offers it as `From`.
+          - lines: 649-653
+            kind: ownership
+            body: |
+              `value.into()` here converts a `&str` into the `Arc<str>` the `String` variant
+              holds. That allocates one new buffer (with room for the reference counts) and copies
+              the text into it. The `String` impl below does the same with an owned `String`: the
+              text is moved in and copied into the `Arc`'s allocation.
+          - lines: 661-665
+            kind: ownership
+            body: |
+              A `RecordValue` is **moved** into the conversion and handed to `into_value`, which
+              wraps it in a new `Arc` (`Value::Record(Arc::new(self))`). After this call the
+              caller no longer owns the record; it owns a `Value` that shares it.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          [`From<T>`](glossary:from-into) is the standard trait for conversions that **always succeed**. The standard
+          library contains a blanket impl: whenever `Y: From<X>`, then `X: Into<Y>`. So one impl
+          gives two spellings:
+
+          ```rust
+          let a = Value::from(42_i64);   // From, target named
+          let b: Value = 42_i64.into();  // Into, target inferred from the annotation
+          ```
+
+          `Into` is what you meet in parameters — `impl Into<Arc<str>>` in [chapter 11](chapter:generics)
+          — because it lets callers pass anything convertible. `From` is what you implement.
+
+          A conversion that may fail uses `TryFrom` or `FromStr` instead and returns a `Result`
+          ([next lesson](lesson:conversions-02)).
+      - type: prose
+        kind: context
+        title: The exit status at the process boundary
+        body: |
+          `ExitStatus` ([chapter 2](lesson:functions-types-01)) is a newtype over `u8` in `ono-core`, following the
+          Bourne-family conventions of ADR-0008. When the `ono` binary finishes, it must hand the
+          operating system a `std::process::ExitCode`. `ono-core` implements that conversion
+          itself.
+      - type: code
+        snippet: c13-exit-status-from
+        annotations:
+          - lines: 17
+            kind: type
+            body: |
+              The field `u8` is private: outside `ono-core`, nobody can build an `ExitStatus` from
+              a number except through the named constructors (`from_code`, `from_signal`) and
+              constants, or read it except
+              through `code()` and conversions like this one.
+          - lines: 71-75
+            kind: rust
+            body: |
+              `From<ExitStatus> for ExitCode`: Ono's type is the source, a standard-library type
+              is the target. Inside, `ExitCode::from(status.0)` uses the standard library's own
+              `From<u8> for ExitCode`. `ExitStatus` is `Copy`, so passing it by value copies one
+              byte.
+          - lines: 77-81
+            kind: rust
+            body: |
+              `Display` is also a conversion of sorts — into text. `write!(f, "{}", self.0)`
+              prints the bare number, the form a shell's `$?` shows.
+      - type: code
+        snippet: c13-main-exit-code
+        caption: |
+          The end of `main`. `status` is bound by `let status = match invocation { … };`
+          (line 18); every arm of that `match` either produces an `ExitStatus` or returns from
+          `main` early.
+        annotations:
+          - lines: 15
+            kind: rust
+            body: |
+              `main` may return `ExitCode`; the runtime passes it to the operating system.
+          - lines: 163
+            token: "ExitCode::from(status)"
+            kind: flow
+            body: |
+              The one place Ono's own status type becomes the process's exit code, through the
+              `From` impl above.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The `ExitStatus` doc says Ono uses Bourne-family conventions "because every tool that
+          consumes a shell's status already assumes them (ADR-0008)". Keeping the status a
+          dedicated type inside the shell prevents a raw number from being confused with any
+          other `u8`, and converting only at the edge (`main`) means the rest of the code talks
+          about `ExitStatus::NOT_FOUND`, never about `127`.
+
+          For `Value`, the `From` impls exist for convenience at construction sites; which
+          native types get one is simply the set the code needs. Note what is **absent**: there
+          is no `From<u64>` or `From<usize>` for `Value`, so such numbers must be converted to
+          `i128` explicitly first.
+      - type: exercise
+        id: conversions-01-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Using only the impls shown in `value.rs`, which of these lines does **not** compile?
+        snippets: [c13-value-from-impls]
+        choices:
+          - text: "`let v = Value::from(7_i64);`"
+            feedback: |
+              Compiles: `impl From<i64> for Value` exists (lines 631–635).
+          - text: "`let v: Value = 7_u32.into();`"
+            feedback: |
+              Compiles: `impl From<u32> for Value` exists, and the standard blanket impl turns it
+              into `impl Into<Value> for u32`. The annotation `: Value` picks the target.
+          - text: "`let v: Value = 7_u64.into();`"
+            correct: true
+            feedback: |
+              Right, this fails: there is no `From<u64> for Value`, so there is no
+              `Into<Value> for u64` either. Rust does not chain conversions (`u64 → i128 →
+              Value`) on its own; you would write `Value::from(i128::from(7_u64))`.
+          - text: "`let v: Value = \"pid\".into();`"
+            feedback: |
+              Compiles: `impl From<&str> for Value` exists (lines 649–653).
+      - type: exercise
+        id: conversions-01-q2
+        exercise_type: trace-value
+        prompt: |
+          A provider has built a `RecordValue` called `record` and runs
+          `let value = Value::from(record); let copy = value.clone();`.
+
+          Trace what happens to the record: who owns it after each statement, what is allocated,
+          and what `clone` costs.
+        snippets: [c13-value-from-impls]
+        hints:
+          - level: 1
+            body: |
+              Follow `record` into `from` and then into `into_value`, whose body is
+              `Value::Record(Arc::new(self))`.
+        solution:
+          summary: |
+            `Value::from(record)` moves the record into `from`, which moves it into `into_value`,
+            which moves it into a new heap allocation owned by an `Arc` and returns
+            `Value::Record(that_arc)`. `record` is unusable afterwards. `value.clone()` copies the
+            `Arc` pointer and increments its reference count: `value` and `copy` share one record.
+          analysis:
+            - aspect: ownership
+              body: |
+                Before: the provider's local `record` owns the record. After the first statement:
+                the `Arc` inside `value` owns it; `record` has been moved. After the second: two
+                `Arc` handles (`value`, `copy`) share ownership; the record is freed when the last
+                of them is dropped.
+            - aspect: types
+              body: |
+                `from(record: RecordValue) -> Value` takes the record by value, which is what
+                makes it a move. The variant is `Value::Record(Arc<RecordValue>)`.
+            - aspect: side-effects
+              body: |
+                One allocation for `Arc::new` (the record's contents are moved into it). No
+                allocation for `clone`; only an atomic counter increment.
+          guarantees: |
+            The code guarantees that a record inside a `Value` is always behind an `Arc`, and
+            that converting a record into a value does not copy its fields.
+          semantics: |
+            Passing a non-`Copy` value by value moves it; using `record` after the move is a
+            compile error. `Clone` for `Value` is derived, and cloning an `Arc` is a
+            reference-count increment, never a deep copy.
+          interpretation: |
+            This is the cheap-clone value model the `Value` doc describes ("cloning a value is a
+            refcount bump whatever it holds") — [chapter 15](lesson:smart-pointers-01) reads that
+            design in full.
+      - type: exercise
+        id: conversions-01-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `ono-core` could have offered a method `ExitStatus::to_exit_code(self) -> ExitCode`
+          instead of `impl From<ExitStatus> for ExitCode`. What does choosing the `From` trait
+          give callers, and why is the conversion defined in `ono-core` rather than in the `ono`
+          binary where it is used?
+        snippets: [c13-exit-status-from, c13-main-exit-code]
+        hints:
+          - level: 1
+            body: |
+              Which trait does a generic function use to accept "anything convertible into an
+              `ExitCode`"? And which crate is allowed to write this impl at all?
+        solution:
+          summary: |
+            A `From` impl makes the conversion available under the standard names —
+            `ExitCode::from(status)` and `status.into()` — and to any generic code bounded by
+            `Into<ExitCode>`. It lives in `ono-core` because Rust's orphan rule lets an impl of a
+            foreign trait for a foreign type be written only in a crate that owns one of the
+            types; the binary owns neither `From` nor `ExitCode` nor `ExitStatus`.
+          analysis:
+            - aspect: traits
+              body: |
+                `From` is the conventional conversion trait; implementing it also yields `Into`
+                through the standard blanket impl.
+            - aspect: architecture
+              body: |
+                `ono-core` defines `ExitStatus`, so it may implement `From<ExitStatus>` for a
+                standard type. Every crate that has an `ExitStatus` can then turn it into an
+                `ExitCode` without a helper of its own.
+            - aspect: outputs
+              body: |
+                `main`'s last expression is `ExitCode::from(status)`, and most early returns do the
+                same with named constants such as `ExitStatus::FAILURE`. The exception is the
+                remote agent mode (feature `remote`), which returns the `ExitCode` that
+                `ono_remote::agent_main` or `serve_authenticated` produce.
+          guarantees: |
+            In the shell's own paths (`main`'s final line and the early returns built from
+            `ExitStatus` constants), the exit code is produced from an `ExitStatus`, so it follows
+            ADR-0008's conventions. The remote agent paths return an `ExitCode` built elsewhere
+            (`ExitCode::SUCCESS`/`FAILURE` in `ono-remote`).
+          semantics: |
+            Coherence (the orphan rule) requires that the trait, or at least one type in the impl
+            header, be local to the crate writing the impl — and that type may be a type parameter
+            of the trait, not only the implementing type. `From<ExitStatus> for ExitCode` has a
+            foreign trait and a foreign implementing type, but `ExitStatus` in `From<ExitStatus>`
+            is local to `ono-core`, which is what allows `ono-core` to write it.
+          interpretation: |
+            Ono-Sendai keeps its vocabulary types in `ono-core` and lets them cross into the
+            standard library at exactly one seam. Reading `ExitCode::from(status)` in `main` is
+            therefore enough to know the exit value follows the shell's contract.
+
+  - id: conversions-02
+    title: "Parsing text into types: `FromStr` and `TryFrom`"
+    stage: practice
+    summary: Read a recursive `FromStr` that parses contract type names, and a checked `TryFrom` that refuses negative counts.
+    prerequisites: [conversions-01]
+    concepts: [conversions, associated-types, question-mark, smart-pointers]
+    ono_topics: [command-registry, pipeline]
+    objectives:
+      - Explain how `str::parse` finds the right `FromStr` impl through type inference.
+      - Read `type Err = …` as the error type a parse can produce.
+      - Explain why a recursive enum needs `Box`.
+      - Explain why `usize::try_from` is used instead of `as usize`.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          Command contracts live as YAML in `docs/contracts/commands/`. Each parameter declares a
+          type as **text**: `int`, `path`, `list<string>`, `ref<ono.user/1>`. When the registry is
+          loaded, that text must become a typed `DeclaredType`, or the contract is rejected.
+          `DeclaredType`'s doc says it is "the value vocabulary of spec §10.2 with the three
+          additions of ADR-0012 §7".
+      - type: code
+        snippet: c13-declared-type-from-str
+        annotations:
+          - lines: 284
+            token: "List(Box<DeclaredType>)"
+            kind: type
+            body: |
+              A variant that contains the enum itself. Without the [`Box`](glossary:box), a `DeclaredType` would
+              have to contain a whole `DeclaredType` inline — an infinitely large type. `Box` puts
+              the inner value on the heap and stores only a pointer.
+          - lines: 402
+            kind: type
+            body: |
+              `FromStr` has an [**associated type**](glossary:associated-type) `Err`: each implementation chooses the error
+              its parse returns. Here it is the shell's structured `ErrorValue`.
+          - lines: 405-407
+            kind: flow
+            body: |
+              `strip_prefix` and `strip_suffix` return `Option<&str>`; `and_then` requires both to
+              succeed. Then `inner.parse()?` parses the inner text. Its target type is inferred
+              from where the result goes — into `Box::new(…)` inside `DeclaredType::List`, i.e. a
+              `DeclaredType` — so `parse` calls **this same `from_str`**, recursively.
+          - lines: 411-429
+            kind: rust
+            body: |
+              A `match` on a `&str` with string-literal patterns; `_` catches every other text
+              and produces a `type.mismatch` error naming the text.
+      - type: prose
+        kind: rust
+        title: What does this Rust mean?
+        body: |
+          [`FromStr`](glossary:fromstr) is the trait behind `str::parse`. Writing `"int".parse::<DeclaredType>()`, or
+          writing `let t: DeclaredType = text.parse()?;`, calls `DeclaredType::from_str`. The
+          compiler chooses the implementation from the **requested type**, so the same `.parse()`
+          call parses an integer in one place and a declared type in another.
+
+          `?` in `from_str` works exactly as elsewhere: on `Err(e)` it returns
+          `Err(From::from(e))` from the enclosing function. Here both sides are `ErrorValue`, and
+          `From<T> for T` is the identity conversion, so the error passes through unchanged.
+      - type: code
+        snippet: c13-parameters-with
+        caption: |
+          Where contracts call it. The function continues past line 1435 to parse defaults and
+          build the `ParameterSpec`.
+        annotations:
+          - lines: 1429-1432
+            kind: type
+            body: |
+              The annotation `let declared_type: DeclaredType` is what selects
+              `DeclaredType::from_str` for `.parse()`.
+          - lines: 1433-1435
+            kind: flow
+            body: |
+              `map_err` replaces the parse error with one produced by the caller's `error`
+              function, prefixed with the parameter's name, and `?` returns it. The closure's
+              parameter type is written out (`failure: ErrorValue`) to help inference.
+      - type: prose
+        kind: context
+        title: A checked narrowing
+        body: |
+          `take 10`, `skip 5` and `tail 3` need a count. The count arrives either as a value bound
+          by the command's arguments or as an expression to evaluate. Either way it is an Ono
+          integer — an `i128` — and the engine's `Take::new` wants a `usize`.
+      - type: code
+        snippet: c13-transform-count
+        annotations:
+          - lines: 254-272
+            kind: flow
+            body: |
+              Three arms produce the `value`: a bound value (cloned — cheap for a `Value`), the
+              first of the bound expressions evaluated with no current record, or an immediate
+              `return Err(…)` when no count was given at all.
+          - lines: 273
+            kind: rust
+            body: |
+              `as_int()` returns `Result<i128, ErrorValue>`; `?` fails for a non-integer such as a
+              string.
+          - lines: 274-280
+            kind: rust
+            body: |
+              `usize::try_from(count)` is `TryFrom<i128> for usize`: it returns `Ok` when the
+              number fits and `Err(TryFromIntError)` when it is negative or too large. `map_err`
+              discards that standard error (`|_|`) and builds a user-facing one. This expression
+              is the function's return value.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          Contracts are data, and the registry must refuse a contract that does not typecheck
+          against the vocabulary rather than guessing. Parsing type names with `FromStr` puts that
+          vocabulary in one function, and `list<…>` works for any inner type, including another
+          list, without listing combinations.
+
+          For counts, `as usize` would **not** fail: it reinterprets the bits, so `-1` would
+          become 18 446 744 073 709 551 615 on a 64-bit machine and `take -1` would silently take
+          everything. `try_from` turns the same input into the error "`take` cannot take -1
+          values" with the help "a count is zero or more".
+      - type: exercise
+        id: conversions-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Suppose line 274 were written `Ok(count as usize)` instead of using `try_from`. What
+          would `take -1` then do on a 64-bit machine?
+        snippets: [c13-transform-count]
+        choices:
+          - text: It would fail with the same "cannot take -1 values" error.
+            feedback: |
+              No. That error exists only because of the `try_from` + `map_err`. An `as` cast
+              between integer types never fails and never produces an error.
+          - text: It would panic at runtime with an overflow.
+            feedback: |
+              No. Integer `as` casts do not panic, even in debug builds; overflow checks apply to
+              arithmetic such as `+`, not to casts.
+          - text: It would take 18 446 744 073 709 551 615 values — effectively the whole stream.
+            correct: true
+            feedback: |
+              Right. `as` truncates the `i128` to its low 64 bits, and the two's-complement bits
+              of `-1` read as `usize::MAX`. The user's mistake would become "no limit" without any
+              message, which is exactly what `try_from` prevents.
+          - text: It would take 0 values, because negative numbers are clamped to zero.
+            feedback: |
+              No. `as` does not clamp integers. (Float-to-integer casts saturate, but this is an
+              integer-to-integer cast.)
+      - type: exercise
+        id: conversions-02-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          Trace `DeclaredType::from_str` for three inputs and give the result of each:
+          `"list<ref<ono.user/1>>"`, `"list<list<int>>"` and `"list<int"` (the closing `>` is
+          missing). How many times is `from_str` entered for each?
+        snippets: [c13-declared-type-from-str]
+        hints:
+          - level: 1
+            body: |
+              `strip_suffix('>')` only succeeds if the text ends with `>`. What happens to
+              `"list<int"` at line 405, at line 408, and in the `match`?
+        solution:
+          summary: |
+            `"list<ref<ono.user/1>>"` → two calls: the outer strips `list<` and `>`, the inner
+            sees `"ref<ono.user/1>"` and returns `Ref("ono.user/1")`; result
+            `List(Box(Ref("ono.user/1")))`. `"list<list<int>>"` → three calls, result
+            `List(Box(List(Box(Int))))`. `"list<int"` → one call: the `list<` prefix is stripped
+            but `strip_suffix('>')` fails, so `and_then` yields `None`; the `ref<` test fails;
+            the `match` falls to `_` and returns `Err(type.mismatch)` "`list<int` is not a declared
+            type of the registry vocabulary".
+          analysis:
+            - aspect: control-flow
+              body: |
+                Each call tries, in order: the `list<…>` form (early `return`), the `ref<…>` form
+                (early `return`), then the fixed names. Recursion only happens in the `list`
+                branch, once per nesting level.
+            - aspect: errors
+              body: |
+                An error in an inner call (for example `"list<integer>"`) is returned by the inner
+                `from_str`, propagated by `?` at line 406 unchanged, and reported with the
+                *inner* text in its message ("`integer` is not a declared type …").
+            - aspect: types
+              body: |
+                The inferred target of `inner.parse()` is `DeclaredType`, because the result is
+                placed in `Box::new(…)` as the payload of `DeclaredType::List`. Each nesting level
+                adds one heap allocation for its `Box`.
+          guarantees: |
+            A `DeclaredType` produced by this function contains only names of the fixed
+            vocabulary, `ref<…>` handles, and lists of those; any other text is an error.
+          semantics: |
+            `Option::and_then` short-circuits on `None`. `str::parse` dispatches on the requested
+            type. `Box<T>` gives a recursive enum a finite size. `?` with identical error types
+            converts through the identity `From`.
+          interpretation: |
+            The parser mirrors how the contract files spell types, and a malformed name in a
+            contract becomes a registry-load error — a build defect, as `contract_error`'s doc
+            puts it — rather than a surprise when the command runs.
+      - type: exercise
+        id: conversions-02-q3
+        exercise_type: read-function
+        prompt: |
+          Read `count` completely. For `take 10`, for `take (1 + 2)` in expression mode, for a
+          bare `take`, for `take -1` and for `take "ten"`: what does it return, and which line
+          decides?
+        snippets: [c13-transform-count]
+        hints:
+          - level: 1
+            body: |
+              There are five ways out of this function: one `return`, three `?`s (lines 262, 263
+              and 273), and the final expression. Assign each input to one of them.
+        solution:
+          summary: |
+            `count` produces the `usize` for `take`/`skip`/`tail`. `take 10` → the `Binding::Value`
+            arm clones `10`, `as_int` gives `10`, `try_from` gives `Ok(10)`. `take (1 + 2)` → the
+            `Expressions` arm evaluates the first expression to `3` → `Ok(3)`. Bare `take` → the
+            `None` arm returns `Err` "`take` needs a count, and none was given" with the help
+            "write it as `take 10`". `take -1` → `as_int` gives `-1`, `try_from` fails →
+            `Err` "`take` cannot take -1 values". `take "ten"` → `as_int()?` returns a
+            type-mismatch error from line 273.
+          analysis:
+            - aspect: inputs
+              body: |
+                The bound arguments (read only), the spelling for messages, and the scope for
+                evaluating expressions. Nothing is mutated.
+            - aspect: control-flow
+              body: |
+                A `match` on `Option<&Binding>` with three arms; one arm returns early. Two `?`s
+                inside the `Expressions` arm (empty list, evaluation failure), one `?` at line 273,
+                and a final `Result` expression that is returned as is.
+            - aspect: errors
+              body: |
+                The errors `count` builds itself (missing count, empty expression list,
+                out-of-range count) all use `TypeMismatch` and say what was wrong in the user's
+                words. Errors from `evaluate` (line 263) and `as_int` (line 273, a non-integer) are
+                passed through unchanged with whatever code they carry.
+            - aspect: ownership
+              body: |
+                `value.clone()` copies a `Value` out of the borrowed arguments — for an integer
+                that is a plain copy. `evaluate` returns an owned `Value`. The `usize` result is
+                `Copy`.
+          guarantees: |
+            `count` never returns a negative or truncated count; it returns `Ok(n)` only when the
+            argument is an integer that fits in `usize`.
+          semantics: |
+            `TryFrom` returns a `Result` and never wraps; `map_err(|_| …)` replaces the error
+            type; a `match` arm may `return` from the whole function; `?` returns early on `Err`.
+          interpretation: |
+            Converting at the boundary with a checked conversion is how Ono-Sendai keeps its
+            engine simple (it only ever sees valid `usize` counts) while giving the user a
+            precise, actionable error.
+
+  - id: conversions-03
+    title: "How `?` converts: `From<ErrorValue> for Flow`"
+    stage: practice
+    summary: Read the evaluator's `Flow` type, the one-line `From` impl every `?` relies on, and how loops catch only the jumps meant for them.
+    prerequisites: [conversions-02, result-errors-03]
+    concepts: [question-mark, conversions, error-types, enums]
+    ono_topics: [evaluation, error-flow]
+    objectives:
+      - Explain precisely what `?` does with an `Err` whose type differs from the function's error type.
+      - Read `Ok(expr?)` as a conversion of the error type.
+      - Explain how `Flow` uses the `Err` channel for `break`, `continue`, `return` and `exit`.
+      - Trace an error from an inner helper to the top-level status.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          The evaluator in `ono-cli` runs a parsed program statement by statement. Evaluation can
+          stop early for more reasons than failure: a `break` or `continue` inside a loop, a
+          `return` inside a function, an `exit`. `control.rs` says the control constructs read
+          `Flow` "rather than a status code, which is what keeps `break`, `continue`, `return` and
+          `exit` explicit".
+      - type: code
+        snippet: c13-flow
+        annotations:
+          - lines: 36-50
+            kind: type
+            body: |
+              Two failure variants (one carrying a known exit status) and four non-error jumps.
+              `Return` carries the function's result value; `Exit` carries the status to leave
+              with.
+          - lines: 52-56
+            kind: rust
+            body: |
+              The impl that makes `?` work across the evaluator: any `ErrorValue` can become a
+              `Flow`, namely `Flow::Failed(error)`. The error is moved into the variant.
+          - lines: 59
+            kind: type
+            body: |
+              A generic **type alias**: `Eval<ExitStatus>` means `Result<ExitStatus, Flow>`. It
+              creates no new type.
+          - lines: 73-90
+            kind: flow
+            body: |
+              The top of the program. Each `Flow` variant gets its own treatment: failures are
+              reported and set the status, `Exit` leaves, and a jump no construct caught ends the
+              program quietly.
+      - type: prose
+        kind: rust
+        title: "What `?` does, exactly"
+        body: |
+          [Chapter 6](lesson:result-errors-03) introduced [`?`](glossary:question-mark-operator) as "return early, converting the error
+          with `From`". Here is the full rule. In a function returning `Result<T, F>`, the
+          expression `expr?` with `expr: Result<U, E>`:
+
+          1. on `Ok(u)`, evaluates to `u`;
+          2. on `Err(e)`, returns `Err(From::from(e))` from the **enclosing function** — which
+             compiles only if `F: From<E>`.
+
+          (On `Option` it returns `None`; that form never converts.) So a helper that fails with
+          `ErrorValue` can be called with `?` from any function returning `Eval<T>`, because
+          `Flow: From<ErrorValue>`. The compiler inserts the conversion; you never see a
+          `Flow::Failed` at the call site.
+      - type: code
+        snippet: c13-string-of
+        annotations:
+          - lines: 18
+            kind: type
+            body: |
+              `text_of` fails with a plain `ErrorValue`: turning a value into text has nothing to
+              do with loops or functions, and its failure comes straight from
+              `ono_value::canonical_text`, which knows nothing about `Flow`.
+          - lines: 26
+            kind: flow
+            body: |
+              `eval_expr` returns `Eval<Value>`. Same error type as `string_of`, so this `?`
+              converts through the identity `From<Flow> for Flow`.
+          - lines: 27
+            token: "Ok(text_of(&value)?)"
+            kind: rust
+            body: |
+              `text_of` returns `Result<String, ErrorValue>`, but `string_of` must return
+              `Result<String, Flow>`. Returning `text_of(&value)` directly would be a type error.
+              `Ok(… ?)` unwraps the success and re-wraps it in the right `Result`, while `?`
+              converts the error into `Flow::Failed`. `text_of(&value).map_err(Flow::from)` would
+              be equivalent.
+          - lines: 34
+            kind: rust
+            body: |
+              The same idiom inside `eval_expr`, for a literal with a unit such as `512MiB`.
+      - type: code
+        snippet: c13-run-while
+        annotations:
+          - lines: 38
+            kind: flow
+            body: |
+              `?` inside a `while` condition: an error evaluating the condition leaves
+              `run_while` immediately with that `Flow`.
+          - lines: 39-44
+            kind: flow
+            body: |
+              The loop catches exactly the two jumps that belong to it. `Err(other)` — a failure,
+              a `return` or an `exit` — is passed outward unchanged with `return Err(other)`.
+      - type: diagram
+        kind: control-flow
+        title: "An interpolation error travelling out of a `while` loop"
+        art: |
+          canonical_text(list) ──Err(ErrorValue: type.mismatch)──► text_of
+          text_of            ──Err(ErrorValue)──► string_of: Ok(text_of(&value)?)
+                                                   │ ? calls From::from
+                                                   ▼
+          string_of          ──Err(Flow::Failed(e))──► … ──► run_block
+          run_while: match run_block(…)
+                     Err(Flow::Break)    → break      (not this one)
+                     Err(Flow::Continue) → continue   (not this one)
+                     Err(other)          → return Err(other)
+                                                   │
+                                                   ▼
+          run_program: Err(Flow::Failed(error)) → report(&error); set_status(status_for(&error))
+        description: |
+          `canonical_text` refuses to turn a list into text and returns an `ErrorValue` with code
+          `type.mismatch`. `text_of` returns it unchanged. In `string_of`, the `?` in
+          `Ok(text_of(&value)?)` converts it into `Flow::Failed(error)` through
+          `From<ErrorValue> for Flow`, and returns it. The error travels up through the block
+          evaluation to `run_while`, whose `match` only catches `Flow::Break` and
+          `Flow::Continue`; the `Err(other)` arm returns it unchanged. `run_program` finally
+          matches `Flow::Failed`, reports the error and sets the status from `status_for`, which
+          is `FAILURE` (1) for a type mismatch.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          Putting jumps into the error channel lets every evaluator function use `?` to pass *any*
+          early stop outward with one character, and forces the constructs that care — loops for
+          `Break`/`Continue`, function calls for `Return`, the top level for `Exit` — to match on
+          them explicitly. The `Flow` doc also records why `FailedWith` exists: "an external
+          command that could not be started reports both, and ADR-0008 requires its own status to
+          be the one that survives."
+      - type: exercise
+        id: conversions-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          In `string_of`, `text_of(&value)` returns `Err(e)` where `e` is an `ErrorValue`. What
+          does line 27 do?
+        snippets: [c13-string-of]
+        choices:
+          - text: "Returns `Err(e)` from `string_of`, with `e` still an `ErrorValue`."
+            feedback: |
+              Impossible: `string_of` returns `Eval<String>`, whose error type is `Flow`. A
+              function cannot return a `Result` with a different error type; `?` exists precisely
+              to bridge that with a conversion.
+          - text: "Returns `Err(Flow::Failed(e))` from `string_of`, converted by `From<ErrorValue> for Flow`."
+            correct: true
+            feedback: |
+              Right. `?` calls `From::from(e)`, which is `Flow::Failed(e)`, and returns it at once.
+              The `Ok(…)` around the expression is never built on this path.
+          - text: "Wraps the error in `Ok`, because the `?` is inside `Ok(…)`."
+            feedback: |
+              No. `?` is evaluated first and returns from the function on `Err`; the surrounding
+              `Ok(…)` is only constructed when `?` produced a value.
+          - text: Panics, because `?` unwraps like `unwrap()`.
+            feedback: |
+              No. `?` never panics. It returns the error to the caller; `unwrap()` is the method
+              that panics on `Err`.
+      - type: exercise
+        id: conversions-03-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          A script's only statement is a `while` loop. Consider three runs:
+
+          1. In the second iteration, the body's block returns `Err(Flow::Break)`.
+          2. In the first iteration, the body's block returns `Err(Flow::Exit(ExitStatus::from_code(3)))`.
+          3. The loop condition itself fails with a type-mismatch `ErrorValue`.
+
+          For each, trace what `run_while` returns and what `run_program` then does.
+        snippets: [c13-flow, c13-run-while]
+        hints:
+          - level: 1
+            body: |
+              Match each `Flow` against the arms of `run_while` first, then against the arms in
+              `run_program`.
+        solution:
+          summary: |
+            (1) `run_while` hits `Err(Flow::Break) => break`, leaves the loop and returns
+            `Ok(status)` with the status of the first iteration; `run_program` sets that status.
+            (2) `Err(other)` returns `Err(Flow::Exit(3))`; `run_program` calls
+            `session.leave(3)` and returns status 3 at once. (3) The `?` on line 38 converts the
+            `ErrorValue` to `Flow::Failed` and returns it; `run_program` reports the error and
+            sets status 1 via `status_for`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `run_while` distinguishes four outcomes: condition error (`?`), normal body
+                (`Ok(reached)`), loop jumps (`Break`, `Continue`) and everything else
+                (`Err(other)`), which is re-thrown unchanged.
+            - aspect: errors
+              body: |
+                Only case 3 is an error in the user's sense. Case 2 travels on the same `Err`
+                channel but is handled as an exit, not reported.
+            - aspect: outputs
+              body: |
+                `run_program` returns an `ExitStatus`: the loop's status in case 1, 3 in case 2,
+                and the session's status after the statement in case 3 (`FAILURE`, since
+                `status_for` maps a type mismatch to 1).
+            - aspect: mutation
+              body: |
+                `status` in `run_while` is a `let mut` updated on each successful iteration;
+                `run_program` updates the session's status through `&mut Session`.
+          guarantees: |
+            A `while` loop consumes only `Break` and `Continue`. Every other early stop reaches
+            its intended handler unchanged.
+          semantics: |
+            `break` and `continue` in the `match` arms act on the Rust `while` loop that
+            implements the Ono loop. `return Err(other)` moves the `Flow` out to the caller. `?`
+            converts `ErrorValue` into `Flow` through the `From` impl.
+          interpretation: |
+            Ono's control constructs are implemented as Rust control flow over `Result`s. This
+            keeps "what stops where" visible in the types: a reader can find every handler of
+            `Flow::Return` by searching for it.
+      - type: exercise
+        id: conversions-03-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `Flow` puts `Break`, `Continue`, `Return` and `Exit` into the `Err` side of a `Result`,
+          next to real failures. What would the evaluator look like if those jumps were returned
+          on the `Ok` side instead (for example as `Ok(Outcome::Break)`)? What does the chosen
+          design buy, and what does it cost?
+        snippets: [c13-flow, c13-run-while]
+        hints:
+          - level: 1
+            body: |
+              Think about what `?` does for every evaluator function that neither loops nor
+              defines a function.
+        solution:
+          summary: |
+            With jumps on the `Ok` side, every function would have to inspect each `Ok` result and
+            pass jumps outward by hand, because `?` only short-circuits on `Err`. Putting them on
+            the `Err` side makes `?` propagate every early stop automatically, and only the
+            constructs that handle a jump (loops, function calls, the top level) match on it. The
+            cost is that "error" in `Result<T, Flow>` means "stopped early", not "failed", so a
+            reader must remember that `Err` can be a perfectly normal `break`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `?` is the only mechanism needed to unwind through statement, expression and
+                block evaluation. `run_while` shows the handler side: two arms catch, one
+                re-throws.
+            - aspect: types
+              body: |
+                `Eval<T>` fixes the error type once for the whole evaluator, and
+                `From<ErrorValue> for Flow` lets all value-level helpers keep returning plain
+                `ErrorValue`s.
+            - aspect: traits
+              body: |
+                The `From` impl is what connects the two layers; without it every call to an
+                `ErrorValue` helper would need `.map_err(Flow::Failed)`.
+            - aspect: architecture
+              body: |
+                Crates below the evaluator (`ono-value`, `ono-command`) know nothing about `Flow`;
+                they fail with `ErrorValue`, and the conversion happens at the evaluator's
+                boundary.
+          guarantees: |
+            Every early stop is a `Flow` variant, and the program top level handles all six
+            variants explicitly.
+          semantics: |
+            `?` short-circuits only on `Err` (and `None`). A `match` on `Flow` must be
+            exhaustive, so adding a new jump variant would make the compiler point at every
+            handler that needs updating.
+          interpretation: |
+            The `control.rs` doc names the benefit: reading `Flow` rather than a status keeps the
+            jumps explicit. This is a common Rust pattern for interpreters; recognising it makes
+            the evaluator's many `?`s read as "stop and let the right construct decide".
+
+  - id: conversions-04
+    title: "Bridging error types: a `thiserror` enum becomes an `ErrorValue`"
+    stage: practice
+    summary: Read a crate-local error enum whose `Display` is generated, the `From` impl that maps it into the shell's error, and a call site where one conversion is optional and the other required.
+    prerequisites: [conversions-03]
+    concepts: [error-types, conversions, question-mark, derives]
+    ono_topics: [remote-protocol, error-flow]
+    objectives:
+      - Read `#[derive(thiserror::Error)]` and `#[error("…")]` as a generated `Display` and `Error` impl.
+      - Read a `From` impl that uses or-patterns and `{ .. }` to classify variants.
+      - Tell a redundant `map_err(ErrorValue::from)` before `?` from a required `ErrorValue::from` in `return Err(…)`.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          `ono-protocol` implements the wire protocol between an `ono` and a remote agent. Its
+          own error type, `ProtocolError`, describes a peer that is not speaking the protocol
+          correctly. The rest of the shell speaks [`ErrorValue`](glossary:error-value), so the crate provides the bridge.
+      - type: code
+        snippet: c13-protocol-error
+        annotations:
+          - lines: 16
+            token: "thiserror::Error"
+            kind: crate
+            body: |
+              The `thiserror` crate's [derive](glossary:derive) writes the `impl std::error::Error` and, from the
+              `#[error("…")]` attributes, an `impl Display`. Treat derives as generated code; the
+              [next chapter](chapter:derives-macros) reads them in detail.
+          - lines: 17
+            kind: rust
+            body: |
+              `#[non_exhaustive]`: **other crates** must include a wildcard arm when they match on
+              this enum, so new variants can be added later. Inside `ono-protocol` itself the
+              attribute has no effect, which is why the `match` below lists every variant.
+          - lines: 20
+            kind: rust
+            body: |
+              `{claimed}` and `{limit}` name the variant's fields. `{flags:#04x}` further down is
+              a format spec: hexadecimal with a `0x` prefix, zero-padded to four characters.
+          - lines: 77-95
+            kind: flow
+            body: |
+              `match &error` borrows the error to choose a help text. `{ .. }` ignores the fields,
+              and `|` joins variants that share the same help.
+          - lines: 96-98
+            kind: rust
+            body: |
+              `error.to_string()` uses the generated `Display`. The builder chain then adds the help
+              and marks the error as not retryable.
+      - type: code
+        snippet: c13-serve-hello
+        caption: |
+          From `serve`, the agent's side of a link, after the handshake frame has been read.
+          `serve` is an `async fn` — treat `async` as a black box until
+          [chapter 16](chapter:async); nothing here depends on it.
+        annotations:
+          - lines: 563
+            kind: type
+            body: |
+              The function returns `Result<(), ErrorValue>`.
+          - lines: 594-595
+            kind: rust
+            body: |
+              `decode_message` returns `Result<Message, ProtocolError>`. `map_err(ErrorValue::from)`
+              passes the function `ErrorValue::from` where a closure is expected. The `?` that
+              follows would have performed the same conversion by itself.
+          - lines: 596-601
+            kind: flow
+            body: |
+              `let … else`: if the decoded message is not a `Hello`, the `else` block must leave
+              the function. `return Err(…)` performs **no** conversion, so the `ProtocolError` has
+              to be turned into an `ErrorValue` explicitly.
+      - type: prose
+        kind: ono
+        title: Why does Ono-Sendai do this?
+        body: |
+          The module doc states the mapping policy: "Everything in `ProtocolError` describes a
+          peer that is not speaking this protocol correctly, so all of it maps to
+          `remote.protocol_mismatch` (E0602)", while an unreachable link and a changed host key
+          keep their own codes. A crate-local enum keeps the protocol code precise and testable
+          (`PartialEq`, one variant per violation); the single `From` impl is the only place that
+          decides how those violations look to a user — the same code (E0602) and
+          `retryable = false` for every variant, the variant's own message, and a help line
+          grouped by *what the user can do about it*.
+      - type: exercise
+        id: conversions-04-q1
+        exercise_type: multiple-choice
+        prompt: |
+          The `serve` snippet contains two explicit `ErrorValue::from` conversions. Which of them
+          could be deleted without changing whether the code compiles or what it does?
+        snippets: [c13-serve-hello]
+        choices:
+          - text: "Only the one in `.map_err(ErrorValue::from)?` (lines 594–595)."
+            correct: true
+            feedback: |
+              Right. `?` in a function returning `Result<_, ErrorValue>` already calls
+              `From::from` on the `ProtocolError`, and `From<ProtocolError> for ErrorValue`
+              exists. The `map_err` makes the conversion visible but is redundant.
+          - text: "Only the one in `return Err(ErrorValue::from(…))` (line 597)."
+            feedback: |
+              No. `return Err(x)` returns exactly `x`; nothing converts it. Without
+              `ErrorValue::from`, the function would try to return a `Result<_, ProtocolError>`,
+              which is a type error.
+          - text: Both, because `From` conversions are always applied automatically.
+            feedback: |
+              No. Rust applies `From` implicitly only in `?`. Assignments, arguments and
+              `return` statements never convert error types on their own.
+          - text: Neither; both are required for the code to compile.
+            feedback: |
+              The one before `?` is not required: `?` performs the same `From::from` call.
+      - type: exercise
+        id: conversions-04-q2
+        exercise_type: trace-value
+        prompt: |
+          A peer sends a frame with the flag byte `0x80`, which this version does not define. The
+          framing code reports `ProtocolError::UnknownFrameFlags { flags: 0x80 }`. Trace that
+          value through `From<ProtocolError> for ErrorValue`: what are the resulting error's code,
+          message, help and retryability?
+        snippets: [c13-protocol-error]
+        hints:
+          - level: 1
+            body: |
+              Find the variant's `#[error(…)]` string and work out the format spec `#04x`. Then
+              find which `|`-group of the `match` the variant belongs to.
+        solution:
+          summary: |
+            Code `RemoteProtocolMismatch` (`Ono-Sendai-E0602`); message "a frame sets undefined
+            frame flags 0x80"; help "the remote speaks a different version of the Ono link
+            protocol; upgrade the end that is behind"; retryable `false`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                `match &error` compares against the three groups; `UnknownFrameFlags { .. }` is in
+                the second group (lines 85–87), so `help` is the "different version" text.
+            - aspect: outputs
+              body: |
+                `error.to_string()` calls the `Display` that `thiserror` generated from line 40:
+                `{flags:#04x}` formats 128 as `0x80` (the `#` adds `0x`, the width 4 includes it,
+                `0` pads with zeros — not needed here).
+            - aspect: ownership
+              body: |
+                `from` takes the `ProtocolError` by value. The `match` borrows it (`&error`), so it
+                is still available for `to_string()`. After the function returns, the original
+                enum is dropped; only its text survives inside the `ErrorValue`.
+            - aspect: types
+              body: |
+                `help` is a `&'static str` chosen by the `match`; `with_help` accepts it (in
+                [chapter 11](chapter:generics) you saw that these builders take
+                `impl Into<Arc<str>>`).
+          guarantees: |
+            Every `ProtocolError` becomes an `ErrorValue` with code `remote.protocol_mismatch`,
+            its generated message, a help line from one of three groups, and `retryable = false`.
+          semantics: |
+            Matching on `&error` binds nothing (`{ .. }`) and does not move the error. The `match`
+            is exhaustive within the defining crate even though the enum is `#[non_exhaustive]`.
+          interpretation: |
+            Marking protocol violations as not retryable reflects the doc's view that they
+            describe a peer that is not speaking the protocol — retrying the same peer would not
+            help — while the crate's `unreachable` helper, defined just after the `From` impl (not shown), marks a lost link as retryable.
+      - type: exercise
+        id: conversions-04-q3
+        exercise_type: read-function
+        prompt: |
+          Read `From<ProtocolError> for ErrorValue` as a function. Summarise its purpose, inputs
+          and outputs, how it decides, and what a reader of the rest of `ono-protocol` can rely
+          on because it exists.
+        snippets: [c13-protocol-error]
+        hints:
+          - level: 1
+            body: |
+              Look at what the three help texts have in common within each group, and at every
+              call of `ErrorValue::from` or `?` on a `ProtocolError` result elsewhere in the crate.
+        solution:
+          summary: |
+            It converts any protocol violation into the shell's structured error: one fixed code
+            (E0602), the variant's generated message, a help line chosen by the kind of
+            violation (a bound exceeded, a version mismatch, or bytes that are not Ono frames),
+            and `retryable = false`. Because it exists, code anywhere in the crate can fail with a
+            precise `ProtocolError` and hand it to the shell with `?` or `ErrorValue::from`.
+          analysis:
+            - aspect: purpose
+              body: |
+                Be the single translation point from the wire layer's error vocabulary to the
+                shell's.
+            - aspect: inputs
+              body: |
+                A `ProtocolError`, taken by value; `#[non_exhaustive]` does not affect this
+                in-crate `match`.
+            - aspect: outputs
+              body: |
+                An `ErrorValue` built with the builder methods `new`, `with_help`,
+                `with_retryable`.
+            - aspect: control-flow
+              body: |
+                A three-armed `match` with or-patterns; no early returns, no failure path — `From`
+                conversions must always succeed.
+            - aspect: traits
+              body: |
+                `From` makes the conversion usable by `?`. `Display`, generated by
+                `thiserror`, provides the message. `std::error::Error` (also generated) lets a
+                `ProtocolError` be treated as a standard error where needed.
+          guarantees: |
+            Every variant is mapped; the code, retryability and the grouping of help texts are
+            fixed here and nowhere else.
+          semantics: |
+            `From::from` cannot fail. Adding a new variant to `ProtocolError` would make this
+            `match` non-exhaustive, and the compiler would refuse to build until the new variant
+            is assigned a help text.
+          interpretation: |
+            Ono-Sendai's crates keep precise local error enums and convert them at the crate
+            boundary into `ErrorValue`, the error type that travels through pipelines as data.
+            When you meet a new crate, look for its `impl From<…> for ErrorValue` to learn how its
+            failures will look to a user.

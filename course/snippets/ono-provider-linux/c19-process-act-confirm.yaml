@@ -1,0 +1,85 @@
+id: c19-process-act-confirm
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 706
+  end_line: 732
+  anchor: 'fn confirm(&self, pid: i64, expected: Option<Timestamp>) -> Result<(), ErrorValue> {'
+  content_hash: sha256:1fc9546e9dcceff0cec94bf0972f9de30196aaad1689101e7f32dce5323f8558
+  code: |2
+        /// Re-reads a process's identity and refuses when it changed (ADR-0015 T13).
+        fn confirm(&self, pid: i64, expected: Option<Timestamp>) -> Result<(), ErrorValue> {
+            let stat_path = self.proc_root.join(pid.to_string()).join("stat");
+            let stat_text = fs::read_to_string(&stat_path).map_err(|error| {
+                io_error(&error, &stat_path)
+                    .with_target(ValueRef::name(&format!("process {pid}")))
+                    .with_help("nothing was signalled: the process is gone")
+            })?;
+            let stat = procfs::parse_stat(&stat_text).ok_or_else(|| malformed(&stat_path))?;
+            let Some(expected) = expected else {
+                // No recorded start time: the identity is the pid alone, which the schema documents
+                // as vulnerable to reuse. There is nothing to confirm against.
+                return Ok(());
+            };
+            if self.started(&stat) == Some(expected) {
+                return Ok(());
+            }
+            Err(ErrorValue::new(
+                ErrorCode::IoNotFound,
+                format!("pid {pid} is no longer the process that was selected"),
+            )
+            .with_target(ValueRef::name(&format!("process {pid}")))
+            .with_help(
+                "the pid was reused between selection and signal, so nothing was signalled; run the \
+                 query again to select the process you meant",
+            ))
+        }
+- start_line: 1131
+  end_line: 1173
+  anchor: if !matches!(operation, "signal" | "send" | "kill" | "stop" | "set") {
+  content_hash: sha256:acc4ad224f7d73427159b8d975cd05c4ff4ca9bf5aeba6ccf554e6f82d75db06
+  code: |2
+        async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+            let operation = action.operation();
+            if !matches!(operation, "signal" | "send" | "kill" | "stop" | "set") {
+                return Err(ErrorValue::new(
+                    ErrorCode::ProviderUnsupported,
+                    format!("{PROVIDER_ID} has no operation `{operation}`"),
+                ));
+            }
+            let target = action.target();
+            let Some(pid) = target
+                .values()
+                .first()
+                .and_then(|value| value.as_int().ok())
+                .and_then(|pid| i32::try_from(pid).ok())
+            else {
+                return Err(ErrorValue::new(
+                    ErrorCode::TypeMismatch,
+                    "a process is identified by its pid and its start time",
+                ));
+            };
+            let expected = target
+                .values()
+                .get(1)
+                .and_then(|value| value.as_timestamp().ok());
+
+            if operation == "set" {
+                return self.set_attributes(action, pid, expected);
+            }
+            let signal = requested_signal(action)?;
+            if let Err(error) = self.reader.confirm(i64::from(pid), expected) {
+                return Ok(ActionOutcome::failed(action, error));
+            }
+            if action.is_dry_run() {
+                return Ok(ActionOutcome::skipped(
+                    action,
+                    format!("would send signal {signal} to pid {pid}"),
+                ));
+            }
+            match self.signals.send(pid, signal) {
+                Ok(()) => Ok(ActionOutcome::succeeded(action, true)),
+                Err(error) => Ok(ActionOutcome::failed(action, error)),
+            }
+        }

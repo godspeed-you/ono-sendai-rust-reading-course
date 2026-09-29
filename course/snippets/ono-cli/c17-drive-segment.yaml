@@ -1,0 +1,102 @@
+id: c17-drive-segment
+source:
+  file: crates/ono-cli/src/eval/native/drive.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 154
+  end_line: 245
+  anchor: request = requests.recv(), if asking => match request {
+  content_hash: sha256:2a3bb0aa44433deeaf1f3a810876df495aade2c0656a9faa03a2815d53ebd821
+  code: |
+    /// The driver. It is the only thing holding the session, so it is the only thing that can run a
+    /// block — and it is also what drains the pipeline, so the two interleave rather than take turns.
+    ///
+    /// Between two answers it is inside `block_on`; while it answers one it is not, which is what
+    /// lets a block run a pipeline of its own (ADR-0480).
+    ///
+    /// # Errors
+    ///
+    /// The interrupt of spec §18.5, which unwinds rather than returning a partial drain.
+    pub(super) fn drive_segment(
+        session: &mut Session,
+        handle: &tokio::runtime::Handle,
+        requests: &mut tokio::sync::mpsc::Receiver<BlockRequest>,
+        stages: &[Stage],
+        source: &str,
+        mut draining: Option<ValueStream>,
+        mut showing: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Vec<ErrorValue>> + '_>>>,
+    ) -> Eval<Drained> {
+        let mut drained = Drained::default();
+        let mut asking = true;
+        while draining.is_some() || showing.is_some() {
+            // Between two items, and before the first. `select!` below only reaches the interrupt
+            // branch when nothing else is ready, and a stage running a block is never idle for long
+            // enough: the driver leaves the runtime to run the item, and while it is away nothing it
+            // waits on can be polled at all (spec §18.5, v0.5 §32.6). Asking here is a load and a
+            // branch, and it is the only cancellation point a pipeline of many small reads has.
+            if crate::eval::pipeline::interrupt_reached() {
+                return Err(crate::eval::pipeline::interrupted_flow_now());
+            }
+            let driven = handle.block_on(async {
+                tokio::select! {
+                    biased;
+                    request = requests.recv(), if asking => match request {
+                        Some(request) => Driven::Ask(request),
+                        None => Driven::Asked,
+                    },
+                    event = async {
+                        match draining.as_mut() {
+                            Some(stream) => stream.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    }, if draining.is_some() => match event {
+                        Some(event) => Driven::Event(event),
+                        None => Driven::Drained,
+                    },
+                    reported = async {
+                        match showing.as_mut() {
+                            Some(shown) => shown.await,
+                            None => std::future::pending().await,
+                        }
+                    }, if showing.is_some() => {
+                        drained.failures.extend(reported);
+                        Driven::Drained
+                    }
+                    () = interrupted() => Driven::Interrupted,
+                }
+            });
+            match driven {
+                Driven::Ask(request) => {
+                    let Some(block) = block_of(&stages[request.stage]) else {
+                        continue;
+                    };
+                    // ADR-0070 point 3 again, per item: the block's values are captured only where
+                    // a later stage consumes them. §25.4 permits this scope because it is one item's
+                    // result, and forbids the collection over all items that used to stand here.
+                    let consumed = request.stage + 1 < stages.len();
+                    match crate::eval::run_each_item(session, block, source, request.value, consumed) {
+                        Ok((produced, keep_going)) => {
+                            let _ = request.reply.send(BlockReply::Produced {
+                                values: produced,
+                                keep_going,
+                            });
+                        }
+                        Err(flow) => {
+                            let _ = request.reply.send(BlockReply::Stop);
+                            drained.stopped = Some(flow);
+                            break;
+                        }
+                    }
+                }
+                Driven::Asked => asking = false,
+                Driven::Event(StreamEvent::Value(value)) => drained.values.push(value),
+                Driven::Event(StreamEvent::Failure(error)) => drained.failures.push(error),
+                Driven::Drained => {
+                    draining = None;
+                    showing = None;
+                }
+                Driven::Interrupted => return Err(crate::eval::pipeline::interrupted_flow_now()),
+            }
+        }
+        Ok(drained)
+    }

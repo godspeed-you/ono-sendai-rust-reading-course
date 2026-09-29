@@ -1,0 +1,28 @@
+id: c14-debug-as-name
+source:
+  file: crates/ono-pipeline/src/transform.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 63
+  end_line: 80
+  anchor: macro_rules! debug_as_name {
+  content_hash: sha256:c309569f9da3c3e9fb7b8f4fed74068bfdb9c50cad96f7c0835ef8c7ac718454
+  code: |
+    /// Gives a transform a `Debug` that names it.
+    ///
+    /// A transform holds resolved functions — closures, trait objects — which have no `Debug` worth
+    /// printing, and derivation is therefore impossible. What a reader of a failed assertion wants
+    /// is the transform's name, which is exactly what the trait already provides.
+    macro_rules! debug_as_name {
+        ($($transform:ty),+ $(,)?) => {
+            $(
+                impl ::std::fmt::Debug for $transform {
+                    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                        f.write_str($crate::Transform::name(self))
+                    }
+                }
+            )+
+        };
+    }
+
+    pub(crate) use debug_as_name;

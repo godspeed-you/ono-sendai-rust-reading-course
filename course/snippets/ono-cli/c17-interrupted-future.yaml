@@ -1,0 +1,26 @@
+id: c17-interrupted-future
+source:
+  file: crates/ono-cli/src/eval/native/drive.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 126
+  end_line: 141
+  anchor: tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+  content_hash: sha256:88de4d098ef2889eca6b59e1ff4c8ca41025d2f0bd2e3bc94d74b3b94d1cc59b
+  code: |
+    /// Resolves when the shell has been interrupted.
+    ///
+    /// Ctrl-C is delivered to the shell itself while a native pipeline runs — there is no child for
+    /// the kernel to interrupt — so whatever a thread waits on races this and loses to it (spec
+    /// §18.5). Dropping the losing future drops every stream receiver, which closes the bounded
+    /// channels and stops every producer at its next send.
+    pub(super) async fn interrupted() {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if crate::eval::pipeline::interrupt_reached() {
+                return;
+            }
+        }
+    }

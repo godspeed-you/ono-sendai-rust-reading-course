@@ -1,0 +1,109 @@
+id: c13-protocol-error
+source:
+  file: crates/ono-protocol/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 8
+  anchor: so all of it maps to
+  content_hash: sha256:7270b90b0caeb8c75b40d986b148dcec4efecd042c2172c033d068b101c207b8
+  code: |
+    //! What can be wrong with what a peer put on the wire, and the shell error it becomes.
+    //!
+    //! Everything in [`ProtocolError`] describes a peer that is not speaking this protocol
+    //! correctly, so all of it maps to `remote.protocol_mismatch` (E0602). The two remote conditions
+    //! that are *not* about the wire keep their own codes: a link that cannot be established or is
+    //! lost is `remote.unreachable` (E0601), and a peer whose key changed is
+    //! `remote.host_key_changed` (E0603), which ADR-0006 classifies as `safety` because it is a
+    //! trust decision rather than a transport failure.
+- start_line: 15
+  end_line: 100
+  anchor: impl From<ProtocolError> for ErrorValue {
+  content_hash: sha256:e28b89dba6b2c813ba3ff26365782359c1ecc54b5bf6b5c149720d8173e949dd
+  code: |
+    /// A peer said something this protocol cannot mean.
+    #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum ProtocolError {
+        /// A frame claimed a payload larger than the agreed bound.
+        #[error("a frame claims {claimed} bytes of payload, and the limit is {limit}")]
+        FrameTooLarge {
+            /// The length the header claimed.
+            claimed: usize,
+            /// The largest length that would have been accepted.
+            limit: usize,
+        },
+        /// A frame carried a framing version this build does not speak.
+        #[error("a frame carries framing version {found}, and this build speaks version 1")]
+        UnsupportedFrameVersion {
+            /// The version byte that arrived.
+            found: u8,
+        },
+        /// A frame carried a message kind this protocol does not define.
+        #[error("a frame carries message kind {kind}, which this protocol does not define")]
+        UnknownFrameKind {
+            /// The kind byte that arrived.
+            kind: u8,
+        },
+        /// A frame set a flag bit this version does not define.
+        #[error("a frame sets undefined frame flags {flags:#04x}")]
+        UnknownFrameFlags {
+            /// The bits that were set.
+            flags: u8,
+        },
+        /// A payload was not the document its frame kind promises.
+        #[error("a {kind} message does not hold what its kind promises: {detail}")]
+        MalformedPayload {
+            /// The kind the frame claimed.
+            kind: FrameKind,
+            /// What was wrong with it.
+            detail: String,
+        },
+        /// A value nested deeper than the agreed bound.
+        #[error("a value nests {depth} levels deep, and the limit is {limit}")]
+        ValueTooDeep {
+            /// How deep the value went before the decoder stopped.
+            depth: usize,
+            /// The deepest nesting that would have been accepted.
+            limit: usize,
+        },
+        /// A peer sent more messages on a stream than it had been granted credit for.
+        #[error("the peer sent more on stream {stream} than its credit window allows")]
+        CreditExceeded {
+            /// The stream the peer overran.
+            stream: u32,
+        },
+        /// More streams were asked for than the link allows to be open at once.
+        #[error("the link already has {limit} streams open, which is the limit")]
+        TooManyStreams {
+            /// The largest number of concurrent streams the link allows.
+            limit: usize,
+        },
+    }
+
+    impl From<ProtocolError> for ErrorValue {
+        fn from(error: ProtocolError) -> Self {
+            let help = match &error {
+                ProtocolError::FrameTooLarge { .. }
+                | ProtocolError::ValueTooDeep { .. }
+                | ProtocolError::CreditExceeded { .. }
+                | ProtocolError::TooManyStreams { .. } => {
+                    "the remote is exceeding a bound this link enforces; the link is not usable while \
+                     it does"
+                }
+                ProtocolError::UnsupportedFrameVersion { .. }
+                | ProtocolError::UnknownFrameKind { .. }
+                | ProtocolError::UnknownFrameFlags { .. } => {
+                    "the remote speaks a different version of the Ono link protocol; upgrade the end \
+                     that is behind"
+                }
+                ProtocolError::MalformedPayload { .. } => {
+                    "the bytes on this link are not Ono link frames; check that the transport reaches \
+                     an ono agent and not something else"
+                }
+            };
+            ErrorValue::new(ErrorCode::RemoteProtocolMismatch, error.to_string())
+                .with_help(help)
+                .with_retryable(false)
+        }
+    }

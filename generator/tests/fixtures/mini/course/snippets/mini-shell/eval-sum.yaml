@@ -1,0 +1,10 @@
+id: eval-sum
+source:
+  file: crates/mini-shell/src/eval.rs
+  commit: 0123456789abcdef0123456789abcdef01234567
+segments:
+- start_line: 24
+  end_line: 35
+  anchor: "pub fn sum"
+  content_hash: sha256:826786ed53c82804f1eb2e01b1fa3af614703ee2e7e0ed4b52ff8d4c6bd1287e
+  code: "pub fn sum(values: &[Value]) -> Result<i64, EvalError> {\n    let mut total = 0;\n    for v in values {\n        match v {\n            Value::Int(n) => total += n,\n            other => {\n                return Err(EvalError::TypeMismatch { expected: \"int\", found: other.type_name() })\n            }\n        }\n    }\n    Ok(total)\n}\n"

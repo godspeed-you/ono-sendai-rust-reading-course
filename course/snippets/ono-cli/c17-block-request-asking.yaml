@@ -1,0 +1,82 @@
+id: c17-block-request-asking
+source:
+  file: crates/ono-cli/src/eval/native/drive.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 43
+  end_line: 66
+  anchor: 'reply: tokio::sync::oneshot::Sender<BlockReply>,'
+  content_hash: sha256:8d3844017bfde3eb0a213baa37026aa66e43cdd3a41119b17f165d5ac350f841
+  code: |
+    /// One input value, and where the answer goes.
+    #[derive(Debug)]
+    pub(super) struct BlockRequest {
+        /// Which stage of the list asked, so the driver knows which block to run.
+        stage: usize,
+        /// The value to bind as `@`.
+        value: Value,
+        /// Where the block's result goes.
+        reply: tokio::sync::oneshot::Sender<BlockReply>,
+    }
+
+    /// What the evaluator answers a [`BlockRequest`] with.
+    #[derive(Debug)]
+    pub(super) enum BlockReply {
+        /// The values the block produced for this item, and whether upstream is still wanted.
+        Produced {
+            /// What the block emitted for this one item — §25.4's per-invocation scope.
+            values: Vec<Value>,
+            /// `false` after `break`: stop reading upstream (§25.5).
+            keep_going: bool,
+        },
+        /// The block jumped or failed: the pipeline stops, and the driver carries the reason out.
+        Stop,
+    }
+- start_line: 82
+  end_line: 124
+  anchor: let (reply, answer) = tokio::sync::oneshot::channel();
+  content_hash: sha256:6fb9c9e8872531ee59ed6f5865918cd45e98d0a7a36d162cef27989142da473b
+  code: |
+    /// The stage a block-based `each` becomes: one that asks the evaluator, item by item.
+    ///
+    /// v0.4.1 §25.4: the values a block emits for one input item are forwarded before the next input
+    /// item is required, subject to downstream backpressure — which is what this loop does, because
+    /// the next `next_value` only happens after the previous item's values have been sent. Returning
+    /// drops the input, which closes the upstream channel and stops the source: §25.5's "`break`
+    /// stops consuming upstream and cancels the remaining source where possible".
+    pub(super) fn asking_stage(
+        input: ValueStream,
+        stage: usize,
+        asked: tokio::sync::mpsc::Sender<BlockRequest>,
+    ) -> ValueStream {
+        // One value in, zero or more out: a stream that ends still ends, and one that does not still
+        // does not (§25.6, Appendix E's `item_transform`).
+        let boundedness = input.boundedness();
+        input.stage(boundedness, move |mut input, sink| async move {
+            while let Some(value) = input.next_value(&sink).await {
+                let (reply, answer) = tokio::sync::oneshot::channel();
+                if asked
+                    .send(BlockRequest {
+                        stage,
+                        value,
+                        reply,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let Ok(BlockReply::Produced { values, keep_going }) = answer.await else {
+                    return;
+                };
+                for value in values {
+                    if sink.send(value).await.is_err() {
+                        return;
+                    }
+                }
+                if !keep_going {
+                    return;
+                }
+            }
+        })
+    }

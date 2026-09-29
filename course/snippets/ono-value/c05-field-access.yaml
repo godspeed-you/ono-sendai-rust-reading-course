@@ -1,0 +1,45 @@
+id: c05-field-access
+source:
+  file: crates/ono-value/src/record.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 14
+  end_line: 30
+  anchor: pub enum FieldAccess {
+  content_hash: sha256:3f0903935c9eb877aaca3072ea7a53a5cf4b53ee4d6850e87ba3aca2c557c6d8
+  code: |
+    /// What happened when a field was read (spec §10.5).
+    ///
+    /// Spec §10.5 requires three outcomes to stay apart: a field the schema never declared, a
+    /// declared field whose value is unknown, and a field whose access failed. Collapsing them is
+    /// exactly the ambiguity Ono exists to remove, so they are three variants rather than one
+    /// nullable value.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum FieldAccess {
+        /// The schema does not declare this field and no extension carries it.
+        Absent,
+        /// The field exists, and its value is not known.
+        Unknown,
+        /// The field exists and holds this value.
+        Known(Value),
+        /// The field exists, and reading it failed.
+        Failed(Arc<ErrorValue>),
+    }
+- start_line: 51
+  end_line: 63
+  anchor: FieldAccess::Absent => None,
+  content_hash: sha256:22ff3a212079c28cc63a8510110ee25a8d50a71573af1d9ca43614644478b786
+  code: |2
+        /// The stored value, or `None` when the field is not part of the record.
+        ///
+        /// An unknown value becomes [`Value::Null`] and a failed access becomes [`Value::Error`], so
+        /// the outcome survives the conversion.
+        #[must_use]
+        pub fn into_value(self) -> Option<Value> {
+            match self {
+                FieldAccess::Absent => None,
+                FieldAccess::Unknown => Some(Value::Null),
+                FieldAccess::Known(value) => Some(value),
+                FieldAccess::Failed(error) => Some(Value::Error(error)),
+            }
+        }

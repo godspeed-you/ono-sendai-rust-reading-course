@@ -1,0 +1,10 @@
+# Generated course and release artifacts (spec §65): built from source, never committed.
+/dist/
+/release/
+/target/
+
+# Browser test tooling and output
+/node_modules/
+/test-results/
+/playwright-report/
+/blob-report/

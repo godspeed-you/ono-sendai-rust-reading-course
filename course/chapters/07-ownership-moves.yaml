@@ -1,0 +1,713 @@
+id: ownership-moves
+number: 7
+title: Ownership and moves
+summary: |
+  Every value in Rust has exactly one owner, and when the owner goes away, the value is dropped:
+  its memory is freed and any resource it holds (a file descriptor, a lock) is released. Passing
+  a value to a function or storing it in a struct *moves* it. The old name can no longer be used,
+  and nothing is copied except the value's own few bytes. Small plain types are `Copy` and are
+  duplicated instead. Anything else is duplicated only when the code says `.clone()`, and what
+  that costs depends entirely on the type.
+
+  This is the first chapter of **assisted** reading. Snippets get longer and annotations fewer.
+  Each exercise asks you to commit to an answer *before* you open the hints. Hint 1 points you at
+  the right place, Hint 2 gives the structure, and the solution walks through it completely.
+  The chapter follows real values through Ono-Sendai: a record being built, a parse result taken
+  apart, a failed command lookup, and a pipeline stage being prepared.
+lessons:
+  - id: ownership-moves-01
+    title: "Taking by value: borrow first, then move"
+    stage: assisted
+    summary: "`RecordValue::builder` takes its arguments by value, borrows `schema` once, then moves everything into the new record."
+    prerequisites: [result-errors-04, structs-methods-01]
+    concepts: [ownership, moves]
+    ono_topics: [records-schemas]
+    objectives:
+      - "Read a by-value parameter (`schema: Arc<Schema>`) as “the caller hands this over”."
+      - Tell apart a use that borrows a value from a use that moves it.
+      - Explain why the order of those uses matters.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          In [chapter 5](lesson:option-02) you read the *result* of reading a record field. Now
+          look at where a record comes from. A provider (the code behind `get process`, say)
+          starts a record with `RecordValue::builder`, fills fields with `.set(...)?`
+          ([chapter 6](lesson:result-errors-03)), and finishes with `.build()`. The builder's
+          doc comment: "Starts building a record of `schema`, with every field unknown."
+      - type: prose
+        kind: rust
+        title: The three rules
+        body: |
+          Rust's ownership model, in the form this chapter uses it:
+
+          1. Every value has exactly one [**owner**](glossary:ownership), a variable, a struct field, or a
+             function parameter.
+          2. When the owner goes out of scope, the value is [**dropped**](glossary:drop).
+          3. Assigning the value, passing it as an argument by value, or storing it in a
+             struct [**moves**](glossary:move) ownership. After a move, the old name cannot be used; the
+             compiler rejects any later use.
+
+          A move copies only the value's own bytes. For a `Vec`, those are a pointer, a length
+          and a capacity, never the elements on the heap. `Copy` types are the exception to
+          rule 3; [lesson 3](lesson:ownership-moves-03) covers them.
+      - type: code
+        snippet: c07-record-builder
+        caption: |
+          `crates/ono-value/src/record.rs`: starting a record, and finishing it.
+        annotations:
+          - lines: 135
+            token: "schema: Arc<Schema>, provenance: Provenance"
+            kind: ownership
+            body: |
+              Neither parameter has a `&`. Both are taken **by value**: the caller gives them up.
+              That `Arc<Schema>` is a shared handle ([chapter 15](lesson:smart-pointers-01)) does not change anything here; the
+              handle itself is moved like any other value.
+          - lines: 136
+            token: "schema.field_count()"
+            kind: ownership
+            body: |
+              A method call that takes `&self`. It borrows `schema` for the duration of the call
+              and gives it back, so `schema` is still usable on the next line.
+          - lines: 361
+            token: "self.record"
+            kind: ownership
+            body: |
+              `build` takes `self` by value, so it may move a field out and return it. The
+              builder is gone afterwards.
+      - type: exercise
+        id: ownership-moves-01-q1
+        exercise_type: trace-value
+        prompt: |
+          Before reading on, answer this in your own words. Follow `schema`, `provenance` and
+          `fields` through `builder`. For each one, where is it *borrowed*, where is it *moved*,
+          and who owns it when `builder` returns?
+        hints:
+          - level: 1
+            body: Look at every line where each name appears, and ask whether that line only looks at the value or takes it.
+          - level: 2
+            body: |
+              `schema,` inside a struct literal is shorthand for `schema: schema`. Storing a
+              value in a struct field is a move. The struct itself is then returned.
+        solution: |
+          - `schema`: the caller moves it into the parameter. Line 136 **borrows** it
+            (`field_count` takes `&self`) to find out how many slots are needed. Line 139
+            **moves** it into the `schema` field of the new `RecordValue`.
+          - `fields`: created on line 136 as a local `Vec<Value>` with one `Value::Null` per
+            field, then **moved** into the struct on line 140.
+          - `provenance`: never used on its own. It is **moved** into the struct on line 142.
+          - `extra` is not a variable at all. `MapValue::new()` creates a fresh empty map directly
+            in the field.
+
+          The `RecordValue` is itself moved into the `record` field of a `RecordBuilder`, and
+          that builder is the return value, so it is moved out to the caller. When `builder`
+          returns, the caller's builder owns (through `record`) the schema handle, the fields
+          and the provenance. Nothing was cloned except the `Value::Null` placeholders that
+          `vec![Value::Null; n]` makes.
+      - type: diagram
+        kind: ownership
+        title: Who owns what, from the caller to the finished record
+        art: |
+          caller                builder(schema, provenance)
+          ──────                ──────────────────────────────────────────────
+          schema     ──move──►  schema ──&──► field_count()   (borrow, returned)
+                                  │
+                                  └─move──► RecordValue.schema
+          provenance ──move──►  provenance ─move──► RecordValue.provenance
+                                fields (new Vec) ─move──► RecordValue.fields
+                                RecordValue ─move──► RecordBuilder.record
+          builder ◄──────move── RecordBuilder (return value)
+
+          builder.set(...)?.build()
+                                build(self): self.record ─move──► caller's RecordValue
+                                             (RecordBuilder has no other field: nothing is left)
+        description: |
+          The caller moves `schema` and `provenance` into `builder`. Inside, `schema` is first
+          borrowed by `field_count()`, and the borrow ends when that call returns. Then `schema`
+          is moved into the new record's `schema` field. `provenance` is moved into the
+          `provenance` field, and the freshly created `fields` vector into the `fields` field.
+          The record is moved into a `RecordBuilder`, which is returned, so it moves to the
+          caller. Later, `build(self)` consumes the builder: it moves the record out and
+          returns it; the builder had no other field, so nothing of it remains. At every
+          moment each piece has exactly one owner.
+      - type: exercise
+        id: ownership-moves-01-q2
+        exercise_type: multiple-choice
+        prompt: |
+          Suppose lines 136 and 137–144 were written the other way round: first build the
+          `RecordBuilder { record: RecordValue { schema, ... } }`, then compute
+          `schema.field_count()`. What happens?
+        choices:
+          - text: "It compiles; the result is the same"
+            correct: false
+            feedback: |
+              Once `schema` has been moved into the struct, the local name `schema` no longer
+              owns anything, and using it is an error.
+          - text: "It fails to compile: `schema` is used after it was moved"
+            correct: true
+            feedback: |
+              Right. The compiler reports "borrow of moved value: `schema`". Borrowing first and
+              moving last is the order that works, and it is the order the real code uses.
+          - text: "It compiles, but `field_count()` reads a copy of the schema"
+            correct: false
+            feedback: |
+              Rust never makes a hidden copy of a non-`Copy` value to rescue a use after a move.
+              A copy happens only for `Copy` types or with an explicit `.clone()`.
+          - text: "It compiles but panics at run time"
+            correct: false
+            feedback: |
+              Use after move is detected at compile time. There is no run-time check, and none
+              is needed.
+      - type: exercise
+        id: ownership-moves-01-q3
+        exercise_type: explain-line
+        prompt: |
+          `ono-value`'s own documentation builds several records from one schema like this:
+
+          ```text
+          RecordValue::builder(
+              Arc::clone(&schema),
+              Provenance::local("nss", schema.id().clone()).from_source(source),
+          )
+          ```
+
+          Explain why it writes `Arc::clone(&schema)` instead of just `schema`.
+        hints:
+          - level: 1
+            body: The example calls `builder` more than once, with the same schema.
+          - level: 2
+            body: |
+              `builder` takes `Arc<Schema>` by value. What would the first call do to the
+              variable `schema`?
+        solution: |
+          `builder` takes `schema: Arc<Schema>` by value, so passing `schema` itself would move
+          the example's only handle into the first record. The second call, and even
+          `schema.id()` in the next argument, would then be a use after move.
+
+          `Arc::clone(&schema)` creates a **second handle to the same schema**. It increments a
+          reference count and does not copy the schema. The new handle is moved into the record,
+          and the example keeps its own. That is also why records store an `Arc<Schema>`: the
+          module doc says the `Arc` keeps a record "as cheap to clone as spec §34 needs it to
+          be", and every record of `ono.process/1` can share one schema.
+          [Chapter 15](lesson:smart-pointers-01) covers `Arc` properly.
+
+  - id: ownership-moves-02
+    title: Methods that consume self
+    stage: assisted
+    summary: "`into_parts(self)` and `Resolution::failure(self)` take their receiver by value and move its contents out, without cloning."
+    prerequisites: [ownership-moves-01]
+    concepts: [moves, methods, destructuring]
+    ono_topics: [parsing, process-execution]
+    objectives:
+      - "Tell a consuming method (`self`) from a borrowing one (`&self`) by its signature and name."
+      - Recognise a move out of a struct field (a partial move).
+      - "Follow a payload moved out of an enum variant by a `match` on `self`."
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          [Chapter 6](lesson:result-errors-04) showed that `parse` returns a `Parsed`, which holds
+          a tree and all diagnostics. Most callers only look at it through `&self` getters
+          (`program()`, `diagnostics()`). Some want to keep both parts, and for them `Parsed` has
+          a method whose doc says: "Takes the tree and the diagnostics apart, for a caller that
+          wants to own both."
+      - type: code
+        snippet: c07-parsed-into-parts
+        caption: |
+          `crates/ono-parser/src/parser/mod.rs`: taking a result apart, and building it.
+        annotations:
+          - lines: 67
+            token: "into_parts(self)"
+            kind: ownership
+            body: |
+              `self` by value, and the `into_` prefix: by Rust naming convention, this method
+              consumes its receiver. Compare the getters, `program(&self) -> &Program`, which
+              only lend.
+          - lines: 87
+            token: "parser.diagnostics"
+            kind: ownership
+            body: |
+              A move out of **one field** of a local struct. Try to say what this means for
+              `parser` before the exercise below.
+      - type: exercise
+        id: ownership-moves-02-q1
+        exercise_type: multiple-choice
+        prompt: |
+          After `let (program, diagnostics) = parsed.into_parts();`, which statement is true?
+        choices:
+          - text: "`parsed` can no longer be used; `program` and `diagnostics` now own the tree and the list"
+            correct: true
+            feedback: |
+              Right. `into_parts` took `parsed` by value and moved both fields into the returned
+              tuple. No clone happened. The tree and the vector were handed over, and the
+              pattern `(program, diagnostics)` gave each part its own owner.
+          - text: "`parsed` is still usable; `into_parts` returned copies"
+            correct: false
+            feedback: |
+              Nothing is copied. Neither `Program` nor `Vec<Diagnostic>` is `Copy`, and
+              `into_parts` contains no `.clone()`. The receiver is `self`, so `parsed` is
+              moved into the call.
+          - text: "`program` and `diagnostics` are references into `parsed`"
+            correct: false
+            feedback: |
+              The return type is `(Program, Vec<Diagnostic>)`, owned values with no `&`. The
+              borrowing getters are `program()` and `diagnostics()`.
+      - type: exercise
+        id: ownership-moves-02-q2
+        exercise_type: explain-line
+        prompt: |
+          Explain line 87, `diagnostics: parser.diagnostics,`. What is moved, and where? Why is
+          this allowed even though `parser` was borrowed mutably on line 84? And what happens to
+          the rest of `parser`?
+        hints:
+          - level: 1
+            body: When does the mutable borrow taken by `parser.parse_program()` end?
+          - level: 2
+            body: |
+              `parser` is a local variable that `parse` owns. Rust tracks moves per field, so
+              moving one field out of an owned local struct is allowed. What remains is dropped
+              at the end of the function.
+        solution: |
+          `parser` is a local `Parser` owned by `parse`. On line 84, `parse_program` takes
+          `&mut self`: it borrows `parser` mutably while it runs and fills `parser.diagnostics`.
+          That borrow ends when the call returns, and the call returns an owned `Program`.
+
+          Line 87 then **moves the `diagnostics` field** (a `Vec<Diagnostic>`) out of `parser`
+          into the new `Parsed`. This is a *partial move*: Rust tracks ownership per field, so
+          moving one field out of a struct you own is fine. From then on, `parser.diagnostics`,
+          and `parser` as a whole, can no longer be used, but other fields could be. The
+          remaining fields (the borrowed source text, the position, and so on) are dropped when
+          `parse` returns. The vector's heap buffer is never copied: the list the parser built
+          is the list the caller gets.
+
+          (A partial move out of `parser` is possible only because `Parser` has no custom
+          `Drop` implementation. A type with its own `Drop` must stay whole.)
+      - type: prose
+        kind: context
+        title: A second consuming method, on an enum
+        body: |
+          In `ono-process`, looking a program name up produces a `Resolution`. ADR-0008 says a
+          shell must report 126 when something is found but cannot be executed, and 127 when
+          nothing is found. The resolver's doc explains that a non-executable entry "is
+          remembered so that 'found but not executable' (126) stays distinguishable from 'no
+          such command' (127)".
+      - type: code
+        snippet: c07-resolution-failure
+        caption: |
+          `crates/ono-process/src/resolve.rs`: the outcome of a lookup, and how a failure becomes
+          a status plus an error.
+        annotations:
+          - lines: 26
+            token: "failure(self)"
+            kind: ownership
+            body: |
+              Consumes the `Resolution`. Decide for yourself what that allows the arms on lines
+              29–30 to do with `error`.
+          - lines: 29
+            token: "ExitStatus::NOT_EXECUTABLE"
+            kind: ownership
+            body: |
+              An associated constant of `ExitStatus`, a `Copy` type. Using it copies one byte.
+      - type: exercise
+        id: ownership-moves-02-q3
+        exercise_type: trace-value
+        prompt: |
+          This test from the same file calls `failure()`. Trace the `Error` value from the moment
+          `resolve` stores it in `Resolution::NotFound` to the test's `error` binding on line 183.
+          Is it ever cloned? And in the `Self::Found(_)` arm, what happens to the `PathBuf`?
+        snippets: [c07-resolution-test]
+        hints:
+          - level: 1
+            body: Check the receiver of `failure` and the pattern in each arm. Which arms *bind* a name, and which use `_`?
+          - level: 2
+            body: |
+              `match self` on an owned `self` lets a pattern such as `Self::NotFound(error)` move
+              the payload into `error`. `Option::expect` takes its `Option` by value and returns
+              the `Some` content. `let (status, error) = ...` then [destructures](glossary:destructuring) the tuple.
+        solution: |
+          1. `resolve` builds an `Error` and moves it into the `NotFound` variant. The
+             `Resolution` is returned and moved into `missing`.
+          2. `missing.failure()` moves `missing` into the method (`self` by value).
+          3. `match self` reaches `Self::NotFound(error)`. The pattern **moves** the `Error`
+             out of the variant into the local `error`, then into the tuple
+             `(ExitStatus::NOT_FOUND, error)`, then into `Some(...)`, which is returned.
+             `ExitStatus::NOT_FOUND` is `Copy`, so it is simply copied.
+          4. `.expect("resolution must fail")` consumes the `Option` and yields the tuple. It
+             would panic with that message on `None`, which is acceptable in a test.
+          5. `let (status, error) = ...` destructures the tuple, and the test's `error` now owns
+             the very same `Error` that `resolve` created.
+
+          It is never cloned: `failure` can hand out the payload *because* it owns the
+          `Resolution`. With `&self` it could only lend it (`Option<(ExitStatus, &Error)>`), or
+          it would have to clone.
+
+          In the `Self::Found(_)` arm, `_` does not bind, so nothing is moved. The `PathBuf`
+          stays inside `self`, and `self` is dropped when `failure` returns, which frees the
+          path. A caller that wants the path matches on `Resolution::Found(program)` itself, as
+          the executor does in [lesson 4](lesson:ownership-moves-04).
+
+  - id: ownership-moves-03
+    title: Copy, Clone, and what a clone costs
+    stage: assisted
+    summary: "`Span` is `Copy`; `Value` is only `Clone`, and its clone is a refcount bump; cloning an `ErrorValue` out of an `Arc` really copies the struct."
+    prerequisites: [ownership-moves-02]
+    concepts: [copy-clone, ownership, derives]
+    ono_topics: [value-model, core-vocabulary]
+    objectives:
+      - "State exactly when a type can be `Copy`, and what copying means."
+      - "Explain what `.clone()` costs for `Value`, for an `Arc`, and for an `ErrorValue`."
+      - Reject the shortcut “cloning is always expensive”.
+    sections:
+      - type: prose
+        kind: rust
+        title: Copy and Clone, precisely
+        body: |
+          - [**`Copy`**](glossary:copy) is a marker trait. If a type is `Copy`, assigning it or passing it by value
+            *copies* its bytes and leaves the original usable, so no move happens. A type can be
+            `Copy` only if all its fields are `Copy` and it has no custom `Drop` behaviour.
+            Integers, `bool`, `char`, `f64`, shared references `&T`, and tuples and `Option`s of
+            `Copy` types are all `Copy`. `String`, `Vec`, `Box` and `Arc` are not.
+          - [**`Clone`**](glossary:clone) is an ordinary trait with one method, `.clone()`, that returns a new
+            owned value. It is always written explicitly, and it can do anything from copying a
+            byte to duplicating a large tree on the heap. What it costs depends on the type.
+            Every `Copy` type is also `Clone`.
+
+          Both are usually obtained with [`#[derive(...)]`](glossary:derive), so the derive line is the first
+          place to look ([chapter 14](lesson:derives-macros-01) explains derives in depth).
+      - type: code
+        snippet: c07-span-copy
+        caption: |
+          `crates/ono-core/src/span.rs`: a type that is `Copy`.
+      - type: code
+        snippet: c07-value-clone
+        caption: |
+          `crates/ono-value/src/value.rs`: a type that is `Clone` but not `Copy`. You read the
+          whole enum in [chapter 4](lesson:enums-matching-02); only the doc, the derive and the last variants are shown.
+        annotations:
+          - lines: 19-21
+            kind: ono
+            body: |
+              The reason is given in the doc: a pipeline stage is budgeted "in microseconds", and
+              "a value model that copies its payload cannot meet that."
+      - type: exercise
+        id: ownership-moves-03-q1
+        exercise_type: multiple-choice
+        prompt: |
+          Answer before you check: which snippet compiles?
+
+          ```text
+          (a) let a = Span::new(0, 3);  let b = a;  let n = a.start();
+          (b) let a = Value::Int(3);    let b = a;  let n = a.type_name();
+          ```
+        choices:
+          - text: "Only (a)"
+            correct: true
+            feedback: |
+              Right. `Span` derives `Copy` (line 16), so `let b = a;` copies it and `a` stays
+              valid. `start(self)` also takes its own copy. `Value` does not derive `Copy`, so
+              `let b = a;` moves the value, and `a.type_name()` is a use after move, even though
+              this particular value is just an integer. Copy-ness belongs to the *type*, not to
+              the variant.
+          - text: "Only (b)"
+            correct: false
+            feedback: |
+              It is the other way round. Look at the two derive lines: only `Span`'s includes
+              `Copy`.
+          - text: "Both"
+            correct: false
+            feedback: |
+              (b) moves `a` into `b`. `Value` cannot be `Copy`, because some variants hold `Arc`s,
+              and `Arc` is not `Copy`. A type is `Copy` for all of its values or for none.
+          - text: "Neither"
+            correct: false
+            feedback: |
+              (a) compiles. `Span` holds two `u32`s and derives `Copy`, so assignment duplicates
+              it.
+      - type: prose
+        kind: ono
+        title: Why Value is Clone, not Copy, and why its clone is cheap
+        body: |
+          `Value` cannot be `Copy`: `String(Arc<str>)`, `List(Arc<[Value]>)`, `Record(...)` and
+          the other compound variants hold `Arc`s. An `Arc` must count its owners, so duplicating
+          it has to run code (increment the count), and dropping it has to run code (decrement,
+          and free on zero). A bitwise copy would skip both.
+
+          `Value` is still **cheap to clone**, by design. Cloning an `Arc` does not copy what it
+          points to; it adds one to a [reference count](glossary:reference-counting). Cloning a scalar variant such as `Int` or
+          `Bool` copies a few bytes. So `value.clone()`, which you saw in `RecordValue::access`,
+          costs about the same whether the value is a number or a record with a hundred fields.
+          The course's rule: a clone costs whatever that type's `Clone` does. Read the type
+          before assuming anything, and in Ono-Sendai, the doc comments usually tell you.
+      - type: code
+        snippet: c07-field-access-require
+        caption: |
+          `crates/ono-value/src/record.rs`: the stricter sibling of `FieldAccess::into_value` from
+          [chapter 5](lesson:option-02).
+      - type: exercise
+        id: ownership-moves-03-q2
+        exercise_type: identify-abstraction
+        prompt: |
+          Look at line 79: `FieldAccess::Failed(error) => Err((*error).clone()),`. Here `error`
+          is an `Arc<ErrorValue>` that was moved out of `self`. Answer three questions before you
+          open the hints. Why can't the arm just move the `ErrorValue` out of the `Arc`? What
+          exactly does `(*error).clone()` duplicate? Is that expensive?
+        hints:
+          - level: 1
+            body: |
+              Who else might hold a handle to the same `ErrorValue`? Think back to
+              `RecordValue::access` in [chapter 5](lesson:option-03).
+          - level: 2
+            body: |
+              `*error` is the `ErrorValue` behind the handle, so `.clone()` calls
+              `ErrorValue`'s derived `Clone`, which clones each field in turn. Look up the field
+              types in [chapter 5's getters lesson](lesson:option-04): `ErrorCode`,
+              `Arc<str>`, `Option<ValueRef>`, `Option<Arc<ErrorValue>>`, `Option<Arc<str>>`,
+              `Option<bool>` and `MapValue`.
+        solution: |
+          **Why not move?** An `Arc` is *shared* ownership: several handles may point to the same
+          `ErrorValue`, and the value lives until the last one is dropped. Owning one handle does
+          not mean owning the value, so Rust does not let you move the value out through `*`.
+          (`Arc::try_unwrap` can take it out, but only when the handle turns out to be the last
+          one.) Here other handles typically exist: when the `FieldAccess` came from
+          `RecordValue::access`, that method created this handle with `Arc::clone(error)`, and
+          the record still holds its own. `require` must return an
+          owned `ErrorValue` (its type is `Result<Value, ErrorValue>`), so it has to make one.
+
+          **What is duplicated?** `*error` names the `ErrorValue` behind the handle, and
+          `.clone()` builds a new `ErrorValue` field by field:
+          - `code: ErrorCode` is `Copy`, so it is copied;
+          - `message`, `help` (`Arc<str>`) and `source` (`Arc<ErrorValue>`) get reference-count
+            increments, and no text or nested error is copied;
+          - `target` is cloned (its variants hold `Arc`s or a `SchemaId`, which is again cheap);
+          - `retryable` (`Option<bool>`) is copied;
+          - `metadata` is a `MapValue`, a `Vec` of entries. Cloning it allocates a new vector
+            (if it has entries) and clones each entry cheaply.
+
+          **Is it expensive?** No. It is a handful of counter increments and at most one small
+          allocation. Afterwards, the moved `error` handle is dropped at the end of the arm,
+          which decrements the count again. Compare `(*error).clone()` with `error.clone()`: the
+          latter would clone the *`Arc`* (another handle), which has the wrong type for
+          `Err(...)` here.
+      - type: exercise
+        id: ownership-moves-03-q3
+        exercise_type: explain-line
+        prompt: |
+          `Span::start` is declared `pub const fn start(self) -> u32` (line 50), with `self` and
+          not `&self`. Given what you now know about `Copy`, explain why that is not a problem
+          for callers, and why a non-`Copy` type's getter would normally take `&self`.
+        hints:
+          - level: 1
+            body: What happens to a `Copy` value when it is passed by value?
+          - level: 2
+            body: A `Span` is two `u32`s, eight bytes. How big is a reference?
+        solution: |
+          `Span` is `Copy`, so `span.start()` passes a *copy* of the span into the method, and
+          the caller's `span` is untouched and still usable. Taking eight bytes by value is at
+          least as cheap as taking a reference (itself eight bytes on a 64-bit machine) and
+          avoids a dereference. It is a common Rust style for small `Copy` types; `ExitStatus`'s
+          methods do the same (`code(self)`, `signal(self)`).
+
+          For a non-`Copy` type, `self` by value would **move** the receiver into the method, so
+          the caller would lose it after asking a simple question. That is why getters on types
+          such as `ErrorValue` or `RecordValue` take `&self`, and why `self` by value on a
+          non-`Copy` type signals a consuming method such as `into_parts` or `build`.
+
+  - id: ownership-moves-04
+    title: Following owned values through prepare_stage
+    stage: assisted
+    summary: "In the executor, every value in `prepare_stage` is borrowed, moved, dropped or cloned on purpose. Trace them all."
+    prerequisites: [ownership-moves-03, option-04]
+    concepts: [ownership, moves, copy-clone, question-mark]
+    ono_topics: [process-execution]
+    objectives:
+      - Classify every value in a real function as borrowed, moved, copied, cloned or dropped.
+      - "Explain an explicit `drop(...)` call and when it is (or is not) required."
+      - Explain why a struct that outlives a borrow has to own its data.
+    sections:
+      - type: prose
+        kind: context
+        title: Where we are
+        body: |
+          The `Executor` in `ono-process` runs a pipeline of external programs such as
+          `ls | grep x`. Before it spawns anything, it prepares every stage: it resolves the
+          program name and opens the redirections. Its comment explains why: "A pipeline with a
+          name that does not resolve, or a redirection that cannot be opened, therefore runs
+          *nothing* rather than running the stages that happened to come first (ADR-0008)."
+
+          `prepare_stage` does this for one stage. It receives the stage's `Command` and the
+          pipe ends connecting it to its neighbours. `OwnedFd` is the standard library's owned
+          file descriptor, and [dropping](glossary:drop) an `OwnedFd` **closes** the descriptor. Here, ownership
+          is about open files as much as about memory.
+      - type: code
+        snippet: c07-prepare-stage
+        caption: |
+          `crates/ono-process/src/executor.rs`. `ReadyStage` (declared elsewhere in the file) is a
+          struct without a lifetime parameter, holding `program: PathBuf`, `args: Vec<OsString>`,
+          `env`, `clear_env: bool`, `cwd: Option<PathBuf>` and `io`.
+        annotations:
+          - lines: 497-498
+            kind: ownership
+            body: |
+              `Option<OwnedFd>`: maybe an owned pipe end. The first stage has no piped input and
+              the last has no piped output, so those are `None`.
+          - lines: 501
+            token: "env.as_deref()"
+            kind: rust
+            body: |
+              `effective_path` takes an `Option<&[...]>`, and `as_deref` lends the vector inside
+              `env` as a slice ([chapter 5](lesson:option-04)).
+          - lines: 510
+            token: "unwrap_or(("
+            kind: rust
+            body: |
+              `unwrap_or(default)` returns the `Some` content, or `default` for `None`. Its
+              argument is evaluated *before* the call, whether it is needed or not.
+          - lines: 521
+            token: ".map_err(|error| (ExitStatus::FAILURE, error))?"
+            kind: flow
+            body: |
+              `plan::prepare` returns this crate's `Result<StageIo>`. `map_err` turns its `Error`
+              into the tuple this function returns, and `?` propagates it
+              ([chapter 6](lesson:result-errors-03)).
+      - type: exercise
+        id: ownership-moves-04-q1
+        exercise_type: trace-value
+        prompt: |
+          Write down your answer before opening any hint. For each value below, say whether it is
+          **borrowed**, **moved** (and into what), **copied**, **cloned** (and how deeply) or
+          **dropped**, and on which lines:
+
+          `command`, `piped_input` (on both paths), `env`, `path`, `resolved`, `program`,
+          `command.args_slice()`, `command.directory()`.
+        hints:
+          - level: 1
+            body: |
+              Start from the parameter types on lines 496–498. Anything reached through a `&`
+              can only be borrowed or duplicated, never moved.
+          - level: 2
+            body: |
+              Look at the struct literal at the end: field shorthand (`program,`, `env,`, `io,`)
+              moves a local into `ReadyStage`. `to_vec()` and `to_path_buf` build new owned
+              values from borrowed ones. On the failure path, look for where each owned
+              parameter ends up.
+        solution: |
+          - `command: &Command` is only ever **borrowed**. Every use (`resolved_env()`,
+            `program()`, `directory()`, `clears_env()`, `args_slice()`, and the argument to
+            `plan::prepare`) reads through the reference. `prepare_stage` never owns the command.
+          - `piped_input` / `piped_output` are owned by this function. On the failure path they
+            are **dropped** explicitly on lines 508–509, which closes the pipe ends. On the
+            success path they are **moved** into `plan::prepare` on line 520, which builds the
+            stage's I/O plan from them (the resulting `io` then owns what it kept).
+          - `env` is an owned `Option<Vec<...>>` returned by `resolved_env()`. It is
+            **borrowed** on line 501 (`as_deref`) for the length of that call, and **moved** into
+            `ReadyStage` on line 526.
+          - `path` is an owned `Option<OsString>`, **borrowed** on line 502 (`as_deref`) and
+            never stored. It is **dropped** when the function returns.
+          - `resolved` is **moved** into the `match` on line 503. In the `Found(program)` arm, the
+            `PathBuf` is **moved** out of the variant into `program`, which is then **moved**
+            into `ReadyStage` on line 524. In the `other` arm, the whole `Resolution` is moved
+            into `other` and then into `failure()`, which moves its `Error` out into the
+            returned tuple ([lesson 2](lesson:ownership-moves-02)).
+          - `command.args_slice()` returns a borrowed `&[OsString]`. `.to_vec()` **clones** it
+            *deeply*: a new `Vec` with a new heap copy of every argument string. This is a real
+            allocation per argument, unlike cloning a `Value`.
+          - `command.directory()` returns `Option<&Path>`. `.map(Path::to_path_buf)` **clones**
+            the path into a new owned `PathBuf`.
+          - `command.clears_env()` returns a `bool`, which is **copied**.
+      - type: diagram
+        kind: ownership
+        title: Where each value of prepare_stage ends up
+        art: |
+          &Command (borrowed, never owned) ──reads──► env, path, program lookup,
+                                                      args_slice(), directory()
+
+          env ─&─► effective_path ──► path ─&─► resolve ──► resolved
+           │                          (dropped at return)       │
+           │                                                    ▼ match (move)
+           │                    Found(program) ◄────────────────┤
+           │                          │                         └─ other ─► failure(self)
+           │                          │                               └─► Err((status, error))
+           │                          │                     piped_input  ─drop─► closed
+           │                          │                     piped_output ─drop─► closed
+           ▼                          ▼
+          ReadyStage { program, env, io, args: to_vec() (deep clone),
+                       cwd: to_path_buf (clone), clear_env: bool (copy) }
+                                        ▲
+          piped_input, piped_output ─move─► plan::prepare ─► io
+        description: |
+          `prepare_stage` only borrows the `Command`, and reads from it the environment, the
+          program name, the working directory and the arguments. `env` is lent to
+          `effective_path`, which returns an owned `path`. `path` is lent to `resolve` and
+          dropped when the function returns. `resolve` returns an owned `resolved`, which the
+          `match` moves. On success, the `PathBuf` inside `Found` becomes `program`. On failure,
+          the whole `Resolution` goes to `failure(self)`, which moves its `Error` into the
+          returned `Err`, and both pipe ends are dropped explicitly, closing them. On success,
+          the pipe ends are instead moved into `plan::prepare`, which produces `io`. The final
+          `ReadyStage` owns `program`, `env` and `io` by move, a deep clone of the arguments, a
+          cloned working directory, and a copied boolean.
+      - type: exercise
+        id: ownership-moves-04-q2
+        exercise_type: predict
+        prompt: |
+          Predict what would change if lines 508–509 (`drop(piped_input);` and
+          `drop(piped_output);`) were deleted. Would the code still compile? Would the pipe ends
+          still be closed, and when? Then say what the explicit calls add.
+        hints:
+          - level: 1
+            body: Who owns `piped_input` in the `other` arm, and what happens to owned values when their owner's scope ends?
+          - level: 2
+            body: |
+              Function parameters are dropped when the function returns, unless they were moved
+              away first. On this path, were they moved anywhere?
+        solution: |
+          The code would still compile, and the pipe ends would still be closed. On this path
+          `piped_input` and `piped_output` are never moved (the move into `plan::prepare` on
+          line 520 is never reached), so they are still owned by the function's parameters and
+          are dropped automatically when `return Err(...)` leaves the function. Dropping an
+          `OwnedFd` closes it either way.
+
+          What the explicit `drop` calls add is **visibility and order**: the descriptors are
+          closed right there, before the error is built, and the reader sees that closing them
+          is intended. The comment above states the purpose: dropping the pipe ends "means the
+          stages around this one see a clean end of input rather than a hang". `drop` is just a
+          function that takes its argument by value and does nothing with it. The ownership
+          rules do the rest. The caller uses the same idiom, `drop(prepared);`, to close every
+          stage prepared so far.
+      - type: exercise
+        id: ownership-moves-04-q3
+        exercise_type: identify-abstraction
+        prompt: |
+          `ReadyStage` stores `args: command.args_slice().to_vec()` and `cwd` as an owned
+          `PathBuf`, paying for real copies, instead of keeping references into the `Command`.
+          Using what you know about ownership, and the executor's comment that *every* stage is
+          prepared before *any* is spawned, suggest why. Also say why line 510 builds a whole
+          fallback `Error` even though, on this path, `failure()` always returns `Some`.
+        hints:
+          - level: 1
+            body: |
+              `ReadyStage` has no lifetime parameter. What can such a struct hold, and what can
+              it not hold?
+          - level: 2
+            body: |
+              Compare `unwrap_or(value)` with `ok_or_else(closure)` from [chapter 6](lesson:result-errors-03). When is each
+              argument evaluated?
+        solution: |
+          **Owned data.** A struct without a lifetime parameter cannot hold references at all:
+          it must own everything in it. That makes a `ReadyStage` independent of the `Command` it
+          came from, so the executor can collect all prepared stages in a `Vec` and only then
+          spawn them, without the compiler having to prove that the pipeline's commands outlive
+          that vector. The cost is one real copy of the argument strings and the directory per
+          stage, which is small next to starting a process. (Why a struct holding a borrow would
+          need a lifetime parameter is [chapter 8](lesson:borrowing-03).) This is a reading of the
+          types, not a documented rationale; the code does not state it.
+
+          **The eager fallback.** `unwrap_or((...))` takes an already-built value, so Rust
+          evaluates the tuple, including `Error::new(...)` and its `String` allocation, before
+          `unwrap_or` runs, every time this arm is reached. Because `other` can only be
+          `NotExecutable` or `NotFound` here, `failure()` always returns `Some`, and the fallback
+          is built and immediately dropped. It is a defensive default that costs one small
+          allocation on an already-failing path. A closure-based version (`unwrap_or_else(|| ...)`,
+          like `ok_or_else` in [ByteSize::parse](lesson:result-errors-03)) would build it only
+          if needed.

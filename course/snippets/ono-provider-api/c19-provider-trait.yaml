@@ -1,0 +1,127 @@
+id: c19-provider-trait
+source:
+  file: crates/ono-provider-api/src/lib.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 46
+  end_line: 59
+  anchor: 'pub trait Provider: Send + Sync + std::fmt::Debug {'
+  content_hash: sha256:cfdd1abe321e0a34158aa7680f28406ae02821c612df17f1cdab41059dc3e60f
+  code: |+
+    /// A source of objects, and the operations that change them.
+    ///
+    /// A provider answers about one or more targets. It never formats anything (spec §5), never
+    /// parses unstable human-readable text (spec §50), and reports what it does not know as `null`
+    /// rather than as zero (spec §35.3).
+    #[async_trait::async_trait]
+    pub trait Provider: Send + Sync + std::fmt::Debug {
+        /// The provider's stable id, such as `linux.procfs`. It appears in every record's provenance,
+        /// so a user can always ask where a value came from.
+        fn id(&self) -> &str;
+
+        /// The targets this provider answers about.
+        fn targets(&self) -> &[&str];
+
+- start_line: 72
+  end_line: 169
+  anchor: 'fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue>;'
+  content_hash: sha256:3fa43bff004b74d9c2a1a9b71470ce794b5aec07aae76c13cb83116c5b1e6aa8
+  code: |2
+        fn identity_token(&self) -> Option<&str> {
+            None
+        }
+
+        /// The schemas it produces.
+        fn schemas(&self) -> Vec<Arc<Schema>>;
+
+        /// What it must be allowed to do.
+        fn capabilities(&self) -> Vec<Capability>;
+
+        /// Whether it can answer on this machine, and why not when it cannot.
+        ///
+        /// The default is available; a provider that depends on something that may be missing —
+        /// systemd, a netlink socket, a container runtime — overrides this rather than failing later
+        /// with an empty result.
+        fn availability(&self) -> Availability {
+            Availability::Available
+        }
+
+        /// The objects matching `query`, as they are now.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error when the query cannot be answered at all. A *partial* failure —
+        /// one object that could not be read — belongs on the stream's error channel instead, so the
+        /// objects that could be read still arrive (spec §16.5).
+        fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue>;
+
+        /// Changes to the objects matching `query`.
+        ///
+        /// A provider MAY open with [`EventKind::Snapshot`] events describing the current state, and
+        /// several do; a provider watching a source that only announces transitions — netlink's
+        /// multicast groups, a container engine's event stream — MUST NOT invent one. The opening
+        /// snapshot a `watch` shows is the runtime's, taken through [`Provider::snapshot`], so that
+        /// the first frame is the same whichever kind of source is underneath (spec §18.2).
+        ///
+        /// # Errors
+        ///
+        /// Returns `provider.unsupported` when the provider cannot watch. Saying so is required:
+        /// a provider that silently polled instead would make its cost invisible, and spec §18.2
+        /// requires that polling be explicit in metadata.
+        fn subscribe(&self, query: &Query) -> Result<EventStream, ErrorValue> {
+            let _ = query;
+            Err(ErrorValue::new(
+                ono_core::ErrorCode::ProviderUnsupported,
+                format!("{} cannot watch for changes", self.id()),
+            )
+            .with_help("`watch` needs a provider that can subscribe or poll; this one does neither"))
+        }
+
+        /// What this provider can answer about time (spec v0.5 §21.1).
+        ///
+        /// The default claims nothing, which is the only honest default: a provider that has not
+        /// declared a temporal capability has not implemented one, and nothing downstream may read
+        /// its silence as coverage (§7.4, §21.5).
+        fn temporal(&self) -> TemporalCapabilities {
+            TemporalCapabilities::none()
+        }
+
+        /// The objects or events matching `query` as they were within `window` (spec v0.5 §21.4).
+        ///
+        /// Only a provider whose source genuinely keeps the past answers this — journald does, a
+        /// container runtime's event database may, `/proc` does not (§22.1, §22.3). Everything else
+        /// refuses, and the refusal is what lets the shell look for the answer somewhere it was
+        /// recorded rather than silently present a snapshot of now as a snapshot of then.
+        ///
+        /// # Errors
+        ///
+        /// `temporal.unsupported_source` by default: the provider cannot answer about the past at
+        /// all. A provider that can, and could not this time, reports whatever went wrong.
+        fn history(&self, query: &Query, window: &TimeWindow) -> Result<ValueStream, ErrorValue> {
+            let _ = (query, window);
+            Err(unsupported_history(self.id()))
+        }
+
+        /// The objects a selector names.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error when the selector cannot be resolved.
+        async fn resolve(&self, selector: &Selector) -> Result<Vec<ObjectRef>, ErrorValue>;
+
+        /// Performs `action`, and reports exactly what happened to that object.
+        ///
+        /// # Errors
+        ///
+        /// Returns a structured error only when the provider cannot attempt the action at all — an
+        /// operation it does not implement, or a capability it does not hold. An action that was
+        /// attempted and failed is an [`ActionOutcome`], not an error, because a bulk operation must
+        /// be able to report per-target outcomes (spec §11.5, §16.5).
+        async fn act(&self, action: &Action) -> Result<ActionOutcome, ErrorValue> {
+            let _ = action;
+            Err(ErrorValue::new(
+                ono_core::ErrorCode::ProviderUnsupported,
+                format!("{} answers queries only", self.id()),
+            ))
+        }
+    }

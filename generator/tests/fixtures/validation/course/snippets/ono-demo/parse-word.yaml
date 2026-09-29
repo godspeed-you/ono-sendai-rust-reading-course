@@ -1,0 +1,26 @@
+id: parse-word
+source:
+  file: crates/ono-demo/src/eval.rs
+  commit: a1b2c3d4e5f60718293a4b5c6d7e8f9012345678
+segments:
+  - start_line: 3
+    end_line: 6
+    anchor: "pub enum Word"
+    content_hash: sha256:49e2dee3e99d9ba629add52c4b8ae9f9032bb31c1460837500031ba4ad57a19d
+    code: |
+      pub enum Word {
+          Number(i64),
+          Name(String),
+      }
+  - start_line: 8
+    end_line: 14
+    anchor: "pub fn parse"
+    content_hash: sha256:17beee7cd0162fe7a1791e88c72847f0af70dca653494945acf34fb1f24ecd9b
+    code: |
+      /// Parses one word.
+      pub fn parse(word: &str) -> Word {
+          match word.parse::<i64>() {
+              Ok(n) => Word::Number(n),
+              Err(_) => Word::Name(word.to_string()),
+          }
+      }

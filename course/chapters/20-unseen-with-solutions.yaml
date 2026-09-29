@@ -1,0 +1,1017 @@
+id: unseen-with-solutions
+number: 20
+title: Unseen code, with solutions
+summary: |
+  Every snippet in this chapter is code the course has not shown you. Each lesson says which
+  crate you are in and what problem that part of Ono-Sendai deals with. It does not explain the
+  code. That is your job now.
+
+  Each lesson has the same shape:
+
+  1. A short orientation: the crate, the file and the problem area.
+  2. The code, with real line numbers.
+  3. A reading exercise. Write your own analysis first, in the scratchpad or on paper. There is
+     at most one hint.
+  4. A worked solution. Open it only after your attempt, and compare it with what you wrote.
+
+  The solutions follow the same frame every time: purpose, inputs, outputs, types, control flow,
+  ownership, mutation, errors, traits, async, side effects, architecture and what to read next,
+  where each applies. Each solution also keeps three things apart: what the code **guarantees**,
+  what follows from **Rust semantics**, and what is an **architectural interpretation**. Keep them
+  apart in your own notes too. That habit carries over to code no course has annotated.
+
+  The five regions come from five different subsystems: the wire protocol between shells, command
+  history, `trace`'s graph walk, the netlink decoder and crash-safe file restoration. None of them
+  depends on another lesson in this chapter, but the last lesson compares its code with the second.
+  [Chapter 21](chapter:independent-reading) then takes the solutions away.
+lessons:
+  - id: unseen-with-solutions-01
+    title: Taking one frame off the wire
+    stage: transfer
+    summary: Read `ono_protocol::decode`, which takes one length-prefixed frame out of bytes another machine sent.
+    prerequisites: [result-errors-01, borrowing-01]
+    concepts: [result, option, slices-strings, borrowing, scalar-types]
+    ono_topics: [remote-protocol, error-flow]
+    objectives:
+      - Reconstruct the three outcomes of a function that returns `Result<Option<T>, E>`.
+      - Explain why the order of the checks in a decoder of untrusted input matters.
+      - Separate what the decoder guarantees from what its caller must do.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-protocol`. File: `crates/ono-protocol/src/frame.rs`.
+
+          Two Ono-Sendai shells can be connected by a *link*. One machine sends typed messages
+          to the other over a socket, each wrapped in a *frame*. The receiving side collects the
+          bytes it has read so far in a buffer (a `bytes::BytesMut`, a growable byte buffer) and
+          calls `decode` to take the next whole frame out of that buffer.
+
+          The snippet starts with the module's own description of the frame layout. It also shows
+          one helper that `decode` calls. You met the protocol's message decoding and its
+          `ProtocolError` in the chapters on generics and conversions, but not this function.
+      - type: code
+        snippet: c20-frame-decode
+        caption: |
+          `crates/ono-protocol/src/frame.rs` at the pinned revision, shortened. `Limits`,
+          `ProtocolError` and `Frame` are defined in the same crate. `advance` comes from the
+          `bytes::Buf` trait, and `split_to` and `freeze` are methods of `BytesMut`.
+      - type: exercise
+        id: unseen-with-solutions-01-q1
+        exercise_type: read-function
+        prompt: |
+          Read `decode` (lines 266–299) and write your own analysis before you open anything.
+          Cover at least the following:
+
+          - its purpose, inputs and outputs, and what each of the three possible results means
+            to the caller;
+          - the order of the checks, and what the buffer contains after each kind of return;
+          - where `buffer` is borrowed shared, where it is borrowed mutably, and why the compiler
+            accepts that;
+          - why the comparison on line 283 comes before the one on line 289.
+        hints:
+          - level: 1
+            body: |
+              Look at every `return` and write down, for each one, whether anything has been
+              removed from `buffer` yet. Then ask what would happen, with bytes arriving slowly
+              from a hostile peer, if lines 289–291 ran before lines 283–288.
+        solution:
+          summary: |
+            `decode` looks at the first 12 bytes of the buffer. If they are there, it validates
+            them in a fixed order: version, kind, flags and reserved byte, then the claimed
+            payload length against the configured limit. Only when all of that passes and the
+            whole payload has arrived does it remove 12 + `claimed` bytes from the buffer and
+            return them as a `Frame`. There are three outcomes. `Ok(None)` means "not enough bytes
+            yet" and leaves the buffer untouched. `Err(..)` means "these bytes are not a frame
+            this build may read", also without touching the buffer. `Ok(Some(frame))` means one
+            frame was consumed. Checking the length before checking completeness means an
+            oversized claim is refused as soon as its header arrives, rather than making the
+            caller wait (and buffer) for a payload that will never be accepted.
+          analysis:
+            - aspect: purpose
+              body: |
+                Turn a stream of raw bytes from another machine into discrete frames, one call at
+                a time, and refuse input this build cannot or must not read. The module doc
+                (lines 12–14 in the snippet) states why the frame is self-describing: a receiver
+                can route or refuse a frame without understanding its payload.
+            - aspect: inputs
+              body: |
+                `buffer: &mut BytesMut` holds whatever has been read from the socket so far. It
+                may contain less than one frame, exactly one, or more than one. `limits: &Limits`
+                carries `max_frame_payload()`. The default is `MAX_FRAME_PAYLOAD`, `1 << 20`
+                bytes, set in `limits.rs`. Both are borrowed, and neither is owned by `decode`.
+            - aspect: outputs
+              body: |
+                `Result<Option<Frame>, ProtocolError>`:
+
+                | Result | Meaning | Buffer afterwards |
+                |---|---|---|
+                | `Ok(None)` (line 268) | fewer than 12 bytes | unchanged |
+                | `Err(UnsupportedFrameVersion)` (272) | byte 0 is not `FRAME_VERSION` | unchanged |
+                | `Err(UnknownFrameKind)` (275) | byte 1 names no `FrameKind` | unchanged |
+                | `Err(UnknownFrameFlags)` (279) | byte 2 or byte 3 is not zero | unchanged |
+                | `Err(FrameTooLarge)` (284) | claimed length above the limit | unchanged |
+                | `Ok(None)` (290) | header valid, payload incomplete | unchanged |
+                | `Ok(Some(frame))` (294) | a whole valid frame | the frame's bytes removed from the front |
+            - aspect: control-flow
+              body: |
+                A straight sequence of guards, each ending in an early `return`. There is no loop:
+                one call yields at most one frame, and a caller that wants all frames calls again.
+                Line 267 is a `let … else`: if `buffer.get(..FRAME_HEADER_LEN)` is `None` (fewer
+                than 12 bytes), the `else` block must diverge, and it does with `return Ok(None)`.
+                Line 274 uses the same shape to turn `FrameKind::from_u8`'s `None` into an error.
+                Line 277 ORs the flags byte with the reserved byte, so one comparison rejects a
+                non-zero value in either. The error reports the combined bits, not which byte
+                carried them.
+            - aspect: ownership
+              body: |
+                `header` is a `&[u8]` borrowed from `buffer`. The borrow is used for the last time
+                on line 282. From then on only the copied-out integers `version`, `kind`,
+                `stream` and `claimed` are used, and all of them are `Copy`. Because a borrow only
+                lasts until its last use, the mutable calls `buffer.advance` and
+                `buffer.split_to` on lines 292–293 do not conflict with it. The returned `Frame`
+                owns its `payload: Bytes`. `split_to` hands over the first `claimed` bytes as a
+                separate `BytesMut` that shares the original allocation. The `bytes` crate
+                documents it as an O(1) operation, so no payload bytes are copied. `freeze` turns
+                that `BytesMut` into an immutable `Bytes`.
+            - aspect: mutation
+              body: |
+                The only mutations are on lines 292–293, after every check has passed. On every
+                other path the buffer is exactly as it was. That is what the doc comment on
+                lines 257–258 promises ("leaving it untouched so the next read can complete it").
+            - aspect: errors
+              body: |
+                Errors are `ProtocolError` variants carrying the offending byte or length, never a
+                panic. Indexing `header[0]` to `header[11]` cannot panic because `header` is known
+                to be exactly 12 bytes long. The caller, `FrameReader::next` in
+                `crates/ono-protocol/src/connection.rs`, converts the error into an `ErrorValue`.
+                The `From<ProtocolError> for ErrorValue` impl in `error.rs` attaches help text:
+                a version, kind or flags error says the two ends speak different protocol
+                versions, and an oversize error says the remote is exceeding a bound.
+            - aspect: architecture
+              body: |
+                This is the lowest layer of the link, spec §21.2. The module doc cites ADR-0015
+                T7: "schema/protocol bombs causing memory exhaustion" is a release-blocking
+                threat, and "a decoder that reserves `length` bytes before comparing it against a
+                bound is exactly that bomb's fuse". Routing by stream id is not done here.
+                `stream` is read but not validated. Deciding which stream a frame belongs to is
+                the job of the link, one layer up.
+            - aspect: next-steps
+              body: |
+                `FrameReader::next` in `connection.rs` shows the loop around `decode`: decode,
+                otherwise read more bytes into the buffer and try again. `encode` in the same file
+                is the mirror image and refuses to *send* what a receiver would refuse.
+                `crates/ono-protocol/tests/framing.rs` and `fuzz_protocol.rs` show the behaviour
+                the authors pinned down with tests.
+          guarantees: |
+            Stated in the doc comments and enforced by the code:
+
+            - An incomplete frame returns `Ok(None)` and leaves the buffer untouched (lines
+              257–258, 267–269, 289–291).
+            - Version, kind, flags and length are checked in that order, and nothing is taken out
+              of the buffer before all four pass. The module doc says so in lines 16–22, which are
+              outside the snippet. The function doc (lines 262–265) adds that no allocation of the
+              claimed size happens before those checks.
+            - Undefined flags are refused, not ignored (module doc; lines 277–280).
+            - The claimed length is compared with `limits.max_frame_payload()` before the function
+              waits for the payload (line 283 precedes line 289).
+          semantics: |
+            What follows from Rust and the types, whatever the authors intended:
+
+            - `slice::get(..12)` returns `None` instead of panicking on a short buffer, and after
+              it succeeds the fixed indices `0..=11` are in bounds.
+            - `u32::from_be_bytes` interprets the four bytes as big-endian regardless of the
+              machine's own byte order, so both ends agree on the value.
+            - `as usize` on a `u32` cannot lose information on 32- and 64-bit targets. Because
+              `claimed` is at most the limit by line 289, `FRAME_HEADER_LEN + claimed` cannot
+              overflow either.
+            - The shared borrow `header` ends at its last use, which is why the later `&mut`
+              method calls compile.
+            - `Result<Option<Frame>, _>` makes "no frame yet" and "bad frame" two distinct cases
+              that the caller must handle separately. The `?` in the caller propagates only the
+              `Err`.
+          interpretation: |
+            This is an architectural reading, grounded in the doc comments but not stated line by
+            line in them. The order of the checks is the security design. Suppose the
+            completeness check on line 289 ran first. A peer could then claim a 4 GiB payload and
+            trickle bytes. `decode` would keep answering `Ok(None)`, and the reading loop would
+            keep appending to the buffer, which is the memory-exhaustion "bomb" ADR-0015 T7
+            names. With the length check first, the link fails as soon as 12 bytes have
+            arrived. `decode` itself allocates nothing. The buffer's growth happens in the
+            caller's read loop, so the guarantee holds only together with that loop, which never
+            has to hold much more than one maximum-sized frame plus a header (and whatever the
+            last read happened to deliver) before `decode` either yields or fails.
+      - type: exercise
+        id: unseen-with-solutions-01-q2
+        exercise_type: predict
+        prompt: |
+          Assume `Limits::default()`, so `max_frame_payload()` is 1,048,576. Predict the result of
+          `decode` and the buffer's length afterwards for each buffer (bytes in hexadecimal):
+
+          1. `01 09 00 00  00 00 00 03  00 00 00 05  aa bb` (14 bytes)
+          2. `01 09 00 01  00 00 00 03  00 00 00 00` (12 bytes)
+          3. `01 09 00 00  00 00 00 03  00 20 00 00` (12 bytes)
+          4. `01 0d 00 00  00 00 00 07  00 00 00 00  01 09` (14 bytes)
+        solution:
+          summary: |
+            1. `Ok(None)`, length still 14. The header is valid (version 1, kind 9 = `Value`,
+               no flags, stream 3, length 5), but only 2 of the 5 payload bytes are present.
+            2. `Err(UnknownFrameFlags { flags: 0x01 })`, length still 12. The reserved byte 3 is
+               non-zero, and line 277 folds it into `flags`.
+            3. `Err(FrameTooLarge { claimed: 2097152, limit: 1048576 })`, length still 12. The
+               payload has not arrived, but the claim is refused anyway because line 283 runs
+               before line 289.
+            4. `Ok(Some(Frame { kind: End, stream: 7, payload: empty }))`, length now 2. Kind
+               13 is `End`, and a length of 0 needs no payload. The two remaining bytes `01 09`
+               are the start of the next frame and stay in the buffer.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Case 1 passes every check up to line 289 and returns there. Case 2 returns at
+                line 279, case 3 at line 284, and case 4 reaches line 294.
+            - aspect: mutation
+              body: |
+                Only case 4 changes the buffer: `advance(12)` drops the header, and
+                `split_to(0)` takes an empty payload. Whatever follows the frame stays for the
+                next call.
+            - aspect: types
+              body: |
+                `0x00200000` read big-endian is 2,097,152 (2 MiB). Kind byte `0x0d` is 13, which
+                `FrameKind::as_u8` maps to `End`. `from_u8` searches `ALL` for the kind whose
+                `as_u8` equals the byte.
+          guarantees: |
+            Cases 1 to 3 leave the buffer as it was, as the doc comment promises. Case 3 shows the
+            documented guarantee that the length bound is enforced before any waiting for the
+            payload.
+          semantics: |
+            `from_be_bytes([0x00, 0x20, 0x00, 0x00])` is `0x0020_0000`. The `Frame` in case 4 owns
+            an empty `Bytes`. That is a real, valid value, not an absent one.
+          interpretation: |
+            Case 4 is why `decode` must not assume it sees exactly one frame: a single socket
+            read can deliver the end of one frame and the start of the next. Leaving the rest in
+            the buffer is what makes a loop of "decode, else read more" correct.
+  - id: unseen-with-solutions-02
+    title: Remembering commands without losing the file
+    stage: transfer
+    summary: Read `History::record` and `History::flush`, which apply a recording policy and keep a JSONL file in step with memory.
+    prerequisites: [mutability-01, iterators-closures-01]
+    concepts: [mutability, option, result, closures, collections]
+    ono_topics: [history, error-flow]
+    objectives:
+      - Reconstruct a small state machine kept in two fields of a `&mut self` type.
+      - Distinguish the two write strategies of `flush` and say when each is chosen.
+      - Identify what happens on disk and in memory when a write fails part way.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-history`. File: `crates/ono-history/src/store.rs`.
+
+          The shell remembers what was run: the command text, the directory it ran in and how it
+          ended. It keeps this in a `History` value in memory and in a file with one JSON object
+          per line (JSONL). After each command, the REPL loop in `ono-cli` calls `record` and then
+          `flush`. The crate's own documentation says why the file is line-based: "a torn write at
+          the moment a machine loses power costs one entry, not the history."
+
+          `Policy` (in `policy.rs`) decides what may be recorded. Its methods `should_record`,
+          `redact`, `collapses` and `entry_limit` are called here by name. Their bodies are not
+          shown, and you do not need them.
+      - type: code
+        snippet: c20-history-record-flush
+        caption: |
+          `crates/ono-history/src/store.rs`, shortened: the `History` struct, `record`, `flush`,
+          and the two private helpers `flush` uses.
+      - type: exercise
+        id: unseen-with-solutions-02-q1
+        exercise_type: read-function
+        prompt: |
+          Read `record` (lines 131–158) and `flush` (lines 168–202) as a pair. Write down:
+
+          - what each function takes, returns and changes;
+          - what the fields `persisted` and `stale` mean, and every place each one changes;
+          - which of `flush`'s two write strategies runs when, and what a reader of the file could
+            observe during each;
+          - what state memory and the file are in if a write fails half way.
+        hints:
+          - level: 1
+            body: |
+              Treat `persisted` and `stale` as the whole state machine. For each line that assigns
+              one of them, write down what must be true about the file at that moment.
+        solution:
+          summary: |
+            `record` applies the policy. A command that must not be recorded, or that repeats the
+            previous entry, returns `None`. Otherwise it stores the redacted text as a new entry,
+            returns its id as `Some(id)`, and trims the oldest entries beyond the limit. Trimming
+            sets `stale`, because the file may now hold lines memory no longer has. `flush` has two
+            strategies. When `stale` is set, it rewrites the whole file through a temporary file,
+            `sync_all` and a `rename`. Otherwise it appends only the entries after `persisted`.
+            `persisted` counts how many of the in-memory entries are already in the file. Both
+            functions keep the two fields consistent on success. On failure, `flush` leaves them
+            unchanged, so the next `flush` tries again.
+          analysis:
+            - aspect: inputs
+              body: |
+                `record(&mut self, command: &str, cwd: &Path, outcome: Outcome)`: the command and
+                directory are borrowed and copied into owned values (`redact` returns a `String`,
+                and `cwd.to_path_buf()` makes a `PathBuf`). `outcome` is moved in and stored as
+                `Some(outcome)`. `flush(&mut self)` takes nothing else. Everything comes from the
+                struct.
+            - aspect: outputs
+              body: |
+                `record` returns `Option<String>`, and `None` means "the policy declined". The
+                doc (line 130) says so. It is not an error, so it is not a `Result`. `flush`
+                returns `Result<(), HistoryError>`. At the call site in `repl.rs` the result is
+                discarded with `let _ = history.flush();`.
+            - aspect: control-flow
+              body: |
+                `record` has two early exits (lines 132–134: `should_record` is false; lines
+                137–139: the redacted text collapses with the previous entry), then a push, then
+                an optional trim. `flush` branches on `stale`. The rewrite path (175–187) ends with
+                its own `return Ok(())`. The append path first returns early if nothing is new
+                (189–191), then writes the tail. Every I/O call is followed by
+                `.map_err(|cause| fail(…, cause))?`, which returns early on the first failure.
+            - aspect: mutation
+              body: |
+                `record` changes `entries` (push, then `drain(..excess)` to remove the oldest) and,
+                when trimming, `persisted` and `stale`. `persisted.saturating_sub(excess)` removes
+                the trimmed entries from the count of lines already on disk, stopping at 0.
+                `flush` sets `persisted = entries.len()` only after all writes succeeded, and clears
+                `stale` only after the rename succeeded. Note: the field doc says `stale` is "Set
+                when trimming dropped an entry the file still holds". The code sets it whenever
+                trimming happens (line 155), even when `persisted` was 0. The rewrite then happens
+                anyway, which is harmless.
+            - aspect: ownership
+              body: |
+                `previous` on line 136 is an `Option<&str>` borrowed from `self.entries`. It is
+                used on line 137, before the `push` on line 142, so the shared borrow has ended
+                when the vector is mutated. `id` is cloned once: one `String` goes into the entry,
+                the other is returned. In `flush`, the closure `fail` captures only
+                `self.path`, by shared reference: since the 2021 edition, closures capture the
+                individual fields they use. The assignments to `self.persisted` and `self.stale`
+                come after the last use of `fail` on their path (a borrow lasts only until its
+                last use), so the borrow checker accepts them. `fail` clones the path only when
+                an error is actually built.
+            - aspect: errors
+              body: |
+                Every `std::io::Error` is wrapped in a `HistoryError` that names the action
+                (`"write"`, `"replace"`, `"append to"`) and the path. `write_entry` turns a
+                `serde_json` failure into an `io::Error` of kind `InvalidData`, so one error type
+                flows through. Failure consequences: in the rewrite path, a failure before the
+                rename leaves the real file untouched. The `.jsonl.new` file may remain, and it
+                is truncated on the next attempt by `private_file`. In the append path, a failure
+                after some lines were written leaves `persisted` unchanged, so the next flush
+                appends from the same entry again. Entries written before the failure then appear
+                twice, and a line cut short by the failure runs into the next line appended.
+                `open` (not shown) skips any line it cannot parse, so the damage stays limited to
+                the lines involved.
+            - aspect: side-effects
+              body: |
+                File creation with mode `0o600` on Unix (`private_options`: the mode is set at
+                creation, so a newly created file is never world-readable). Writes, one `sync_all`
+                on the temporary file, a `rename`. The append path calls `file.flush()`. For a
+                `std::fs::File` that pushes nothing to disk, because `File` keeps no buffer in
+                Rust. Durability comes only from `sync_all`, which the append path does not call.
+            - aspect: architecture
+              body: |
+                Spec §20.1 ("History records semantics, not only strings") is the reason entries
+                carry `cwd` and an `Outcome`. The redaction and the private file mode together
+                answer the privacy concern the doc on `private_options` describes. The error type's
+                doc (lines 15–17 of the file, not in the snippet) says history failing "must never
+                take the shell down", which matches the REPL discarding the result.
+            - aspect: next-steps
+              body: |
+                `History::open` (lines 73–125) for how `persisted` and `stale` start out;
+                `policy.rs` for `collapses` and `redact`; `crates/ono-history/tests/history.rs` for
+                the trimming and flushing behaviour the tests pin down.
+          guarantees: |
+            - A command the policy hides is not stored, and secrets are replaced before the text is
+              kept (doc, lines 127–128; code, lines 132–135).
+            - After a trim, the next successful flush rewrites the file "through a temporary and a
+              rename, so a reader never sees a half-written history" (doc, lines 162–163).
+            - An ordinary flush writes only entries not yet on disk (`&self.entries[self.persisted..]`).
+            - Files created by the history are created with mode 0600 on Unix (`private_options`).
+          semantics: |
+            - `&mut self` on both methods means no other reference to the `History` can exist
+              during the call. The two fields cannot be observed half-updated from safe code.
+            - `?` after `map_err` returns the `HistoryError` immediately. Nothing after it runs, so
+              the assignments to `persisted` and `stale` are skipped on failure.
+            - `Vec::drain(..excess)` removes and drops the first `excess` elements and shifts the
+              rest down. `saturating_sub` cannot underflow.
+            - `drop(file)` on line 182 closes the descriptor before the rename. Without it the
+              file would be closed at the end of the block anyway. The explicit drop makes the
+              order visible.
+            - `with_extension("jsonl.new")` replaces the path's extension: `history.jsonl`
+              becomes `history.jsonl.new`.
+          interpretation: |
+            This is an interpretation. The design treats the file as a log that is usually only
+            appended to, because appending one line is cheap and a torn last line costs one entry.
+            A full rewrite is needed only when old lines must disappear, and that case pays for
+            atomicity with a temporary file and a rename. The durability is uneven by design or
+            by omission, since the code does not say which. The rewrite is `sync_all`-ed but the
+            directory is not, and the append path is never synced. Compare this with
+            [the recovery code](lesson:unseen-with-solutions-05), which syncs the directory too.
+      - type: exercise
+        id: unseen-with-solutions-02-q2
+        exercise_type: trace-value
+        prompt: |
+          The policy's `entry_limit()` is 3. The history was opened from a file holding exactly 3
+          entries, so `entries.len() == 3`, `persisted == 3` and `stale == false`. The user runs a
+          new command that the policy records and does not collapse. Trace `entries.len()`,
+          `persisted` and `stale` through `record`, and then through a successful `flush`. Which
+          branch of `flush` runs, and what does the file contain at the end?
+        solution:
+          summary: |
+            After `push`: `len` 4, `persisted` 3, `stale` false. The trim then gives `excess` 1,
+            `drain(..1)`, `len` 3, `persisted` 2, `stale` true. `flush` takes the rewrite branch:
+            all 3 in-memory entries (the 2 newest old ones plus the new one) are written to
+            `history.jsonl.new`, synced and renamed over the file. At the end `persisted` is 3 and
+            `stale` is false, and the file holds exactly the 3 in-memory entries.
+          analysis:
+            - aspect: mutation
+              body: |
+                Lines 142, 153, 154, 155 in `record`, and lines 184–185 in `flush`. `persisted`
+                drops to 2 because one of the three lines on disk no longer exists in memory. An
+                append would be wrong here: the file would end up with 4 lines, including one the
+                limit removed.
+            - aspect: control-flow
+              body: |
+                `stale` is true, so lines 175–187 run and the function returns at line 186. The
+                append path (189–201) is not reached.
+            - aspect: side-effects
+              body: |
+                One new file (`history.jsonl.new`, mode 0600 if newly created), three lines
+                written, one `sync_all`, one `rename` that atomically replaces `history.jsonl`.
+          guarantees: |
+            The flush doc promises the rewrite after trimming. The code shows it by testing
+            `stale` first.
+          semantics: |
+            `drain(..excess)` with `excess == 1` removes exactly the element at index 0, the
+            oldest entry.
+          interpretation: |
+            `persisted` is a count of in-memory entries that are known to be on disk, not a line
+            number in the file. After trimming, the two no longer match, and `stale` records
+            that fact.
+  - id: unseen-with-solutions-03
+    title: A walk that must end
+    stage: transfer
+    summary: Read `Tracer::trace`, the async breadth-first walk behind the `trace` command.
+    prerequisites: [async-01, provider-boundary-01]
+    concepts: [async-await, trait-objects, collections, pattern-matching, shared-ownership]
+    ono_topics: [providers, async-execution]
+    objectives:
+      - Explain why a graph walk terminates by pointing at the lines that guarantee it.
+      - Identify where an async function suspends and whether its awaits run concurrently.
+      - Distinguish the two kinds of truncation the walk records.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-graph`. Files: `crates/ono-graph/src/trace.rs` and
+          `crates/ono-graph/src/provider.rs`.
+
+          `trace process 1` answers "what is this object connected to?": child processes, open
+          files, sockets, services and so on. Each kind of relationship comes from a
+          *relationship provider*, an object implementing the `RelationshipProvider` trait. A
+          `Tracer` holds a list of them and walks outwards from the starting objects, the
+          *roots*. The walk has two limits: `options.depth` (default 3 hops) and
+          `options.max_nodes` (default 256 objects). The crate doc says `trace` "must be grounded
+          in real provider data".
+
+          The first snippet is the trait and the value its method returns. The second is the
+          walk and the small helpers it calls. `Graph` (in `graph.rs`) is not shown. What you
+          need is in its method names and one doc sentence: `insert_node` "Returns whether the node
+          was new", and `insert_edge` ignores an edge the graph already holds.
+      - type: code
+        snippet: c20-relationship-provider
+        caption: |
+          `crates/ono-graph/src/provider.rs`, shortened. [`#[async_trait::async_trait]`](glossary:async-trait) is the
+          attribute you met in [the async chapter](chapter:async).
+      - type: code
+        snippet: c20-tracer-trace
+        caption: |
+          `crates/ono-graph/src/trace.rs`, shortened: `TraceOptions::wants`, the `Tracer` struct,
+          and the walk with its helpers.
+      - type: exercise
+        id: unseen-with-solutions-03-q1
+        exercise_type: read-function
+        prompt: |
+          Read `trace` (lines 194–248) together with the helpers it calls. Explain:
+
+          - what goes into the queue, when, and with what depth;
+          - why the walk terminates on a cycle (process A relates to B, B relates to A);
+          - the two places truncation is recorded, and exactly when each one records it;
+          - where the function can suspend, and whether two providers are ever asked at the same
+            time;
+          - what happens to an edge whose target could not be added because of the node limit,
+            and to an edge whose target is already in the graph.
+        hints:
+          - level: 1
+            body: |
+              Find every line where a node enters the graph and every line where a node enters
+              the queue. Compare the two sets.
+        solution:
+          summary: |
+            `trace` is a breadth-first walk. Roots are added to the graph and queued at depth 0.
+            Each dequeued subject below the depth limit is shown to every provider that
+            `consults` it, one after another, awaiting each answer. Failures are stored in the
+            graph. Each found relationship whose relation is wanted adds its target (if new and
+            there is room) at `depth + 1`, and the edge is added. Termination comes from one rule:
+            a node is queued only at the moment it is first added to the graph, so no object is
+            expanded twice. Depth truncation is recorded only for a subject some provider could
+            have expanded. Node-limit truncation is recorded every time a new target is refused.
+            The walk returns a `Graph`, never an error.
+          analysis:
+            - aspect: inputs
+              body: |
+                `&self` (the providers and the options) and `roots: impl IntoIterator<Item =
+                Node>`. The caller can pass an array, a `Vec` or any iterator of owned `Node`s.
+                The call in `crates/ono-command/src/impls/trace.rs` passes `[root]`.
+            - aspect: outputs
+              body: |
+                A `Graph` value: nodes in the order reached, edges, per-subject failures, and a
+                truncation record. There is no `Result`. A provider failure becomes data in the
+                graph (line 226), matching the doc on `Relationships`: "an empty list of
+                relationships means the object has none, while a failure means nobody knows
+                whether it has any".
+            - aspect: control-flow
+              body: |
+                `while let Some((subject, depth)) = queue.pop_front()` takes from the front while
+                lines 204 and 241 push to the back. That is FIFO, hence breadth-first. A subject
+                at `depth >= self.options.depth` is not expanded (`continue` on line 218). The
+                inner loops skip providers that do not `consult` the subject (221–223) and
+                relationships whose relation is not wanted (230–232). For a new target, if the
+                graph is full, the edge is skipped too (`continue` on line 238). Otherwise the
+                target is inserted and queued. Line 243 then runs for both newly added targets
+                and targets that were already known.
+            - aspect: types
+              body: |
+                `VecDeque<(Node, usize)>` pairs each object with its distance from the roots.
+                `Arc<dyn RelationshipProvider>` makes the provider list a list of trait objects:
+                each call is dynamically dispatched. `Relationships::into_parts` and
+                `Relationship::into_parts` consume their values and return the fields by move, as
+                a tuple destructured on lines 224 and 229.
+            - aspect: ownership
+              body: |
+                Each root is cloned once. The clone goes into the graph (line 203) and the
+                original, moved, into the queue (204). Targets follow the same pattern (240–241).
+                `edge` is moved into the graph (243). `subject` is owned by the loop body and
+                borrowed for the provider calls (`&subject`). `provider` is an `&Arc<dyn …>`
+                borrowed from `self.providers`, and method calls reach the trait object through
+                auto-deref. Nothing is shared across threads here.
+            - aspect: async
+              body: |
+                The only suspension point is `.await` on line 224. The awaits are strictly
+                sequential: the next provider is not asked until the previous answer has arrived,
+                and the next subject is not dequeued until all providers have answered for the
+                current one. This is async without concurrency. `#[async_trait]` turns
+                `relationships` into a method returning a boxed future, which is what lets the
+                trait be used as `dyn RelationshipProvider`. As with every async fn, nothing
+                happens until the returned future is awaited, and dropping it cancels the walk at
+                its current `.await`.
+            - aspect: traits
+              body: |
+                The walk depends only on the trait: `subjects()` and `relations()` are metadata
+                the walk plans with (`answers_about`, `offers_wanted`), and `relationships()` is
+                the data. `offers_wanted` keeps consulting a provider that declares no relations,
+                with the reason in the comment (lines 262–263): a plugin "may contribute whatever it
+                likes". Its edges are then filtered by `wants` on line 230.
+            - aspect: architecture
+              body: |
+                Spec §22.3's "bounded walk". The limits exist so that "a trace of `pid 1` on a busy
+                machine ends, and says that it was cut short" (doc of `DEFAULT_MAX_NODES`). The
+                comment on lines 210–212 explains the depth rule: saying a complete answer was cut
+                short "would make the warning worthless".
+            - aspect: next-steps
+              body: |
+                `Truncation::message` in `graph.rs` for how the recorded truncation is shown to the
+                user; `crates/ono-graph/tests/trace.rs` for cycles and limits exercised by tests;
+                one implementation such as `ProcessTree` to see a provider from the other side.
+          guarantees: |
+            - "The walk is breadth-first, adds every object at most once and never expands an
+              object twice, so it terminates on a cycle" (doc, lines 196–198). The code enforces
+              this: `insert_node` returns `false` for a known object, the root loop queues only on
+              `true`, and line 233 queues a target only if `graph.node(target.id())` is `None`.
+            - Truncation is recorded, not silent (doc, line 198).
+            - Depth truncation is recorded only when `can_expand(&subject)` is true (213).
+            - Providers are consulted in the order they were added, "which is what makes the shape
+              of a trace reproducible" (doc of `Tracer::with`, not in the snippet).
+          semantics: |
+            - `VecDeque::push_back` plus `pop_front` is a FIFO queue.
+            - `.await` inside `for` loops suspends the whole `trace` future. There is no hidden
+              parallelism: concurrency would require `join!`, `select!` or spawned tasks, and
+              none appear.
+            - `impl IntoIterator<Item = Node>` in argument position is static dispatch: each call
+              site gets a version for its concrete type.
+            - `into_parts(self)` consumes the value, and afterwards the original can no longer be
+              used.
+          interpretation: |
+            These are observations about the code, not documented intent. First, the node limit
+            is checked only for targets, not roots. Many roots can exceed `max_nodes`. Second,
+            `record_node_limit` increments the "unexpanded" count every time a target is refused,
+            so one object reached by two edges is counted twice. Third, an edge to an object that
+            is already in the graph is kept even after the graph is full. So a full graph still
+            gains edges among the objects it already knows. The design choice visible here is
+            that a trace degrades into a *smaller but honest* answer, never into an error.
+      - type: exercise
+        id: unseen-with-solutions-03-q2
+        exercise_type: predict
+        prompt: |
+          A tracer has one provider, which answers about processes and offers the relation
+          `parent`. The options are `depth(1)`, with the default node limit and no relation
+          filter. Process A's relationships are one edge A→B. Process B's relationships would be
+          one edge B→C. What does `tracer.trace([a]).await` return: which nodes, which edges,
+          and what truncation?
+        solution:
+          summary: |
+            Nodes A and B. One edge, A→B. Truncation: depth limit 1, with one object not expanded
+            (B). C is never seen, because B is never asked about.
+          analysis:
+            - aspect: control-flow
+              body: |
+                A is queued at depth 0. Dequeued: `0 >= 1` is false, so A is expanded. The provider
+                answers A→B, B is new and there is room, so B is inserted and queued at depth 1,
+                and the edge is added. B is dequeued: `1 >= 1` is true. `can_expand(&B)` is true,
+                because the provider answers about processes, so `record_depth_limit(1)` runs.
+                Then `continue`, the queue is empty, and the walk ends.
+            - aspect: outputs
+              body: |
+                The graph has `root` A (the first node inserted), nodes `[A, B]` in the order
+                reached, one edge, no failures, and a truncation with `depth_limit` 1 and
+                `unexpanded` 1.
+            - aspect: async
+              body: |
+                Exactly one `.await` on a provider happens, for A.
+          guarantees: |
+            The depth-limit rule of lines 209–218: B is not expanded and the cut is recorded,
+            because a provider could have expanded it.
+          semantics: |
+            Depth counts hops from the roots. With `depth(1)`, only objects at depth 0 are
+            expanded.
+          interpretation: |
+            With a provider that did *not* answer about B's kind, the same walk would report no
+            truncation. The answer would be complete, and the code avoids saying otherwise.
+  - id: unseen-with-solutions-04
+    title: An iterator over untrusted kernel bytes
+    stage: transfer
+    summary: Read the netlink `Frames` iterator, which walks messages in a kernel reply without copying and without looping forever.
+    prerequisites: [borrowing-01, iterators-closures-01]
+    concepts: [iterators, lifetimes, slices-strings, enums, associated-types]
+    ono_topics: [system-integration, providers]
+    objectives:
+      - Read a hand-written `Iterator` impl whose items borrow from the input.
+      - Prove forward progress of a parsing loop from the code.
+      - Explain how the iterator ends after malformed input.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-provider-netlink`. File: `crates/ono-provider-netlink/src/wire.rs`.
+
+          `get interface`, `get route`, `get neighbor` and socket listings on Linux ask the kernel
+          over *netlink*. The kernel answers with a buffer holding many messages back to back.
+          Each message has a 16-byte header whose first four bytes give the message's total
+          length, and each message is padded to a multiple of 4 bytes. Decoders such as
+          `decode_routes` in `route.rs` start with `for frame in wire::frames(bytes)`.
+
+          The snippet shows the module doc, the iterator, and the three small helpers it uses.
+          `sys::NLMSG_HEADER` is 16 and `sys::ALIGN` is 4.
+      - type: code
+        snippet: c20-netlink-frames
+        caption: |
+          `crates/ono-provider-netlink/src/wire.rs`, shortened.
+      - type: exercise
+        id: unseen-with-solutions-04-q1
+        exercise_type: read-function
+        prompt: |
+          Read `Frames::next` (lines 45–84) with the types above it. Explain:
+
+          - what each call returns, and when iteration ends;
+          - how long the items may live compared with the iterator and the input bytes;
+          - why this loop cannot run forever, whatever lengths the bytes claim;
+          - why the code uses `get` and `unwrap_or` in places where the value cannot actually be
+            missing.
+        hints:
+          - level: 1
+            body: |
+              For each path through `next`, write down the new value of `self.rest` and whether it
+              is shorter than before.
+        solution:
+          summary: |
+            Each call to `next` yields one item. It is `None` when no bytes remain,
+            `Some(Frame::Malformed(error))` when the remaining bytes cannot hold a consistent
+            message, and otherwise `Some(Frame::Message(Message { kind, payload }))`, where
+            `payload` is a slice of the original bytes. After a malformed frame, `rest` is set to empty, so the
+            next call returns `None`. On the normal path, `rest` shrinks by the aligned length of
+            the message, which is at least 16 bytes because shorter lengths are rejected first.
+            So every call either empties `rest` or shortens it by at least 16 bytes, and the walk
+            always ends.
+          analysis:
+            - aspect: types
+              body: |
+                `Frames<'a>` holds `rest: &'a [u8]`, the unread remainder of the caller's buffer.
+                `impl<'a> Iterator for Frames<'a>` fixes the associated type `Item = Frame<'a>`.
+                `Message<'a>` holds `payload: &'a [u8]`, and it is `Copy` because it contains only
+                a `u16` and a shared slice. `Frame::Malformed` carries an owned `ErrorValue`.
+            - aspect: ownership
+              body: |
+                Nothing is copied: payloads are sub-slices of the input. The lifetime `'a` ties
+                every item to the *input buffer*, not to the iterator. `next(&mut self)` borrows
+                the iterator only for the call, while the returned `Frame<'a>` may outlive it, so
+                a caller could collect all messages into a `Vec` and drop the iterator. The input
+                bytes must outlive all of them. `self.rest = &[]` points at an empty slice.
+                Nothing is freed.
+            - aspect: control-flow
+              body: |
+                1. `rest` is empty: return `None`.
+                2. Fewer than 16 bytes: malformed ("header needs 16 bytes").
+                3. No length field could be read: malformed. This cannot happen after step 2, but
+                   the code does not rely on that.
+                4. `length < 16`: malformed ("less than its own 16-byte header").
+                5. `length > remaining`: malformed ("claims … but only … remain").
+                6. Otherwise, read the kind at offset 4, take payload bytes `16..length`,
+                   advance by `align(length).min(remaining)`, and yield the message.
+
+                Every malformed path sets `rest` to empty before returning.
+            - aspect: errors
+              body: |
+                Errors are items, not a `Result`: the iterator yields at most one `Malformed`
+                and then ends. Every error is built by `truncated`, which gives the code
+                `ProviderSchemaViolation` and help text saying "the objects decoded before it are
+                still good". A caller such as `decode_routes` records the error and `break`s, and
+                keeps what it already decoded.
+            - aspect: external-apis
+              body: |
+                `u32_at` reads the length in *native* byte order (`from_ne_bytes`), because
+                netlink uses the host's byte order. Compare
+                [the link protocol's frames](lesson:unseen-with-solutions-01), which are
+                big-endian. `first_chunk::<4>` returns `Option<&[u8; 4]>`, which is `None` if
+                fewer than 4 bytes remain.
+            - aspect: architecture
+              body: |
+                The module doc cites spec §35.6 and ADR-0015 T7: kernel replies are untrusted
+                input, and "no malformed length can turn a walk into a loop". This one iterator is
+                shared by every netlink decoder in the crate, so the rule is enforced in one
+                place.
+            - aspect: next-steps
+              body: |
+                `Attributes` (lines 104–130 of the same file) is the sibling iterator for the
+                attributes inside a message. It ends silently instead of yielding an error, and
+                its doc says why. `crates/ono-provider-netlink/tests/malformed_messages.rs` feeds
+                broken buffers to the decoders.
+          guarantees: |
+            - Every step consumes at least one aligned header, so the walk terminates. The module
+              doc says so, and the comment on line 80 gives the reason (`length` is at least the
+              header size).
+            - After a malformed frame, the iterator yields nothing more.
+            - Every read is a bounded slice. There is no indexing that could panic.
+          semantics: |
+            - Line 79's `get(16..length)` cannot be `None`, because `16 <= length <= remaining`
+              has been established. Line 82's `get(advance..)` cannot be `None`, because
+              `advance <= remaining`. The `unwrap_or` fallbacks are unreachable, but they keep the
+              function free of any panicking operation, which a reviewer can check locally.
+            - `align(length).min(remaining)`: the last message in a buffer may lack its padding.
+              Without the `min`, `advance` could exceed `remaining`, and `get(advance..)` would
+              return `None`, which falls back to empty. The walk would still be correct.
+            - Returning items that borrow `'a` rather than `self` is what makes this an ordinary
+              `Iterator`. The trait cannot express items that borrow from the iterator itself.
+          interpretation: |
+            This is an interpretation. The iterator turns "stop at the first inconsistency" into
+            a value the caller can report, instead of either a panic or a silent stop. A silent
+            stop would look like a complete, shorter answer. Once a length is wrong, nothing after
+            it can be located reliably. That is why the code ends the walk instead of trying to
+            resynchronise.
+      - type: exercise
+        id: unseen-with-solutions-04-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          `bytes` is 40 bytes long. The first header's length field says 20. At offset 20 there
+          is a second header whose length field says 8. List what three successive calls to
+          `next` return, and `self.rest.len()` after each.
+        solution:
+          summary: |
+            Call 1: `Some(Frame::Message(Message { kind, payload }))` with a 4-byte payload
+            (bytes 16..20).
+            Afterwards `rest.len()` is 20. Call 2: `Some(Frame::Malformed(..))` with "a netlink message
+            claims 8 bytes, less than its own 16-byte header". Afterwards `rest.len()` is 0.
+            Call 3: `None`.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Call 1: `remaining` is 40 (at least 16). `length` is 20, which is at least 16 and
+                at most 40. `advance = align(20).min(40) = 20`, so 20 bytes remain. Call 2:
+                `remaining` is 20 (at least 16). `length` is 8, which is less than 16, so the
+                malformed path runs and `rest` becomes empty. Call 3: `rest` is empty, so `None`.
+            - aspect: outputs
+              body: |
+                Two items and then the end. The kind of the first message is whatever `u16` sits
+                at offset 4.
+            - aspect: errors
+              body: |
+                Had line 64 not existed, call 2 would have computed `advance = align(8) = 8` and
+                continued from offset 28, reading padding or payload as a header. With a length of
+                0, `advance` would be 0 and the walk would never end. That is the loop the module
+                doc rules out.
+          guarantees: |
+            Once a length is rejected, the iterator produces no further items.
+          semantics: |
+            `align(20)` is `20.div_ceil(4) * 4 = 20`. `align(8)` would be 8. `div_ceil` rounds
+            up.
+          interpretation: |
+            The check on line 64 is not only input validation. It is the proof that the
+            iterator makes progress.
+  - id: unseen-with-solutions-05
+    title: Putting a file back without ever truncating it
+    stage: transfer
+    summary: Read `restore_file`, `write_staged` and `commit`, which replace a live file with a recovered copy so that a crash never leaves half a file.
+    prerequisites: [result-errors-01, unseen-with-solutions-02]
+    concepts: [result, error-types, question-mark, traits, attributes]
+    ono_topics: [change-recovery, error-flow]
+    objectives:
+      - Reconstruct a crash-safety protocol from the order of its calls.
+      - Trace two error types through a layered function and see where one becomes the other.
+      - State what is on disk after each possible failure.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-recovery-files`. File: `crates/ono-recovery-files/src/restore.rs`.
+
+          Before Ono-Sendai changes files, it can *protect* them by storing a copy (a *blob*) and
+          recording its SHA-256 digest in a manifest (`ArchiveEntry`). Restoring puts that copy
+          back over the live path. `restore_objects`, which is not shown, checks each destination
+          and then calls `restore_file` for regular files.
+
+          The snippet begins with the module doc, which quotes the specification. `apply_metadata`
+          (not shown) sets mode, owner and extended attributes on a path. It never fails: it adds a
+          message to `report.metadata_gaps` for anything it could not set.
+          `recovery_apply_failed(action, detail)` builds an `ErrorValue`.
+      - type: code
+        snippet: c20-restore-file
+        caption: |
+          `crates/ono-recovery-files/src/restore.rs`, shortened. `OpenOptionsExt` is the Unix
+          extension trait that adds `.mode(…)` to `OpenOptions`.
+      - type: exercise
+        id: unseen-with-solutions-05-q1
+        exercise_type: read-function
+        prompt: |
+          Read `restore_file`, `write_staged` and `commit` (lines 218–286) and `staging_path`.
+          Explain the purpose and the exact order of the steps, the error types involved and
+          where they are converted, and what `use … as _` on line 22 is for.
+        hints:
+          - level: 1
+            body: |
+              Number every call that touches the file system, in the order it runs. Then mark,
+              for each one, whether the destination path has been changed yet.
+        solution:
+          summary: |
+            `restore_file` reads the stored copy and refuses it if its digest no longer matches
+            the manifest. It then writes the copy to a staging file beside the destination. The
+            staging file is created fresh with `create_new` and mode 0600, filled, given the
+            recorded metadata, and flushed with `sync_all`. `commit` then `rename`s the staging
+            file over the destination and, as a best effort, syncs the parent directory. The
+            destination is touched exactly once, by the rename. Before the rename, the original
+            is complete. After it, the replacement is complete. Every failure before the rename
+            removes the staging file and returns an error saying the original is untouched.
+          analysis:
+            - aspect: purpose
+              body: |
+                Spec v0.6 §15.4, quoted in the module doc: "temp-file + fsync + atomic rename …
+                rather than truncating the live file in place". The doc's conclusion is the goal:
+                "There is no instant at which the destination holds half a file."
+            - aspect: inputs
+              body: |
+                The store and archive directory (to find the blob), the destination path, the
+                manifest `entry` (blob name, digest, metadata), and `report: &mut RestoreReport`,
+                which the function appends to. Everything else is borrowed. The blob's bytes are
+                read into an owned `Vec<u8>` (`bytes`) that lives until the function returns.
+            - aspect: control-flow
+              body: |
+                1. `read_blob(...)?` (227): a missing blob returns its error immediately.
+                2. Digest check (228–234): on mismatch, return an error. Nothing has been written.
+                3. `staging_path` and `remove_file(&staging)` with its result ignored (235–236):
+                   this clears a leftover from an earlier interrupted attempt.
+                4. `write_staged` (237): create, write, set metadata, `sync_all`.
+                5. If step 4 failed: remove the staging file and return an error (238–246).
+                6. `commit` (247): `rename`. On failure, the closure removes the staging file and
+                   `?` returns the error. On success, open the parent directory and `sync_all` it,
+                   ignoring failure (280–284).
+                7. Record the destination in `report.restored` and return `Ok(())`.
+            - aspect: errors
+              body: |
+                Two layers. `write_staged` returns `Result<(), std::io::Error>` and uses `?` on
+                raw I/O calls. `restore_file` does not use `?` on it. It matches the `Err` and
+                builds an `ErrorValue` by formatting the `io::Error` into the message (lines
+                240–245), so no `From` conversion is involved. `commit` produces `ErrorValue`
+                directly with `map_err`. `read_blob` already returns `ErrorValue`, so the `?` on
+                line 227 converts nothing. Metadata problems are not errors at all: they go into
+                the report. Directory-sync problems are ignored.
+            - aspect: traits
+              body: |
+                `use std::os::unix::fs::OpenOptionsExt as _;` brings the trait into scope without
+                binding its name. A trait's methods can be called with method syntax only when
+                the trait is in scope, and `as _` does exactly that and nothing more. It is what
+                makes `.mode(crate::store::FILE_MODE)` on line 263 compile. `use std::io::Write as
+                _;` inside `write_staged` does the same for `write_all`.
+            - aspect: side-effects
+              body: |
+                One read of the blob. Possibly one unlink of a stale staging file. One exclusive
+                create (`create_new`: the call fails if *anything* already exists at that path,
+                including a symlink). Writes, metadata changes, `fsync` of the file, `rename`,
+                `fsync` of the directory. On failure paths, one more unlink.
+            - aspect: ownership
+              body: |
+                `staging` is an owned `PathBuf` built from the destination. `&staging` is passed
+                around, and it derefs to `&Path`. `file` in `write_staged` is owned by that
+                function and closed when it returns, including when `?` returns early. The
+                closure given to `map_err` in `commit` captures `staging` and `destination` by
+                reference. It runs only on the error path.
+            - aspect: architecture
+              body: |
+                The staging name `.ono-recovery.<name>.staging` sits in the destination's own
+                directory. A `rename` is atomic only within one file system, and a file in the
+                same directory is on the same file system. `is_staging` (elsewhere in the file)
+                recognises the prefix so that the exact-tree policy never treats a leftover
+                staging file as a user's extra file.
+            - aspect: next-steps
+              body: |
+                `restore_objects`, `guard_path` and `guard_destination` (lines 76–176) for the
+                §43.5 checks that run before `restore_file` is called; `apply_metadata` (288–319);
+                `crates/ono-recovery-files/tests/restore.rs`.
+          guarantees: |
+            - The live destination is changed only by `rename`, after the replacement was written
+              and synced (module doc; code order 260–267, then 273).
+            - A copy whose digest does not match the manifest is refused before anything is
+              written (228–234).
+            - On every failure before or during the rename, the staging file is removed and the
+              error says the original is untouched (239, 274).
+          semantics: |
+            - `create_new(true)` means create-exclusively. It is the only way the staging file is
+              opened, so an existing file or symlink at that path makes the open fail rather than
+              be written through.
+            - `?` inside `write_staged` returns the `io::Error` as it is, since the function's
+              error type is also `io::Error`. Dropping `file` on the way out closes it.
+            - `digest_of(&bytes) != entry.digest()` compares a `String` with a `&str`. The standard
+              library implements `PartialEq<&str> for String`.
+            - `if let Some(parent) = … && let Ok(directory) = …` is a let chain (Rust 2024). The
+              body runs only if both patterns match.
+            - `entry.blob().unwrap_or_default()` turns an `Option<&str>` into `""` when there is
+              no blob name.
+          interpretation: |
+            This is an interpretation. Compared with
+            [`History::flush`](lesson:unseen-with-solutions-02), which also writes a temporary
+            file and renames it, this code goes further in three ways. It syncs the directory, so
+            the rename itself survives a power loss. It uses `create_new` instead of truncating
+            the temporary file. And it verifies the content before writing. The difference fits
+            the stakes: history loses at most a few lines, while a restore that writes the wrong
+            bytes, or writes through a planted symlink, defeats the point of recovery. The file
+            is created 0600 and only later receives its recorded mode through `apply_metadata`.
+            The code does not say why. A plausible reading is that the recovered bytes are never
+            more readable than their owner intended while they are being written.
+      - type: exercise
+        id: unseen-with-solutions-05-q2
+        exercise_type: trace-control-flow
+        prompt: |
+          List every way `restore_file` can end, including the successful one. For each, say what
+          is at the destination path and at the staging path afterwards, and what `report` gained.
+        solution:
+          summary: |
+            | Exit | Destination | Staging path | Report |
+            |---|---|---|---|
+            | `read_blob` error (227) | original | untouched (never created) | nothing |
+            | digest mismatch (229) | original | untouched (never created) | nothing |
+            | `write_staged` error (240) | original | removed (best effort) | possibly metadata gaps |
+            | `rename` error (via `commit`, 247) | original | removed (best effort) | possibly metadata gaps |
+            | success (249) | the restored copy | gone (renamed) | `restored` has the destination, plus any metadata gaps |
+
+            A power loss after the rename but before the directory sync could, depending on the
+            file system, leave either version at the destination, but never half a file.
+          analysis:
+            - aspect: control-flow
+              body: |
+                Four error exits and one success exit. Two of the error exits come before any
+                file-system change. The directory sync in `commit` cannot produce an exit: its
+                failure is ignored.
+            - aspect: side-effects
+              body: |
+                "Removed (best effort)" because both removals ignore their own result (`let _ =`).
+                If one fails, a `.ono-recovery.*.staging` file stays behind. The next attempt
+                removes it first (236), and `is_staging` keeps it out of the extra-file handling.
+            - aspect: mutation
+              body: |
+                `report` is changed in `write_staged` (through `apply_metadata`, which may add gaps
+                even when the write then fails) and at line 248 on success only.
+          guarantees: |
+            Every error message states that the original is untouched, and the order of calls
+            makes that true: nothing before `rename` writes to the destination.
+          semantics: |
+            An early `return` or `?` skips line 248, so `restored` lists only destinations that
+            were actually replaced.
+          interpretation: |
+            The metadata gaps recorded before a failed write are still reported by the caller.
+            The code does not remove them on the error path. That is observable behaviour, and
+            the source gives no stated intent for it.

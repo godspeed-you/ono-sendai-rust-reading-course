@@ -1,0 +1,6 @@
+course:
+  version: 0.9.0
+ono_sendai:
+  repository: https://github.com/godspeed-you/ono-sendai
+  commit: 0123456789abcdef0123456789abcdef01234567
+  version: v0.1.0

@@ -1,0 +1,59 @@
+id: c13-flow
+source:
+  file: crates/ono-cli/src/eval/mod.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 34
+  end_line: 59
+  anchor: impl From<ErrorValue> for Flow {
+  content_hash: sha256:c03f73584907f1e8faa0c1f85692c0d9d62052d479c7e720c55a21e95e064bd3
+  code: |
+    /// Why evaluation of a statement stopped early.
+    #[derive(Debug)]
+    pub enum Flow {
+        /// A structured error, to be reported and to set a failing status.
+        Failed(ErrorValue),
+        /// A structured error whose status is already known — an external command that could not be
+        /// started reports both, and ADR-0008 requires its own status to be the one that survives.
+        FailedWith(ErrorValue, ExitStatus),
+        /// `break` inside a loop.
+        Break,
+        /// `continue` inside a loop.
+        Continue,
+        /// `return` from a function body, carrying its value.
+        Return(Value),
+        /// `exit`, which unwinds to the top without ending the process abruptly.
+        Exit(ExitStatus),
+    }
+
+    impl From<ErrorValue> for Flow {
+        fn from(error: ErrorValue) -> Self {
+            Flow::Failed(error)
+        }
+    }
+
+    /// The result of evaluating something that can fail or jump.
+    pub type Eval<T> = Result<T, Flow>;
+- start_line: 73
+  end_line: 90
+  anchor: Err(Flow::Exit(status)) => {
+  content_hash: sha256:8e74470599dcfcde5e10dab9db3c4dbe791537038cd456aeb618709bdc6ef6f8
+  code: |2
+            match run_statement(session, statement, source) {
+                Ok(status) => session.set_status(status),
+                Err(Flow::Failed(error)) => {
+                    report(&error);
+                    session.set_status(status_for(&error));
+                }
+                Err(Flow::FailedWith(error, status)) => {
+                    report(&error);
+                    session.set_status(status);
+                }
+                Err(Flow::Exit(status)) => {
+                    session.leave(status);
+                    return status;
+                }
+                // A jump outside any construct that could catch it ends the program quietly, which
+                // is what a `return` at the top level of a script means.
+                Err(Flow::Return(_) | Flow::Break | Flow::Continue) => return session.status(),
+            }

@@ -1,0 +1,36 @@
+id: c15-session-publish-env
+source:
+  file: crates/ono-cli/src/session.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1438
+  end_line: 1442
+  anchor: std::sync::Arc::clone(&self.environment.env_provider),
+  content_hash: sha256:eace4675bf90e977e9ab843bf920af1a9831d4ee6934fe46bb1b51cf20e6eac0
+  code: |2
+                let mut registry = crate::providers::registry_with_tables(
+                    environment,
+                    std::sync::Arc::clone(&self.jobs.tables),
+                    std::sync::Arc::clone(&self.environment.env_provider),
+                );
+- start_line: 1508
+  end_line: 1523
+  anchor: pub fn publish_env(&self) {
+  content_hash: sha256:a1bcc28c379c02ed929753a58387758d6a929e3c454cb8dc87f4d7556f7310af
+  code: |2
+        /// Hands the `env` provider what the session holds now, so `get env` answers for this
+        /// session rather than for the environment the shell was started with.
+        pub fn publish_env(&self) {
+            self.environment
+                .env_provider
+                .publish(self.environment.env.iter().map(|(name, value)| {
+                    let inherited = self.environment.inherited_env.get(name) == Some(value);
+                    let name = name.to_string_lossy();
+                    let value = value.to_string_lossy();
+                    if inherited {
+                        ono_provider_linux::EnvBinding::inherited(name, value)
+                    } else {
+                        ono_provider_linux::EnvBinding::shell(name, value, true)
+                    }
+                }));
+        }

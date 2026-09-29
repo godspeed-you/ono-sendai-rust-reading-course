@@ -1,0 +1,67 @@
+id: c10-minimal-provider
+source:
+  file: crates/ono-provider-api/tests/contract.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 591
+  end_line: 621
+  anchor: struct MinimalProvider;
+  content_hash: sha256:e167f928452eafcf7c24fb5a4ec1b9b5e939db360739a93cfc18de3212cf097f
+  code: |
+    /// A provider that overrides nothing beyond the four required methods.
+    ///
+    /// It exists so the *defaults* of the trait can be exercised as a contract rather than assumed:
+    /// a provider author who implements the minimum must still refuse a historical query honestly.
+    #[derive(Debug)]
+    struct MinimalProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for MinimalProvider {
+        fn id(&self) -> &str {
+            "test.minimal"
+        }
+        fn targets(&self) -> &[&str] {
+            &["gadget"]
+        }
+        fn schemas(&self) -> Vec<Arc<Schema>> {
+            Vec::new()
+        }
+        fn capabilities(&self) -> Vec<Capability> {
+            Vec::new()
+        }
+        fn snapshot(&self, _query: &Query) -> Result<ono_pipeline::ValueStream, ono_value::ErrorValue> {
+            Ok(ono_pipeline::ValueStream::from_values([]))
+        }
+        async fn resolve(
+            &self,
+            _selector: &Selector,
+        ) -> Result<Vec<ono_provider_api::ObjectRef>, ono_value::ErrorValue> {
+            Ok(Vec::new())
+        }
+    }
+- start_line: 623
+  end_line: 628
+  anchor: let claims = MinimalProvider.temporal();
+  content_hash: sha256:0099565cdd0aff994780095676ddc086ec13abdc453979ee46024f0421145f23
+  code: |
+    #[tokio::test]
+    async fn should_claim_nothing_about_time_when_a_provider_says_nothing() {
+        // §21.1 and §7.4: silence is not coverage. A provider that never thought about the past must
+        // not have a capability inferred for it, because the whole ledger reasons from these claims.
+        let claims = MinimalProvider.temporal();
+        assert_eq!(claims, TemporalCapabilities::none());
+- start_line: 638
+  end_line: 647
+  anchor: registry.register(Arc::new(MinimalProvider));
+  content_hash: sha256:56e1121a3b527c1bb085da5e199eb6f7cb695a870452488dad8208e78eb0d408
+  code: |
+    #[tokio::test]
+    async fn should_refuse_a_historical_query_when_the_source_keeps_no_history() {
+        // §21.4: a source that cannot answer about the past says so, so the shell can look for the
+        // answer where it was recorded instead of presenting now as then.
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(MinimalProvider));
+        let error = registry
+            .history(&Query::target("gadget"), &TimeWindow::unbounded())
+            .expect_err("a snapshot source must refuse a question about the past");
+        assert_eq!(error.code(), ErrorCode::TemporalUnsupportedSource);

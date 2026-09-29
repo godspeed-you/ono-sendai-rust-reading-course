@@ -1,0 +1,24 @@
+id: c10-clock-test
+source:
+  file: crates/ono-provider-linux/tests/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 152
+  end_line: 158
+  anchor: .with_clock(Arc::clone(&clock) as Arc<dyn ono_provider_linux::Clock>);
+  content_hash: sha256:ab61c1cefcf5a3b3c7a89b69d3742bebfb9c84b6f149ae3ad4c3fb361b59ff75
+  code: |
+    #[tokio::test]
+    async fn should_report_the_rate_since_the_previous_observation_once_there_is_one() {
+        let fixture = ProcFixture::new();
+        let clock = TestClock::new();
+        let provider = ProcessProvider::rooted(fixture.root())
+            .with_accounts(accounts())
+            .with_clock(Arc::clone(&clock) as Arc<dyn ono_provider_linux::Clock>);
+- start_line: 181
+  end_line: 182
+  anchor: clock.advance(Duration::from_millis(500));
+  content_hash: sha256:bb5cc9e0cbf20c6489d8a953e382edd73d653fbf20daa79f6bdaaf809b4bdd2b
+  code: |2
+        // Half a second of wall clock, during which the process used a quarter of a second of CPU.
+        clock.advance(Duration::from_millis(500));

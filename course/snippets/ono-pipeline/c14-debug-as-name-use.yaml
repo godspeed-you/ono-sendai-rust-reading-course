@@ -1,0 +1,11 @@
+id: c14-debug-as-name-use
+source:
+  file: crates/ono-pipeline/src/transforms/slice.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 211
+  end_line: 211
+  anchor: debug_as_name!(Take, Skip, Tail, First, Last);
+  content_hash: sha256:29a76abf13fc90a9eda1b244cd66634c8bbad2098aeaa4443d4454ab82f3dddf
+  code: |
+    crate::transform::debug_as_name!(Take, Skip, Tail, First, Last);

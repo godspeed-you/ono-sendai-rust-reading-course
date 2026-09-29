@@ -1,0 +1,26 @@
+id: c06-bytesize-parse
+source:
+  file: crates/ono-value/src/units.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 151
+  end_line: 166
+  anchor: if number.starts_with('-') {
+  content_hash: sha256:89f164b30e758fb6b7b33163da0caba380afd3d1b4c3792afadabd53520dcd3f
+  code: |2
+        /// Parses a literal such as `128B`, `64KiB` or `3.5GiB`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::TypeInvalidUnit`] if the number, the suffix or the sign is not one a
+        /// byte size can carry.
+        pub fn parse(text: &str) -> Result<Self, ErrorValue> {
+            let (number, suffix) = split_literal(text).ok_or_else(|| unit_error(text, "byte size"))?;
+            let unit = ByteUnit::from_suffix(suffix).ok_or_else(|| unit_error(text, "byte size"))?;
+            if number.starts_with('-') {
+                return Err(unit_error(text, "byte size"));
+            }
+            scale_to_base(number, unit.factor())
+                .map(|bytes| Self(bytes.unsigned_abs()))
+                .ok_or_else(|| unit_error(text, "byte size"))
+        }

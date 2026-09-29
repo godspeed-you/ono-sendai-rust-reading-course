@@ -1,0 +1,74 @@
+id: c18-repl-loop
+source:
+  file: crates/ono-cli/src/repl.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 410
+  end_line: 453
+  anchor: let status = run_source(session, &line, reporter);
+  content_hash: sha256:0ff906aff40a1abc63c04c5f0e7d7ada5ea30a7d7c208a721c1d188bd371abb6
+  code: |2
+        loop {
+            editor.set_prompt(prompt_of(session));
+            let asking = cursor_reports && !first_prompt;
+            let mut answered = asking;
+            let read = read_line(
+                &mut editor,
+                &mut renderer,
+                &theme,
+                presentation,
+                &mut answered,
+            );
+            if asking {
+                cursor_reports = answered;
+            }
+            first_prompt = false;
+            let line = match read {
+                Some(line) => line,
+                None => break,
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let started = std::time::Instant::now();
+            let _ = session.take_adaptations();
+            let status = run_source(session, &line, reporter);
+            let (adapters, plans): (Vec<String>, Vec<String>) =
+                session.take_adaptations().into_iter().unzip();
+
+            if let Some(history) = history.as_mut() {
+                history.record(
+                    &line,
+                    session.cwd(),
+                    HistoryOutcome::new(status, started.elapsed()).adapted_by(adapters, plans),
+                );
+                let _ = history.flush();
+                editor.push_history(line.clone());
+            }
+
+            if let Some(status) = session.leaving() {
+                return status;
+            }
+            let _ = session.executor().poll_jobs();
+        }
+- start_line: 811
+  end_line: 825
+  anchor: let parsed = ono_parser::parse(source);
+  content_hash: sha256:f75ebfb3c921e3348faadbc8d02843de3c1f733d418455e1599a3695825e28f1
+  code: |
+    /// Parses and runs one piece of source, reporting anything that goes wrong.
+    pub fn run_source(session: &mut Session, source: &str, reporter: &Reporter) -> ExitStatus {
+        let parsed = ono_parser::parse(source);
+        if parsed.has_errors() || !parsed.is_complete() {
+            for diagnostic in parsed.diagnostics() {
+                reporter.diagnostic(source, diagnostic);
+            }
+            let status = ExitStatus::USAGE;
+            session.set_status(status);
+            return status;
+        }
+
+        let mut report = |error: &ono_value::ErrorValue| reporter.error(error);
+        crate::eval::run_program(session, parsed.program(), source, &mut report)
+    }

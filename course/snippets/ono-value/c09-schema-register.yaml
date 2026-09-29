@@ -1,0 +1,36 @@
+id: c09-schema-register
+source:
+  file: crates/ono-value/src/schema.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 695
+  end_line: 720
+  anchor: self.schemas.insert(id, Arc::clone(&handle));
+  content_hash: sha256:a2c700800b201f5eec09c26af27725a0941d0e3ed27afb3bce84bbd97e47fdc7
+  code: |2
+        /// Registers a schema, returning the shared handle callers should keep.
+        ///
+        /// Registering the identical schema twice is accepted, so two independent providers may both
+        /// declare a schema they share.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`ErrorCode::ResolveAmbiguous`] if a different schema already claims the id.
+        pub fn register(&mut self, schema: Schema) -> Result<Arc<Schema>, ErrorValue> {
+            if let Some(existing) = self.schemas.get(&schema.id) {
+                if **existing == schema {
+                    return Ok(Arc::clone(existing));
+                }
+                return Err(ErrorValue::new(
+                    ErrorCode::ResolveAmbiguous,
+                    format!(
+                        "{} is already registered as a different contract",
+                        schema.id
+                    ),
+                ));
+            }
+            let id = schema.id.clone();
+            let handle = Arc::new(schema);
+            self.schemas.insert(id, Arc::clone(&handle));
+            Ok(handle)
+        }

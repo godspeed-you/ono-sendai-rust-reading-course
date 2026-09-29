@@ -1,0 +1,16 @@
+id: c02-take-cells-test
+source:
+  file: crates/ono-render/src/table.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 764
+  end_line: 769
+  anchor: assert_eq!(take_cells("日", 1), "");
+  content_hash: sha256:f5548f229efac10624b12a347ff51103e70ba86270a84c336847b0676bbb7045
+  code: |2
+        #[test]
+        fn should_drop_a_character_that_would_straddle_the_limit_when_taking_cells() {
+            // A wide character in a one-cell budget cannot be half-printed.
+            assert_eq!(take_cells("日", 1), "");
+            assert_eq!(take_cells("日", 2), "日");
+        }

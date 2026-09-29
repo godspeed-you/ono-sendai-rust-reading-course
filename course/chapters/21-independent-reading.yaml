@@ -1,0 +1,304 @@
+id: independent-reading
+number: 21
+title: Independent reading
+summary: |
+  This chapter has no hints, no solutions and no multiple choice. That is deliberate. It is the
+  point of the chapter, not a missing feature.
+
+  Each lesson gives you a region of Ono-Sendai the course has never shown, harder than the code
+  of [chapter 20](chapter:unseen-with-solutions): 150 to 250 lines, sometimes across two files.
+  The orientation tells you only where you are and why someone might read this code. It does not
+  tell you how the code works. Then comes the code, and one reading exercise with the
+  independent-reading checklist.
+
+  **You decide when your understanding is sufficient.** Work through the checklist. If a box
+  cannot honestly be ticked, go back to the code, or open the file in the repository and read
+  what surrounds it. The notes you write in the scratchpad are private to your browser. Nobody
+  grades them, and the course cannot tell whether they are right. That is exactly the situation
+  you will be in with any real codebase, and it is what this chapter practises.
+
+  The five regions are the link protocol's stream multiplexing, starting a child process between
+  `fork` and `exec`, an incremental output decoder, a kernel change watcher, and the context
+  frames behind `enter`. The last lesson ends the course.
+lessons:
+  - id: independent-reading-01
+    title: Many streams over one connection
+    stage: independent
+    summary: Read how a link hands each remote stream its own queue and credit, and how the reader task routes frames to them.
+    prerequisites: [tasks-channels-01, unseen-with-solutions-01, tasks-channels-02]
+    concepts: [channels, tasks, shared-ownership, interior-mutability, select-cancellation]
+    ono_topics: [remote-protocol, async-execution, cancellation]
+    objectives:
+      - Read a multi-part concurrent subsystem without a worked solution.
+      - Decide for yourself when the independent-reading checklist is satisfied.
+    sections:
+      - type: prose
+        kind: note
+        title: There is no solution here, on purpose
+        body: |
+          From this lesson on, the course gives no hints and no answers. There is no hidden
+          "correct answer" to reveal, and none will appear after you finish. This is the last
+          stage of the progression you have been following since chapter 1. Support has been
+          taken away one layer at a time, and now it is gone.
+
+          Use the checklist attached to the exercise. It asks the questions every earlier worked
+          solution answered, but you answer them yourself. When you can tick each item honestly,
+          or can say precisely which source you would read next to tick it, you are done. Your
+          scratchpad notes stay in your browser and are never graded.
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-protocol`. File: `crates/ono-protocol/src/link.rs`.
+
+          You read the bottom layer of the link in
+          [the frame decoder](lesson:unseen-with-solutions-01). This is the layer above it. One
+          connection between two shells carries many remote queries at once, each identified by
+          a stream id. A reader looks here to learn what happens when one remote query produces
+          faster than its consumer reads, when a consumer stops reading or is dropped, and what
+          the local side does when the peer misbehaves.
+
+          The first snippet contains the module doc, the shared state of a link and three of its
+          small methods. The second contains the per-stream handle and the task that reads
+          frames. `ValueStream`, `EventStream`, `StreamSink` and [`CancelToken`](glossary:cancel-token) are the pipeline
+          types from [the tasks and channels chapter](chapter:tasks-channels).
+          `FrameSink::send` queues a frame for the link's writer task.
+      - type: code
+        snippet: c21-link-inner
+        caption: |
+          `crates/ono-protocol/src/link.rs`, shortened: module doc, `Inbound`, `Registered`,
+          `LinkInner`, and three of its methods.
+      - type: code
+        snippet: c21-remote-stream
+        caption: |
+          `crates/ono-protocol/src/link.rs`, shortened: `RemoteStream` (without
+          `into_event_stream`), its `Drop` impl, and `spawn_reader`.
+      - type: exercise
+        id: independent-reading-01-q1
+        exercise_type: read-subsystem
+        prompt: |
+          Read both snippets as one subsystem. Build your own account of how a message sent by
+          the remote peer on one stream reaches a local consumer. Cover how the number of
+          messages in flight is bounded, what happens when the consumer stops, and what happens
+          when the peer breaks the protocol. Work through the checklist. If something depends on
+          code that is not shown, name the symbol and the file you would open next.
+        snippets: [c21-link-inner, c21-remote-stream]
+        checklist: independent-reading
+  - id: independent-reading-02
+    title: Between fork and exec
+    stage: independent
+    summary: Read how Ono-Sendai starts an external program in the right process group, with the right descriptors and terminal.
+    prerequisites: [execution-path-01]
+    concepts: [attributes, closures, option, result, moves]
+    ono_topics: [process-execution, system-integration]
+    objectives:
+      - Read code that relies on operating-system semantics the course did not teach.
+      - Use the source's own safety comments and project documents as reading aids.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-process`. File: `crates/ono-process/src/spawn.rs`.
+
+          When you run an external program such as `ls` or `vim`, a shell has to start it in a
+          way that job control can later manage: stopping it with Ctrl-Z, putting it in the
+          background, giving it the terminal. This file is where `ono-process` turns a prepared
+          request into a running child. A reader looks here to learn which of those decisions
+          are made in the parent and which only in the child.
+
+          This code contains `unsafe` blocks, which the course did not teach in depth. Each one
+          carries a `SAFETY` comment, and reading those comments is part of the exercise.
+          ADR-0007 in the repository's `docs/adr` directory is the project's decision record
+          about this file. The Unix system calls named here are documented in the manual pages
+          of your system (for example `man 2 setsid`, `man 2 dup2`, `man 3 tcsetpgrp`).
+          `FdPlan::moves` returns a list of `(target, source)` descriptor pairs. `RESET_IN_CHILD`
+          is a list of signal numbers.
+      - type: code
+        snippet: c21-spawn-child
+        caption: |
+          `crates/ono-process/src/spawn.rs`, shortened: the module doc, `SpawnRequest`, `spawn`
+          and `child_setup`.
+      - type: exercise
+        id: independent-reading-02-q1
+        exercise_type: read-function
+        prompt: |
+          Read `spawn` and `child_setup` together. Establish for yourself which code runs in the
+          parent process, which runs in the child, and in what order. For every `unsafe` block,
+          decide what the `SAFETY` comment claims and what the code does to uphold the claim.
+          Work through the checklist. Where your answer depends on operating-system behaviour,
+          write down which manual page or document you would check.
+        snippets: [c21-spawn-child]
+        checklist: independent-reading
+  - id: independent-reading-03
+    title: Records as the bytes arrive
+    stage: independent
+    summary: Read the incremental decoder that turns an external program's output into typed records, borrowed or owned.
+    prerequisites: [borrowing-01, tasks-channels-01]
+    concepts: [lifetimes, ownership, collections, pattern-matching, result]
+    ono_topics: [adapters, records-schemas]
+    objectives:
+      - Read a type whose lifetime parameter can be either a borrow or `'static`.
+      - Follow buffered and streaming paths through one type without guidance.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-adapter`. File: `crates/ono-adapter/src/decode.rs`.
+
+          Ono-Sendai can run ordinary Unix tools through an *adapter*, a contract that says how
+          to invoke a tool and how to decode its output into records of a known schema. Output
+          arrives in chunks while the program runs. In the tasks and channels chapter you saw an
+          OS thread that reads a child's output and hands values to async code. The type in this
+          file is what such a reader calls. A reader looks here to learn when a record becomes
+          available, and what happens to output that does not decode.
+
+          The helpers `registered_schema`, `decode_line`, `record_separator`, `json_records`,
+          `line_records`, `property_records`, `build_record`, `decode_failed`, `violation` and
+          the four builtin decoders (`git_status_v2` and the others) are defined further down in
+          the same file. `AdapterPlan` lives in `crates/ono-adapter/src/registry.rs`.
+      - type: code
+        snippet: c21-adapter-decoding
+        caption: |
+          `crates/ono-adapter/src/decode.rs`, shortened: the module doc, the one-shot `decode`
+          function, `Held`, `Decoding` and its methods up to `finish`.
+      - type: exercise
+        id: independent-reading-03-q1
+        exercise_type: read-function
+        prompt: |
+          Read `Decoding` from its constructors to `finish`, and the free function `decode` that
+          uses it. Decide what `'a` means in each of the two constructors, what `feed` and
+          `finish` each return for a streaming and for a buffering decoder, and what the buffer
+          holds between calls. Work through the checklist. For any helper whose behaviour you
+          need, note where you would read it.
+        snippets: [c21-adapter-decoding]
+        checklist: independent-reading
+  - id: independent-reading-04
+    title: Watching the kernel for changes
+    stage: independent
+    summary: Read how `watch interface` turns kernel notifications into added, changed and removed events.
+    prerequisites: [tasks-channels-01, unseen-with-solutions-04]
+    concepts: [tasks, channels, send-sync, generics, collections]
+    ono_topics: [system-integration, providers, async-execution]
+    objectives:
+      - Read code that combines an OS thread, a Tokio task and blocking work.
+      - Determine by yourself how a long-running watcher stops.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-provider-netlink`. Files: `crates/ono-provider-netlink/src/provider.rs`
+          and `crates/ono-provider-netlink/src/transport.rs`.
+
+          `watch interface` and `watch route` keep printing events until you stop them. On
+          Linux, the kernel can notify a netlink socket that has joined *multicast groups* when
+          its tables change. You read the netlink message walk in
+          [an earlier lesson](lesson:unseen-with-solutions-04). A reader looks here to learn
+          what one kernel notification costs, how the events are dated, and what keeps the
+          watcher running or stops it.
+
+          The first snippet begins with the `subscribe` method of the interface provider, which
+          calls the generic function below it. `read_interfaces` performs one full dump of the
+          interface table and decodes it. `keep` (not shown) applies the query's filter to a
+          record. `ADR-0235` and `ADR-0717`, cited in the comments, are in the repository's
+          `docs/adr` directory.
+      - type: code
+        snippet: c21-netlink-watch
+        caption: |
+          `crates/ono-provider-netlink/src/provider.rs`, shortened: `subscribe` for interfaces,
+          then `REAP`, `subscribe_table`, `table`, `moved` and `wait_for_changes`.
+      - type: code
+        snippet: c21-netlink-drain
+        caption: |
+          `crates/ono-provider-netlink/src/transport.rs`: `NetlinkSocket::drain`.
+      - type: exercise
+        id: independent-reading-04-q1
+        exercise_type: read-subsystem
+        prompt: |
+          Read both snippets as one subsystem. Identify every thread and task involved, what each
+          one owns, and how they talk to each other. Follow one kernel notification from the
+          socket to the events the consumer receives. Determine what happens when the consumer
+          stops watching, and when a re-read of the table fails. Work through the checklist.
+        snippets: [c21-netlink-watch, c21-netlink-drain]
+        checklist: independent-reading
+  - id: independent-reading-05
+    title: What entering a context changes
+    stage: independent
+    summary: Read how a context frame such as `enter process 1` fills in arguments for later commands, then leave the course.
+    prerequisites: [execution-path-01, provider-boundary-01]
+    concepts: [option, iterators, closures, code-navigation]
+    ono_topics: [spatial-context, command-dispatch, providers]
+    objectives:
+      - Read a function that the execution-path chapter allowed you to skip.
+      - Leave the course with a concrete plan for reading Ono-Sendai on your own.
+    sections:
+      - type: prose
+        kind: context
+        title: Orientation
+        body: |
+          Crate: `ono-command`. File: `crates/ono-command/src/narrow.rs`.
+
+          In Ono-Sendai you can `enter process 1` or `enter user root`, and later commands behave
+          as if you had typed more. The module doc gives examples. When you followed
+          `get process | where cpu > 20` through [the execution path](chapter:execution-path),
+          `CommandTable::run` in `crates/ono-command/src/invoke.rs` called
+          `crate::narrow::narrow` before the implementation ran. With no context entered, that
+          call changes nothing, so it could be skipped then. This is that call. A reader looks
+          here to learn exactly which arguments a context adds, and when a command refuses to
+          run inside a context.
+
+          `BoundArguments` (in `bind.rs`) is the set of arguments the user wrote, already
+          checked against the command's contract. `ContextFrame` (in `invoke.rs`) is one entry
+          of the context stack. ADR-0023 and ADR-0076 are the decision records cited in the doc.
+      - type: code
+        snippet: c21-context-narrow
+        caption: |
+          `crates/ono-command/src/narrow.rs`, shortened: the module doc, `narrow`, `contribute`,
+          `identity_fields` and `cannot_narrow`. The `spelling` function between them, which
+          `explain` uses, and its helper `text_of` are omitted.
+      - type: exercise
+        id: independent-reading-05-q1
+        exercise_type: read-function
+        prompt: |
+          Read `narrow` and `contribute`. Work out, for a command whose target is the same as the
+          frame's target and for one whose target is different, which ways of narrowing are tried
+          and in which order, and what happens when several frames are on the stack. Then pick
+          one command, for example `get process` inside `enter user root`, and follow it through
+          by hand. Work through the checklist. Where a decision depends on a contract or a
+          schema, name the file under `docs/contracts` or the symbol you would inspect.
+        snippets: [c21-context-narrow]
+        checklist: independent-reading
+      - type: prose
+        kind: recap
+        title: Where to go from here
+        body: |
+          This is the last exercise of the course. Nothing is waiting behind it.
+
+          Over twenty-one chapters, the help has been taken away one layer at a time. First the
+          annotations went, then the second hints, then the solutions, and in this chapter the
+          hints too. What remains is what you bring to any Rust codebase: a way of reading. Look
+          at signatures before bodies. Ask who owns what. Find the failure paths. Find the trait
+          boundaries. Find where async code can suspend. Find the side effects. Separate what
+          the code guarantees from what you infer about its design.
+
+          To keep going in the Ono-Sendai repository:
+
+          - Start from the decisions. The directory docs/adr holds more than six hundred
+            architecture decision records. When a comment cites an ADR number, open it. It
+            usually states the reason the code does not.
+          - Read the contracts. docs/contracts describes commands, providers, adapters and error
+            codes as data. When code consults a contract, the matching file there tells you what
+            it will find.
+          - Use the tests. Nearly every crate has a tests directory. A test names a behaviour, sets up
+            its inputs and asserts the outcome. It is often the fastest way to learn what an
+            unfamiliar function is for.
+          - Pick one crate and read it with the checklist. A small one such as ono-history or
+            ono-core first, then one of the regions from these last two chapters, in full: start
+            at its lib.rs, read the module docs, follow one public function to the bottom, and
+            tick the checklist honestly.
+          - When you are stuck, stop explaining and trace. Find the call sites of a symbol, read
+            one caller, then come back.
+
+          You do not need this course anymore. Open Ono-Sendai.

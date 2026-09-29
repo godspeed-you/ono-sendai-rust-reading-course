@@ -1,0 +1,68 @@
+id: c18-where-apply
+source:
+  file: crates/ono-pipeline/src/transforms/filter.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 8
+  end_line: 23
+  anchor: So `get process | where cpu > 20` does not report
+  content_hash: sha256:f51dccef358cd47980ae73b29bb46e423181de6e4fa5935f8d78548d4bbd03cb
+  code: |
+    /// Filters a stream by a predicate.
+    ///
+    /// ADR-0014 fixes the four outcomes, and this transform implements exactly them:
+    ///
+    /// | predicate | outcome |
+    /// |---|---|
+    /// | `true` | the value is kept |
+    /// | `false` | the value is dropped |
+    /// | `null` | the value is dropped and counted as excluded-unknown |
+    /// | an `Error` | the value is dropped and the failure is reported with the value's identity |
+    ///
+    /// So `get process | where cpu > 20` does not report a process whose CPU is unknown, and it
+    /// never silently reads "I am not allowed to see this" as "this is below 20".
+    pub struct Where {
+        predicate: Box<dyn Predicate>,
+    }
+- start_line: 50
+  end_line: 86
+  anchor: Value::Null => sink.diagnostics().record_excluded_unknown(),
+  content_hash: sha256:fcb6ebc6786ca8921663b5932f89e4f9655691e03f9209a0b8e0b0cadffb58db
+  code: |
+    impl Transform for Where {
+        fn name(&self) -> &'static str {
+            "where"
+        }
+
+        fn apply(self: Box<Self>, input: ValueStream) -> ValueStream {
+            // `where` yields as it reads, so its output ends exactly when its input does (spec §11.1).
+            let boundedness = input.boundedness();
+            input.stage(boundedness, move |mut input, sink| async move {
+                while let Some(value) = input.next_value(&sink).await {
+                    match self.predicate.test(&value) {
+                        Value::Bool(true) => {
+                            if sink.send(value).await.is_err() {
+                                return;
+                            }
+                        }
+                        Value::Bool(false) => {}
+                        Value::Null => sink.diagnostics().record_excluded_unknown(),
+                        Value::Error(error) => {
+                            if sink
+                                .fail(with_identity((*error).clone(), &value))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        other => {
+                            if report_non_boolean(&sink, &other, &value).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            })
+        }
+    }

@@ -1,0 +1,24 @@
+id: c11-group-new
+source:
+  file: crates/ono-pipeline/src/transforms/group.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 19
+  end_line: 32
+  anchor: 'key: Box<dyn KeyFn>,'
+  content_hash: sha256:ff641e7260ce21ec46499734a4b75ac3ab7b8da566dbdf28db6f06ade1355bb6
+  code: |
+    pub struct Group {
+        key: Box<dyn KeyFn>,
+        window: Option<Window>,
+    }
+
+    impl Group {
+        /// Groups by `key`.
+        #[must_use]
+        pub fn new(key: impl KeyFn) -> Self {
+            Self {
+                key: Box::new(key),
+                window: None,
+            }
+        }

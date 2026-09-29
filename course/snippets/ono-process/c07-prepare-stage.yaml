@@ -1,0 +1,48 @@
+id: c07-prepare-stage
+source:
+  file: crates/ono-process/src/executor.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 493
+  end_line: 530
+  anchor: drop(piped_input);
+  content_hash: sha256:5580ce83e7be2dd2284ef484185ddb1e459b78f319c6e4f92e696833ede9b80a
+  code: |2
+        /// Resolves a stage and opens its redirections, without spawning anything.
+        fn prepare_stage(
+            &mut self,
+            command: &Command,
+            piped_input: Option<OwnedFd>,
+            piped_output: Option<OwnedFd>,
+        ) -> std::result::Result<ReadyStage, (ExitStatus, Error)> {
+            let env = command.resolved_env();
+            let path = resolve::effective_path(env.as_deref(), command.clears_env());
+            let resolved = resolve::resolve(command.program(), path.as_deref(), command.directory());
+            let program = match resolved {
+                Resolution::Found(program) => program,
+                other => {
+                    // Dropping the pipe ends here means the stages around this one see a clean end of
+                    // input rather than a hang — though none of them will be spawned at all.
+                    drop(piped_input);
+                    drop(piped_output);
+                    return Err(other.failure().unwrap_or((
+                        ExitStatus::NOT_FOUND,
+                        Error::new(
+                            ono_core::ErrorCode::ResolveCommandNotFound,
+                            "command not found",
+                        ),
+                    )));
+                }
+            };
+
+            let io = plan::prepare(command, piped_input, piped_output)
+                .map_err(|error| (ExitStatus::FAILURE, error))?;
+
+            Ok(ReadyStage {
+                program,
+                args: command.args_slice().to_vec(),
+                env,
+                clear_env: command.clears_env(),
+                cwd: command.directory().map(std::path::Path::to_path_buf),
+                io,
+            })

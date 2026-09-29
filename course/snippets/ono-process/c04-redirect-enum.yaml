@@ -1,0 +1,39 @@
+id: c04-redirect-enum
+source:
+  file: crates/ono-process/src/command.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 56
+  end_line: 71
+  anchor: pub enum Redirect {
+  content_hash: sha256:ddeef1526a3785104d4fcf307c968391100a157a3e492d21437e1fbb9b4c427c
+  code: |
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Redirect {
+        /// `N< path` — open `path` for reading on descriptor `fd`.
+        Read {
+            /// The descriptor being redirected.
+            fd: Fd,
+            /// The file to read.
+            path: PathBuf,
+        },
+        /// `N> path` — open `path` for writing on descriptor `fd`, truncating it.
+        Write {
+            /// The descriptor being redirected.
+            fd: Fd,
+            /// The file to write.
+            path: PathBuf,
+        },
+- start_line: 79
+  end_line: 86
+  anchor: Duplicate {
+  content_hash: sha256:cdfdbc8945afecbbf5477a92db8a7ce7011c3e8d09e481d7710bd1a58e57a301
+  code: |2
+        /// `N>&M` and `N<&M` — make descriptor `fd` a copy of descriptor `from`.
+        Duplicate {
+            /// The descriptor being redirected.
+            fd: Fd,
+            /// The descriptor it becomes a copy of.
+            from: Fd,
+        },
+    }

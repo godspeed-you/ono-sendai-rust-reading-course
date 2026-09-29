@@ -1,0 +1,131 @@
+id: c19-process-snapshot
+source:
+  file: crates/ono-provider-linux/src/process.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 989
+  end_line: 1109
+  anchor: let population = (enumerating && query.selectors().is_empty()).then_some(pids.len());
+  content_hash: sha256:8920db6d7948039af9f096f5a3d0e039f79aba3009cdb4adbc4481a4b5ee4b82
+  code: |2
+        fn snapshot(&self, query: &Query) -> Result<ValueStream, ErrorValue> {
+            let schema = schemas::require(&schemas::process_id())?;
+            // `inspect process` asks for the detail view (spec §33.1): the same enumeration, each
+            // process read closer (ADR-0091).
+            let detail = query
+                .flag("detail")
+                .then(|| schemas::require(&schemas::process_detail_id()))
+                .transpose()?;
+            let reader = self.reader.refreshed();
+            let pinned = Self::pinned_pid(query);
+            let pids = match pinned {
+                Some(pid) => vec![pid],
+                None => reader.pids()?,
+            };
+            let enumerating = pinned.is_none();
+            let limit = query.max().unwrap_or(usize::MAX);
+            let tree = query.flag("tree");
+            // `--sample <duration>`: buy a rate over an interval the caller chose, by reading the CPU
+            // counters now and answering against them after the interval (ADR-0232).
+            let sample = match query.option_value("sample") {
+                Some(Value::Duration(interval)) if !interval.is_negative() => {
+                    Some(std::time::Duration::from_nanos(
+                        u64::try_from(interval.nanoseconds()).unwrap_or(u64::MAX),
+                    ))
+                }
+                Some(Value::Duration(interval)) => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`--sample` is an interval to wait, and {interval} runs backwards"),
+                    ));
+                }
+                Some(other) => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!("`--sample` is a duration, not {}", other.type_name()),
+                    ));
+                }
+                None => None,
+            };
+            // v0.4.1 §34.4: an orientation asks for a bounded view of the process table, and §2.17
+            // requires that the count it then shows be the real one. `/proc` has already been read
+            // for the pid list, so the population costs nothing — but only when nothing may refuse a
+            // pid afterwards, because the population is the count of what would have been *answered*
+            // (ADR-0576).
+            let population = (enumerating && query.selectors().is_empty()).then_some(pids.len());
+            let query = query.clone();
+            Ok(ValueStream::spawn(
+                PipelineConfig::new(),
+                Boundedness::Bounded,
+                move |sink| async move {
+                    if let Some(population) = population {
+                        sink.diagnostics()
+                            .record_population(population.try_into().unwrap_or(u64::MAX));
+                    }
+                    if let Some(interval) = sample {
+                        reader.sample_now(&pids);
+                        tokio::time::sleep(interval).await;
+                    }
+                    if tree {
+                        // `--tree` needs the whole table before the first root can be emitted: a
+                        // root is a process whose parent is not in the stream (ADR-0091 §3).
+                        let mut records = Vec::new();
+                        for pid in pids {
+                            match reader.read(pid, &schema).await {
+                                Ok(record) if understood_selectors_match(&query, &record) => {
+                                    records.push(record);
+                                }
+                                Ok(_) => {}
+                                Err(error) if error.code() == ErrorCode::IoNotFound => {}
+                                Err(error) => {
+                                    if sink.fail(error).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        for root in nest(records).into_iter().take(limit) {
+                            if sink.send(root).await.is_err() {
+                                return;
+                            }
+                        }
+                        return;
+                    }
+                    let mut sent = 0;
+                    for pid in pids {
+                        if sent >= limit {
+                            break;
+                        }
+                        let read = match &detail {
+                            Some(detail) => reader.read_detail(pid, &schema, detail).await,
+                            None => reader.read(pid, &schema).await,
+                        };
+                        match read {
+                            Ok(record) => {
+                                if !understood_selectors_match(&query, &record) {
+                                    continue;
+                                }
+                                if sink.send(record.into_value()).await.is_err() {
+                                    return;
+                                }
+                                sent += 1;
+                            }
+                            // A process that exits between the listing and the detail read is not
+                            // part of the answer: it no longer exists, and omitting something that
+                            // is not there is not the same as hiding a failure (ADR-0029). Every
+                            // other way a read can fail — a process that is there and cannot be
+                            // read — still lands on the error channel with its identity, and so
+                            // does a process the user named by pid, because that one is a target.
+                            Err(error) => {
+                                if enumerating && error.code() == ErrorCode::IoNotFound {
+                                    continue;
+                                }
+                                if sink.fail(error).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                },
+            ))
+        }

@@ -1,0 +1,39 @@
+id: c06-schema-validate
+source:
+  file: crates/ono-value/src/schema.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 516
+  end_line: 537
+  anchor: 'pub fn validate(&self, record: &RecordValue) -> Result<(), ErrorValue> {'
+  content_hash: sha256:78cc398d8170e7d486305270f905d5791de2ae8959b32695acc663db2a377c80
+  code: |2
+        pub fn validate(&self, record: &RecordValue) -> Result<(), ErrorValue> {
+            if record.schema_id() != &self.id {
+                return Err(self.violation(format!(
+                    "record claims schema {} but was checked against {}",
+                    record.schema_id(),
+                    self.id
+                )));
+            }
+            for (index, field) in self.fields.iter().enumerate() {
+                let value = record.field_at(index).unwrap_or(&Value::Null);
+                if matches!(value, Value::Error(_)) {
+                    continue;
+                }
+                if matches!(value, Value::Null) {
+                    if field.required || !field.nullable {
+                        return Err(self.violation(format!(
+                            "required field `{}` of {} is null",
+                            field.name, self.id
+                        )));
+                    }
+                    continue;
+                }
+- start_line: 556
+  end_line: 557
+  anchor: Ok(())
+  content_hash: sha256:83a3d0e7c8956c9fe8969d68e1b1f6678b4d4cc987520ada90c3a2894fae7167
+  code: |2
+            Ok(())
+        }

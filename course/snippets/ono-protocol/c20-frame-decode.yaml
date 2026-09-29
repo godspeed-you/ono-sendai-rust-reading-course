@@ -1,0 +1,91 @@
+id: c20-frame-decode
+source:
+  file: crates/ono-protocol/src/frame.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 1
+  end_line: 14
+  anchor: Twelve fixed bytes, big-endian
+  content_hash: sha256:c268b5fc4b9b78ceb54b1a2e7533dea436512c4b19e07fadb8c5b1f5bd8b4e8a
+  code: |
+    //! The frame a link puts on the wire (spec §21.2, §49: "bounded protocol frames and streams").
+    //!
+    //! # The shape
+    //!
+    //! ```text
+    //! 0        1        2        3        4                8                12
+    //! +--------+--------+--------+--------+----------------+----------------+
+    //! | version| kind   | flags  | rsvd   | stream id (u32)| length (u32)   |  payload…
+    //! +--------+--------+--------+--------+----------------+----------------+
+    //! ```
+    //!
+    //! Twelve fixed bytes, big-endian, then exactly `length` bytes of payload. Nothing about the
+    //! frame needs the payload to be understood, which is what lets a receiver route a frame for a
+    //! stream it is not decoding and refuse a frame it must not read.
+- start_line: 36
+  end_line: 37
+  anchor: 'pub const FRAME_HEADER_LEN: usize = 12;'
+  content_hash: sha256:8b998e517bc499d4b758fb51dfc84c8c4bd3e807f1afdd7470a457a92c0d2451
+  code: |
+    /// The number of bytes before a frame's payload.
+    pub const FRAME_HEADER_LEN: usize = 12;
+- start_line: 123
+  end_line: 127
+  anchor: 'pub fn from_u8(byte: u8)'
+  content_hash: sha256:00c38566e7b8157c8576f104fd15d046b10d6beabe391f48e088aee1ad3c7e83
+  code: |2
+        /// The kind a wire byte stands for, or `None` if this protocol defines none.
+        #[must_use]
+        pub fn from_u8(byte: u8) -> Option<Self> {
+            Self::ALL.iter().copied().find(|kind| kind.as_u8() == byte)
+        }
+- start_line: 255
+  end_line: 299
+  anchor: let payload = buffer.split_to(claimed).freeze();
+  content_hash: sha256:99c2ea1c902acf4f8e5edec0b72e4d4d33a0fc5e7b1f0c5c79b6f454fa3f7ad7
+  code: |
+    /// Takes the next whole frame out of `buffer`.
+    ///
+    /// Returns `Ok(None)` when the buffer does not yet hold a whole frame, leaving it untouched so
+    /// the next read can complete it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ProtocolError`] when the header is not one this build can read: an unknown framing
+    /// version, an unknown kind, an undefined flag, or a length beyond `limits`. **No allocation of
+    /// the claimed size happens before that check**, which is what makes a length field safe to read
+    /// from a machine you do not control (ADR-0015 T7).
+    pub fn decode(buffer: &mut BytesMut, limits: &Limits) -> Result<Option<Frame>, ProtocolError> {
+        let Some(header) = buffer.get(..FRAME_HEADER_LEN) else {
+            return Ok(None);
+        };
+        let version = header[0];
+        if version != FRAME_VERSION {
+            return Err(ProtocolError::UnsupportedFrameVersion { found: version });
+        }
+        let Some(kind) = FrameKind::from_u8(header[1]) else {
+            return Err(ProtocolError::UnknownFrameKind { kind: header[1] });
+        };
+        let flags = header[2] | header[3];
+        if flags != 0 {
+            return Err(ProtocolError::UnknownFrameFlags { flags });
+        }
+        let stream = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+        let claimed = u32::from_be_bytes([header[8], header[9], header[10], header[11]]) as usize;
+        if claimed > limits.max_frame_payload() {
+            return Err(ProtocolError::FrameTooLarge {
+                claimed,
+                limit: limits.max_frame_payload(),
+            });
+        }
+        if buffer.len() < FRAME_HEADER_LEN + claimed {
+            return Ok(None);
+        }
+        buffer.advance(FRAME_HEADER_LEN);
+        let payload = buffer.split_to(claimed).freeze();
+        Ok(Some(Frame {
+            kind,
+            stream,
+            payload,
+        }))
+    }

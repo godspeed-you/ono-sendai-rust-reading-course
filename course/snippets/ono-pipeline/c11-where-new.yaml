@@ -1,0 +1,37 @@
+id: c11-where-new
+source:
+  file: crates/ono-pipeline/src/transforms/filter.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 21
+  end_line: 47
+  anchor: 'predicate: Box<dyn Predicate>,'
+  content_hash: sha256:d3afadbd62376389defa210adc34f2207e9713ba296fe2c5230f7e36a37e6687
+  code: |
+    pub struct Where {
+        predicate: Box<dyn Predicate>,
+    }
+
+    impl Where {
+        /// Filters by `predicate`.
+        ///
+        /// ```
+        /// use ono_pipeline::{ValueStream, Where};
+        /// use ono_value::Value;
+        ///
+        /// let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        /// runtime.block_on(async {
+        ///     let collected = ValueStream::from_values([Value::Int(1), Value::Int(2)])
+        ///         .transform(Where::new(|value: &Value| Value::Bool(value == &Value::Int(2))))
+        ///         .unwrap()
+        ///         .collect()
+        ///         .await;
+        ///     assert_eq!(collected.values(), [Value::Int(2)]);
+        /// });
+        /// ```
+        #[must_use]
+        pub fn new(predicate: impl Predicate) -> Self {
+            Self {
+                predicate: Box::new(predicate),
+            }
+        }
