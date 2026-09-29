@@ -53,6 +53,17 @@ For every snippet segment the validator compares the recorded text with the chec
 Every non-matching snippet is listed with the lessons that show it ("affected lessons"). Line
 numbers are orientation only: identity is the SHA-256 of the exact text.
 
+A shortened snippet (several segments) only stores the lines it shows. When its segments are all
+found but shifted by different amounts, the report adds `omitted lines A-B changed (+N lines):
+review what the gap hides` — the code behind a `⋯ N lines omitted` row changed, so check that the
+omission still hides nothing the lesson's explanation depends on (spec §20). A change inside a gap
+that keeps its length is invisible to the tool; for shortened snippets, read
+`git diff <pinned>..<new> -- <file>` as well.
+
+Exit codes: `0` when every snippet matches or only moved, `1` when any snippet changed, is
+ambiguous or missing (or, for `validate --ono`, the checkout is not at the pinned commit), `2` for
+usage errors.
+
 ## Updating the Ono-Sendai pin (spec §22)
 
 Updating the pin is an explicit maintenance operation; nothing updates it automatically, and a
@@ -97,7 +108,9 @@ The course shows both versions in its footer and on the "About" page, and in
    `ono-sendai-rust-reading-course-v1.2.3.zip`, `….tar.gz` and `SHA256SUMS` to the GitHub
    release. The tag must equal `v` + `course.version`, or the release fails.
 
-Locally, `make package` produces the same archives in `release/`. Archives are deterministic:
+Locally, `make package` produces the same archives in `release/`. `package` refuses a `dist/`
+whose `course-metadata.json` names another course version or Ono-Sendai pin than
+`course-lock.yaml` — rebuild first. Archives are deterministic:
 sorted entries, fixed timestamps (`SOURCE_DATE_EPOCH` if set, else 1980-01-01), normalized
 permissions — building the same commit twice gives byte-identical files.
 

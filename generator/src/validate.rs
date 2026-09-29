@@ -81,6 +81,18 @@ fn check_md(course: &Course, diags: &mut Diagnostics, file: &str, ctx: &str, md:
     }
 }
 
+/// Titles and lesson summaries are plain text (they also appear in `<title>`, `<meta>` and the
+/// navigator), where only `code` spans are shown as code. A Markdown link there would be printed
+/// literally instead of linking, so it is an error rather than silently broken prose.
+fn check_plain(diags: &mut Diagnostics, file: &str, ctx: &str, text: &str) {
+    if text.contains("](") {
+        diags.error(
+            file,
+            format!("{ctx}: links are not supported in plain-text fields; link from the lesson's prose instead"),
+        );
+    }
+}
+
 fn validate_curriculum(course: &Course, diags: &mut Diagnostics) {
     let c = &course.curriculum;
     for (kind, list) in [("concept", &c.concepts), ("ono_topic", &c.ono_topics)] {
@@ -137,6 +149,12 @@ fn validate_curriculum(course: &Course, diags: &mut Diagnostics) {
                 ),
             );
         }
+        check_plain(
+            diags,
+            file,
+            &format!("chapter `{}` title", ch.id),
+            &ch.title,
+        );
         if ch.lessons.is_empty() {
             diags.error(file, format!("chapter `{}` has no lessons", ch.id));
         }
@@ -290,6 +308,9 @@ fn validate_lessons(course: &Course, diags: &mut Diagnostics) {
         }
         if lesson.summary.trim().is_empty() {
             diags.error(file, at("summary must not be empty"));
+        }
+        for (field, text) in [("title", &lesson.title), ("summary", &lesson.summary)] {
+            check_plain(diags, file, &at(field), text);
         }
         if lesson.objectives.is_empty() {
             diags.error(file, at("needs at least one objective"));

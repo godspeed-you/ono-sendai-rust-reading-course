@@ -193,9 +193,32 @@ pub fn compare(course: &Course, root: &Path) -> Vec<SnippetResult> {
             Ok(text) => {
                 let mut worst = Status::Match;
                 let mut details = Vec::new();
+                // Line offset of the previous located segment, to notice omitted lines that
+                // changed length between two segments that were both found (spec §20: the gap is
+                // shown as "⋯ N lines omitted", and what it hides may have changed).
+                let mut prev: Option<(u32, i64)> = None;
                 for seg in &s.segments {
+                    let location = snippet::locate(seg, &text);
+                    let offset = match location {
+                        Location::Exact => Some(0),
+                        Location::Moved { start_line } => {
+                            Some(i64::from(start_line) - i64::from(seg.start_line))
+                        }
+                        _ => None,
+                    };
+                    if let (Some((prev_end, prev_off)), Some(off)) = (prev, offset) {
+                        if off != prev_off {
+                            details.push(format!(
+                                "omitted lines {}-{} changed ({:+} lines): review what the gap hides",
+                                prev_end + 1,
+                                seg.start_line - 1,
+                                off - prev_off
+                            ));
+                        }
+                    }
+                    prev = offset.map(|o| (seg.end_line, o));
                     let range = format!("{}-{}", seg.start_line, seg.end_line);
-                    let (st, d) = match snippet::locate(seg, &text) {
+                    let (st, d) = match location {
                         Location::Exact => (Status::Match, format!("{range} ok")),
                         Location::Moved { start_line } => (
                             Status::Moved,

@@ -102,8 +102,12 @@ jobs:
       - name: Verify an extracted archive in a clean directory
         run: |
           version=${{ steps.meta.outputs.version }}
-          mkdir -p /tmp/extract
+          mkdir -p /tmp/extract /tmp/extract-zip
           tar -xzf "release/ono-sendai-rust-reading-course-v$version.tar.gz" -C /tmp/extract
+          unzip -q "release/ono-sendai-rust-reading-course-v$version.zip" -d /tmp/extract-zip
+          # Both archives unpack to the same tree, and that tree is exactly the checked dist/.
+          diff -r /tmp/extract /tmp/extract-zip
+          diff -r "/tmp/extract/ono-sendai-rust-reading-course-v$version" dist
           (cd release && sha256sum --check --strict SHA256SUMS)
           RRC_DIST="/tmp/extract/ono-sendai-rust-reading-course-v$version" npx playwright test --grep @smoke
 

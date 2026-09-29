@@ -460,11 +460,37 @@ pub struct Hint {
     pub body: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-#[serde(untagged)]
+/// A worked solution: a Markdown string, or the structured analysis of spec §11 as a mapping.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Solution {
     Text(String),
     Structured(StructuredSolution),
+}
+
+/// Deserialized by shape rather than `#[serde(untagged)]`, so a mistake inside a structured
+/// solution (a missing `semantics`, a misspelt aspect) is reported as exactly that instead of
+/// "data did not match any variant".
+impl<'de> Deserialize<'de> for Solution {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Solution;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a Markdown string or a structured solution mapping")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Solution, E> {
+                Ok(Solution::Text(v.to_string()))
+            }
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Solution, E> {
+                Ok(Solution::Text(v))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Solution, A::Error> {
+                StructuredSolution::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(Solution::Structured)
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

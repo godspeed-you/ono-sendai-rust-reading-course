@@ -60,7 +60,7 @@ lessons:
   - id: reading-rust-01              # kebab-case, unique across the course
     title: A crate's front door
     stage: guided                    # guided | assisted | practice | transfer | independent
-    summary: One sentence shown in navigation.
+    summary: One sentence shown in navigation.   # plain text, not Markdown: no links (titles too)
     prerequisites: []                # lesson ids; must exist and come earlier in course order
     concepts: [modules, visibility]  # ids from curriculum.yaml concepts (at least one)
     ono_topics: [value-model]        # ids from curriculum.yaml ono_topics (at least one)
@@ -229,6 +229,30 @@ A fenced ```` ```rust ```` block in prose is rendered with the label *"Illustrat
 Ono-Sendai source"*. Use it only for code you wrote (a minimal contrast, a hypothetical
 reordering). Never paste real Ono-Sendai code into prose — not even one line: extract it as a
 snippet so it is hash-validated and shown with its provenance.
+
+## Adding a lesson, step by step
+
+1. **Pick the code first.** Read the pinned Ono-Sendai checkout and choose a bounded, authentic
+   passage that fits the lesson's stage (short and approachable early; whole functions and
+   multi-file paths later). For `transfer` and `independent` lessons it must be code no earlier
+   lesson shows.
+2. **Extract it** with `scripts/course snippet add` (above). Never write or edit snippet YAML by
+   hand; to show less, use several `--lines`/`--anchor` pairs instead.
+3. **Write the lesson** in the chapter file, in course order: `id`, `title`, `stage` (never lower
+   than the lesson before it), `summary`, `prerequisites`, `concepts`, `ono_topics`,
+   `objectives`, then `sections` — typically `context` prose, the `code` section with annotations
+   (required in `guided` lessons), `rust`/`ono` prose, and one or more exercises.
+4. **Write the exercises** with the hints and solutions the stage allows (see *Stage policies*):
+   Hint 1 directs attention, Hint 2 gives a structural clue, and reading exercises from `practice`
+   on need the structured solution.
+5. **Link it**: add cross-links (`lesson:`, `concept:`, `topic:`, `glossary:`) and, where the lesson
+   is a good example of a term, add it to that term's `examples` in `glossary.yaml`.
+6. **Check it**: `scripts/course validate` (schema, references, stage policy, unseen code),
+   `scripts/course validate --ono ../ono-sendai` (snippets upstream), `scripts/course build`, then
+   open the lesson from `dist/` on a narrow and a wide window.
+
+A new chapter additionally needs its file listed in `curriculum.yaml` and a `number` equal to its
+position there.
 
 ## Stage policies
 

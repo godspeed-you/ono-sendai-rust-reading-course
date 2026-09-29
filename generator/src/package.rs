@@ -163,6 +163,54 @@ pub fn sha256_file(p: &Path) -> Result<String, String> {
     Ok(hex(&h.finalize()))
 }
 
+/// Check that `dist/course-metadata.json` was generated for `lock`: a site left over from an
+/// earlier version or another pin must not be packaged under the current version's name.
+pub fn check_metadata(dist: &Path, lock: &crate::model::CourseLock) -> Result<(), String> {
+    let path = dist.join(crate::paths::METADATA);
+    let text = fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {e}; run `scripts/course build` first", path.display()))?;
+    let meta: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let field = |a: &str, b: &str| meta[a][b].as_str().map(str::to_string);
+    let checks = [
+        (
+            "course.version",
+            field("course", "version"),
+            Some(lock.course.version.clone()),
+        ),
+        (
+            "ono_sendai.commit",
+            field("ono_sendai", "commit"),
+            Some(lock.ono_sendai.commit.clone()),
+        ),
+        (
+            "ono_sendai.version",
+            field("ono_sendai", "version"),
+            lock.ono_sendai.version.clone(),
+        ),
+    ];
+    let stale: Vec<String> = checks
+        .into_iter()
+        .filter(|(_, got, want)| got != want)
+        .map(|(name, got, want)| {
+            format!(
+                "{name} is {} in the site but {} in course-lock.yaml",
+                got.as_deref().unwrap_or("absent"),
+                want.as_deref().unwrap_or("absent")
+            )
+        })
+        .collect();
+    if stale.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} was not generated from the current course-lock.yaml ({}); run `scripts/course build` first",
+            dist.display(),
+            stale.join("; ")
+        ))
+    }
+}
+
 /// Package `dist` into `out_dir`. The site must already have passed the site checks.
 pub fn package(dist: &Path, out_dir: &Path, version: &str) -> Result<Packaged, String> {
     if !dist.join("index.html").is_file() {
@@ -269,6 +317,106 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let o = tempfile::tempdir().unwrap();
         assert!(package(d.path(), o.path(), "1.0.0").is_err());
+    }
+
+    #[test]
+    fn archives_have_one_top_folder_and_normalised_entries() {
+        let d = dist();
+        let o = tempfile::tempdir().unwrap();
+        let p = package(d.path(), o.path(), "1.2.3").unwrap();
+        let base = "ono-sendai-rust-reading-course-v1.2.3";
+        let f = fs::File::open(&p.tar_gz).unwrap();
+        let mut a = tar::Archive::new(flate2::read::GzDecoder::new(f));
+        let mut names = Vec::new();
+        for e in a.entries().unwrap() {
+            let e = e.unwrap();
+            let h = e.header();
+            let name = e.path().unwrap().to_string_lossy().to_string();
+            assert!(name.starts_with(&format!("{base}/")), "{name}");
+            assert_eq!(h.mtime().unwrap(), archive_epoch(), "{name}");
+            assert_eq!((h.uid().unwrap(), h.gid().unwrap()), (0, 0), "{name}");
+            let dir = h.entry_type().is_dir();
+            assert_eq!(h.mode().unwrap(), if dir { 0o755 } else { 0o644 }, "{name}");
+            names.push(name);
+        }
+        assert!(names.contains(&format!("{base}/index.html")), "{names:?}");
+        assert!(
+            names.contains(&format!("{base}/assets/course.css")),
+            "{names:?}"
+        );
+        let mut z = zip::ZipArchive::new(fs::File::open(&p.zip).unwrap()).unwrap();
+        let mut index = String::new();
+        z.by_name(&format!("{base}/index.html"))
+            .unwrap()
+            .read_to_string(&mut index)
+            .unwrap();
+        assert_eq!(index, "<!doctype html>");
+        // SHA256SUMS lists exactly what is on disk.
+        let sums = fs::read_to_string(&p.sums).unwrap();
+        for file in [&p.tar_gz, &p.zip] {
+            let name = file.file_name().unwrap().to_string_lossy();
+            assert!(
+                sums.contains(&format!("{}  {name}\n", sha256_file(file).unwrap())),
+                "{sums}"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_rejects_archives_that_differ() {
+        let d1 = dist();
+        let d2 = dist();
+        fs::write(d2.path().join("extra.html"), "x").unwrap();
+        let o = tempfile::tempdir().unwrap();
+        let base = base_name("1.0.0");
+        let zip = o.path().join("a.zip");
+        let tgz = o.path().join("a.tar.gz");
+        write_zip(d1.path(), &zip, &base, 0).unwrap();
+        write_tar_gz(d2.path(), &tgz, &base, 0).unwrap();
+        assert!(verify(&zip, &tgz, &base)
+            .unwrap_err()
+            .contains("different entries"));
+        write_tar_gz(d1.path(), &tgz, &base, 0).unwrap();
+        assert!(verify(&zip, &tgz, &base).is_ok());
+        assert!(verify(&zip, &tgz, "other-name")
+            .unwrap_err()
+            .contains("lacks other-name/index.html"));
+    }
+
+    fn lock(version: &str, commit: &str, ono: Option<&str>) -> crate::model::CourseLock {
+        crate::model::CourseLock {
+            course: crate::model::CourseVersion {
+                version: version.into(),
+            },
+            ono_sendai: crate::model::OnoPin {
+                repository: "https://example.invalid/ono".into(),
+                commit: commit.into(),
+                version: ono.map(str::to_string),
+            },
+        }
+    }
+
+    #[test]
+    fn metadata_must_match_the_lock() {
+        let d = dist();
+        let meta = r#"{"course":{"version":"1.2.3"},"ono_sendai":{"commit":"abc","version":"v1"}}"#;
+        fs::write(d.path().join("course-metadata.json"), meta).unwrap();
+        assert!(check_metadata(d.path(), &lock("1.2.3", "abc", Some("v1"))).is_ok());
+        let e = check_metadata(d.path(), &lock("1.2.4", "abc", Some("v1"))).unwrap_err();
+        assert!(
+            e.contains("course.version is 1.2.3 in the site but 1.2.4"),
+            "{e}"
+        );
+        let e = check_metadata(d.path(), &lock("1.2.3", "def", None)).unwrap_err();
+        assert!(e.contains("ono_sendai.commit is abc"), "{e}");
+        assert!(
+            e.contains("ono_sendai.version is v1 in the site but absent"),
+            "{e}"
+        );
+        let empty = tempfile::tempdir().unwrap();
+        assert!(check_metadata(empty.path(), &lock("1.2.3", "abc", None))
+            .unwrap_err()
+            .contains("scripts/course build"));
     }
 
     #[test]

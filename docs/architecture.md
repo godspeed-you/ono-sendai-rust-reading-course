@@ -40,8 +40,8 @@ Validation against a real Ono-Sendai checkout is a separate, explicit maintainer
 |---|---|
 | `build` | validate the course source, render `dist/`, then run the offline check on the result |
 | `validate` | validate the course source (schema, references, stage policy, snippet integrity). With `--ono <checkout>` it also validates every snippet against the Ono-Sendai checkout |
-| `check-offline` | scan `dist/` for external resource references and network APIs |
-| `package` | build `dist/`-based release archives (`.zip`, `.tar.gz`, `SHA256SUMS`) into `release/` |
+| `check-offline` | scan `dist/` for external resource references, network APIs, inline scripts, broken internal links and anchors, missing required files and basic HTML sanity (doctype, `lang`, one `<h1>`, unique ids, zoomable viewport) |
+| `package` | re-run the site checks on `dist/`, refuse a `dist/` whose `course-metadata.json` does not match `course-lock.yaml` (a stale build), then write deterministic release archives (`.zip`, `.tar.gz`, `SHA256SUMS`) into `release/` and verify both unpack to the same `<name>/index.html` tree |
 | `check-upstream --ono <newer checkout>` | compare every snippet against another revision and report unchanged / moved / changed / missing snippets with the lessons they affect |
 | `snippet add` | extract an exact snippet from a checkout of the pinned revision and write its YAML file |
 | `serve` | not provided: the course is opened directly from disk |

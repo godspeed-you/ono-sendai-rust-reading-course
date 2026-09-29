@@ -50,7 +50,8 @@ jobs:
             echo "**Static. Offline. No server. No account. No LLM.**"
             echo "Download, extract, open \`index.html\`, and learn Rust by reading real Ono-Sendai code."
             echo
-            sed -n 's/^  \(commit\|version\): \(.*\)$/- Ono-Sendai \1: \2/p' course-lock.yaml | tail -2
+            echo "- Course version: ${{ needs.verify.outputs.version }}"
+            sed -n '/^ono_sendai:/,$ s/^  \(commit\|version\): \(.*\)$/- Ono-Sendai \1: \2/p' course-lock.yaml
             echo
             echo "See CHANGELOG.md for what changed."
           } > "$notes"

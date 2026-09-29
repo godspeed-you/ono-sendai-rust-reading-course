@@ -222,6 +222,45 @@ fn moved_content_is_reported_but_not_failing() {
 }
 
 #[test]
+fn change_hidden_in_the_omitted_lines_of_a_shortened_snippet_is_flagged() {
+    if !support::git_available() {
+        return;
+    }
+    let (f, c, _) = support::pinned_pair();
+    // `parse-word` shows eval.rs 3-6 and 8-14; line 7 (blank) is omitted. Code inserted there
+    // leaves both shown segments intact, but what the "⋯ omitted" row hides has changed.
+    c.write(
+        EVAL_RS,
+        &c.read(EVAL_RS).replacen(
+            "}\n\n/// Parses",
+            "}\n\nconst HIDDEN: i64 = 1;\n\n/// Parses",
+            1,
+        ),
+    );
+    c.commit("insert code between the segments");
+    let course = load(&f);
+    let r = upstream::check_newer(&course, c.root());
+    let pw = result(&r, "parse-word");
+    assert_eq!(pw.status, Status::Moved, "{}", pw.detail);
+    assert!(
+        pw.detail
+            .contains("omitted lines 7-7 changed (+2 lines): review what the gap hides"),
+        "{}",
+        pw.detail
+    );
+    // A snippet moved as a whole (every segment by the same offset) gets no gap note.
+    c.write(EVAL_RS, &format!("// header\n{}", c.read(EVAL_RS)));
+    c.commit("shift everything");
+    let r = upstream::check_newer(&course, c.root());
+    assert!(
+        result(&r, "eval-word").detail.contains("→"),
+        "{}",
+        result(&r, "eval-word").detail
+    );
+    assert!(!result(&r, "eval-word").detail.contains("omitted"));
+}
+
+#[test]
 fn duplicated_content_is_ambiguous() {
     if !support::git_available() {
         return;

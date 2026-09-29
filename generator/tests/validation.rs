@@ -953,3 +953,350 @@ fn non_overlapping_snippet_from_same_file_is_unseen() {
     let d = f.validate();
     assert!(!d.has_errors(), "{}", d.report());
 }
+
+// ---------------------------------------------------------------------------------------------
+// Missing content, duplicate identifiers and unsupported constructs
+
+#[test]
+fn chapter_without_lessons_is_rejected() {
+    expect_error(
+        |f| {
+            f.write(
+                CH2,
+                "id: deeper\nnumber: 2\ntitle: Deeper\nsummary: Less help.\nlessons: []\n",
+            )
+        },
+        "chapter `deeper` has no lessons",
+    );
+}
+
+#[test]
+fn lesson_without_sections_is_rejected() {
+    expect_error(
+        |f| {
+            let text = f.read(CH1);
+            let cut = text.find("  - id: basics-02\n").unwrap();
+            f.write(
+                CH1,
+                &format!(
+                    "{}  - id: basics-02\n    title: Counting words\n    stage: assisted\n    summary: x\n    prerequisites: [basics-01]\n    concepts: [borrowing]\n    ono_topics: [text-handling]\n    objectives: [x]\n    sections: []\n",
+                    &text[..cut]
+                ),
+            );
+        },
+        "lesson `basics-02`: has no sections",
+    );
+}
+
+#[test]
+fn empty_curriculum_is_rejected() {
+    let d = expect_error(
+        |f| {
+            f.replace(
+                CURRICULUM,
+                "chapters:\n  - chapters/01-basics.yaml\n  - chapters/02-deeper.yaml\n",
+                "chapters: []\n",
+            )
+        },
+        "the curriculum lists no chapters",
+    );
+    // The chapter files still on disk are reported, not silently dropped.
+    assert_error(&d, "chapter file is not listed in course/curriculum.yaml");
+}
+
+#[test]
+fn duplicate_chapter_ids_are_rejected() {
+    expect_error(
+        |f| f.replace(CH2, "id: deeper\n", "id: basics\n"),
+        "duplicate chapter id `basics`",
+    );
+}
+
+#[test]
+fn duplicate_glossary_ids_are_rejected() {
+    expect_error(
+        |f| f.replace(GLOSSARY, "  - id: variant\n", "  - id: borrow\n"),
+        "duplicate glossary id `borrow`",
+    );
+}
+
+#[test]
+fn duplicate_ono_topic_ids_are_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CURRICULUM,
+                "  - id: evaluation\n",
+                "  - id: text-handling\n",
+            )
+        },
+        "duplicate ono_topic id `text-handling`",
+    );
+}
+
+#[test]
+fn non_kebab_case_ids_are_rejected() {
+    expect_error(
+        |f| f.replace_all(CH1, "basics-01-q1", "Basics_01_Q1"),
+        "exercise `Basics_01_Q1`: id must be kebab-case",
+    );
+    expect_error(
+        |f| f.replace(CURRICULUM, "  - id: enums\n", "  - id: Enums\n"),
+        "concept id `Enums` must be kebab-case",
+    );
+}
+
+#[test]
+fn unknown_section_type_is_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "      - type: diagram\n        kind: ownership\n",
+                "      - type: video\n        kind: ownership\n",
+            )
+        },
+        "unknown variant `video`",
+    );
+}
+
+#[test]
+fn unknown_exercise_type_and_prose_kind_are_rejected() {
+    expect_error(
+        |f| f.replace(CH1, "exercise_type: explain-line", "exercise_type: essay"),
+        "unknown variant `essay`",
+    );
+    expect_error(
+        |f| f.replace(CH1, "        kind: context\n", "        kind: sidebar\n"),
+        "unknown variant `sidebar`",
+    );
+}
+
+#[test]
+fn images_in_prose_are_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "          This lesson reads `greet`.",
+                "          ![diagram](diagram.png) This lesson reads `greet`.",
+            )
+        },
+        "images are not supported in prose",
+    );
+}
+
+#[test]
+fn empty_prose_is_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "        caption: The whole function.\n",
+                "        caption: \"  \"\n",
+            )
+        },
+        "caption: text must not be empty",
+    );
+}
+
+#[test]
+fn diagram_without_art_or_text_equivalent_is_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "        art: |\n          caller ──lends──► greet\n",
+                "        art: \"\"\n",
+            )
+        },
+        "diagram needs a title and art",
+    );
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "        description: The caller keeps ownership; `greet` only borrows the name.\n",
+                "        description: \"\"\n",
+            )
+        },
+        "diagram description (text equivalent): text must not be empty",
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Malformed exercises
+
+#[test]
+fn multiple_choice_with_one_choice_is_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "          - text: The function `greet`.\n            correct: false\n            feedback: A `&str` parameter does not take ownership.\n",
+                "",
+            )
+        },
+        "multiple choice needs 2 to 6 choices",
+    );
+}
+
+#[test]
+fn structured_solution_needs_three_distinct_aspects() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH2,
+                "            - aspect: control-flow\n              body: The `break` ends the loop at the first negative value.\n",
+                "",
+            )
+        },
+        "a structured solution needs at least three analysis aspects",
+    );
+    expect_error(
+        |f| f.replace(CH2, "aspect: control-flow", "aspect: purpose"),
+        "analysis aspect `Purpose` appears twice",
+    );
+}
+
+#[test]
+fn structured_solution_must_separate_guarantees_semantics_and_interpretation() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH2,
+                "          semantics: The slice is borrowed, so the caller keeps ownership.\n",
+                "",
+            )
+        },
+        "missing field `semantics`",
+    );
+}
+
+#[test]
+fn self_assessment_without_checklist_is_rejected_in_any_stage() {
+    expect_error(
+        |f| f.replace(CH1, "exercise_type: explain-line", "exercise_type: self-assessment"),
+        "exercise `basics-01-q2`: independent and self-assessment exercises must reference a checklist",
+    );
+}
+
+#[test]
+fn independent_lesson_without_exercise_is_rejected() {
+    let d = expect_error(
+        |f| {
+            f.replace(
+                CH2,
+                "      - type: exercise\n        id: deeper-03-q1\n        exercise_type: read-function\n        prompt: Read `eval` and write down what it does.\n        snippets: [eval-word]\n        checklist: independent-reading\n",
+                "      - type: code\n        snippet: eval-word\n",
+            )
+        },
+        "lesson `deeper-03`: independent lessons must contain a reading exercise",
+    );
+    assert!(!d.has_error_containing("solution"), "{}", d.report());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Snippet structure and the lock file
+
+#[test]
+fn snippet_without_segments_is_rejected() {
+    expect_error(
+        |f| {
+            let text = f.read(GREET);
+            let cut = text.find("segments:").unwrap();
+            f.write(GREET, &format!("{}segments: []\n", &text[..cut]));
+        },
+        "snippet `greet` has no segments",
+    );
+}
+
+#[test]
+fn overlapping_segments_are_rejected() {
+    let f = Fixture::new();
+    let text = std::fs::read_to_string(support::ono_source().join(LIB_RS)).unwrap();
+    let s = snippet::build_snippet(
+        "greet",
+        LIB_RS,
+        PLACEHOLDER_COMMIT,
+        &text,
+        &[(3, 6, "pub fn greet".into())],
+    )
+    .unwrap();
+    let mut s2 = s.clone();
+    s2.segments.push(s.segments[0].clone());
+    f.write(GREET, &serde_yaml::to_string(&s2).unwrap());
+    assert_error(
+        &f.validate(),
+        "segments must be ascending and non-overlapping",
+    );
+}
+
+#[test]
+fn empty_repository_in_lock_is_rejected() {
+    expect_error(
+        |f| {
+            let text = f.read(LOCK);
+            let line = text
+                .lines()
+                .find(|l| l.trim_start().starts_with("repository:"))
+                .unwrap()
+                .to_string();
+            f.replace(LOCK, &line, "  repository: \"\"");
+        },
+        "ono_sendai.repository must not be empty",
+    );
+}
+
+#[test]
+fn checklist_without_items_is_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CURRICULUM,
+                "    items:\n      - I can summarize the purpose of this code.\n      - I can name its inputs and outputs.\n",
+                "    items: []\n",
+            )
+        },
+        "checklist `independent-reading` has no items",
+    );
+}
+
+#[test]
+fn unused_snippet_is_a_warning_not_an_error() {
+    let f = Fixture::new();
+    add_snippet(&f, "crate-doc", LIB_RS, 1, 1, "demo crate");
+    let d = f.validate();
+    assert!(!d.has_errors(), "{}", d.report());
+    assert!(
+        d.items.iter().any(|i| i
+            .message
+            .contains("snippet `crate-doc` is not used by any lesson")),
+        "{}",
+        d.report()
+    );
+}
+
+#[test]
+fn links_in_plain_text_titles_and_summaries_are_rejected() {
+    expect_error(
+        |f| {
+            f.replace(
+                CH1,
+                "summary: A function that borrows a string.",
+                "summary: A function that [borrows](concept:borrowing) a string.",
+            )
+        },
+        "lesson `basics-01`: summary: links are not supported in plain-text fields",
+    );
+    expect_error(
+        |f| {
+            f.replace(
+                CH2,
+                "title: Deeper\n",
+                "title: \"[Deeper](chapter:basics)\"\n",
+            )
+        },
+        "chapter `deeper` title: links are not supported in plain-text fields",
+    );
+}
