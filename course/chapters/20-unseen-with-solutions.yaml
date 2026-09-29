@@ -49,8 +49,8 @@ lessons:
           calls `decode` to take the next whole frame out of that buffer.
 
           The snippet starts with the module's own description of the frame layout. It also shows
-          one helper that `decode` calls. You met the protocol in the lessons on async and tasks,
-          but not this function.
+          one helper that `decode` calls. You met the protocol's message decoding and its
+          `ProtocolError` in the chapters on generics and conversions, but not this function.
       - type: code
         snippet: c20-frame-decode
         caption: |
@@ -200,8 +200,8 @@ lessons:
             names. With the length check first, the link fails as soon as 12 bytes have
             arrived. `decode` itself allocates nothing. The buffer's growth happens in the
             caller's read loop, so the guarantee holds only together with that loop, which never
-            has to hold more than one maximum-sized frame plus a header before `decode` either
-            yields or fails.
+            has to hold much more than one maximum-sized frame plus a header (and whatever the
+            last read happened to deliver) before `decode` either yields or fails.
       - type: exercise
         id: unseen-with-solutions-01-q2
         exercise_type: predict
@@ -349,9 +349,10 @@ lessons:
                 when the vector is mutated. `id` is cloned once: one `String` goes into the entry,
                 the other is returned. In `flush`, the closure `fail` captures only
                 `self.path`, by shared reference: since the 2021 edition, closures capture the
-                individual fields they use. That is why the method can still assign
-                `self.persisted` and `self.stale` while `fail` exists. `fail` clones the path only
-                when an error is actually built.
+                individual fields they use. The assignments to `self.persisted` and `self.stale`
+                come after the last use of `fail` on their path (a borrow lasts only until its
+                last use), so the borrow checker accepts them. `fail` clones the path only when
+                an error is actually built.
             - aspect: errors
               body: |
                 Every `std::io::Error` is wrapped in a `HistoryError` that names the action
@@ -702,8 +703,8 @@ lessons:
           summary: |
             Each call to `next` yields one item. It is `None` when no bytes remain,
             `Some(Frame::Malformed(error))` when the remaining bytes cannot hold a consistent
-            message, and otherwise `Some(Frame::Message { kind, payload })`, where `payload` is a
-            slice of the original bytes. After a malformed frame, `rest` is set to empty, so the
+            message, and otherwise `Some(Frame::Message(Message { kind, payload }))`, where
+            `payload` is a slice of the original bytes. After a malformed frame, `rest` is set to empty, so the
             next call returns `None`. On the normal path, `rest` shrinks by the aligned length of
             the message, which is at least 16 bytes because shorter lengths are rejected first.
             So every call either empties `rest` or shortens it by at least 16 bytes, and the walk
@@ -792,8 +793,9 @@ lessons:
           `next` return, and `self.rest.len()` after each.
         solution:
           summary: |
-            Call 1: `Some(Message { kind, payload })` with a 4-byte payload (bytes 16..20).
-            Afterwards `rest.len()` is 20. Call 2: `Some(Malformed(..))` with "a netlink message
+            Call 1: `Some(Frame::Message(Message { kind, payload }))` with a 4-byte payload
+            (bytes 16..20).
+            Afterwards `rest.len()` is 20. Call 2: `Some(Frame::Malformed(..))` with "a netlink message
             claims 8 bytes, less than its own 16-byte header". Afterwards `rest.len()` is 0.
             Call 3: `None`.
           analysis:

@@ -394,14 +394,16 @@ lessons:
         hints:
           - level: 1
             body: |
-              Draw a line under line 1033: everything above runs when `snapshot` is called,
-              everything inside the closure runs later, on a worker.
+              Draw a line under line 1037: everything above it (including `query.clone()` and
+              the call to `ValueStream::spawn`) runs when `snapshot` is called; everything inside
+              the `async move` block runs later, in the spawned task on a worker.
         solution:
           summary: |
             `snapshot` resolves the schema(s), refreshes the reader, lists pids (or takes the
-            pinned one), validates `--sample`, and records the population when enumerating
+            pinned one), validates `--sample`, and computes the population when enumerating
             without selectors — all synchronously, failing with `Err` if any of that fails. It
-            then returns a bounded `ValueStream` whose task optionally samples and sleeps, then
+            then returns a bounded `ValueStream` whose task first records that population in the
+            pipeline's diagnostics, optionally samples and sleeps, then
             either builds a whole tree before sending roots (`--tree`) or reads and sends
             processes one by one until `max` is reached.
           analysis:
@@ -500,7 +502,8 @@ lessons:
                 sample.
           guarantees: |
             The doc of `Reader` says it is "cheap enough to hand to a streaming task"; `cpu()`'s
-            doc says a second observation gives the share "since the first".
+            doc says that where an earlier observation exists — "a second `get process` in a
+            session" — "the window is the interval between them".
           semantics: |
             `Arc` shares ownership; the `Mutex` inside provides the synchronization for
             concurrent tasks.
@@ -584,7 +587,8 @@ lessons:
             kind: flow
             body: |
               The story of pid reuse, told with fixture files: the selected identity is pid 4242
-              started at tick 1000; then `/proc/4242/stat` is rewritten with a start at tick 9000.
+              started 1 000 seconds after boot (`starttime: 1_000 * USER_HZ` ticks); then
+              `/proc/4242/stat` is rewritten with a start 9 000 seconds after boot.
           - lines: 444-447
             kind: flow
             body: |
@@ -637,7 +641,8 @@ lessons:
             body: |
               The code: with an earlier sample, a rate over the interval; without one,
               `self.lifetime_share(stat)` — a share over the process's lifetime, which is `None`
-              only when `/proc/uptime` could not be read.
+              only when `/proc/uptime` could not be read (or the computed lifetime is not a
+              positive, finite number).
       - type: code
         snippet: c19-lifetime-share-test
         caption: |
@@ -668,7 +673,7 @@ lessons:
           - level: 1
             body: |
               Walk `act` from the top with `operation = "kill"` and a target of `[4242,
-              <timestamp of tick 1000>]`.
+              <timestamp of boot + 1 000 s>]`.
         solution:
           summary: |
             Name: a recycled pid must not be signalled. Arrange: a fixture `/proc`, fake accounts,
@@ -964,8 +969,9 @@ lessons:
                 not an `Err` from `snapshot`; only an unusable query is.
             - aspect: external-apis
               body: |
-                DNS goes through `getaddrinfo(3)` on a blocking thread; processes through `/proc`
-                files read in the task.
+                DNS goes through `getaddrinfo(3)`/`getnameinfo(3)` (or, with `--server`, the
+                crate's own DNS client) on a blocking thread; processes through `/proc` files read
+                in the task.
             - aspect: architecture
               body: |
                 `checkpointable: false` because "nothing that would survive into a checkpoint as

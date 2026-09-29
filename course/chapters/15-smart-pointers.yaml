@@ -99,9 +99,9 @@ lessons:
             kind: ownership
             body: |
               `error` is a `&Arc<ErrorValue>` (bound through the reference returned by `get`).
-              `Arc::clone(error)` makes a new handle. Ono-Sendai writes the associated-function
-              form rather than `error.clone()` so the reader sees at once that only a count
-              changes.
+              `Arc::clone(error)` makes a new handle. The associated-function form means the
+              same as `error.clone()`, but it makes visible at a glance that only a count
+              changes — a common Rust convention, and the form Ono-Sendai mostly writes.
           - lines: 199
             kind: ownership
             body: |
@@ -111,8 +111,9 @@ lessons:
         kind: context
         title: One struct literal, four kinds of ownership
         body: |
-          When a command is re-run with arguments filled in from the context (ADR-0076), the
-          invocation is rebuilt around the new arguments. `rebind`'s doc: "The input stream
+          When the context frames fill in arguments the user did not type (spec §14.3,
+          ADR-0076), `CommandTable::run` rebuilds the invocation around the filled-in
+          arguments just before it calls the implementation. `rebind`'s doc: "The input stream
           moves — a stream is consumed once — and everything else is shared". Read the fields of
           `Invocation` first, then the literal.
       - type: code
@@ -304,8 +305,8 @@ lessons:
             kind: rust
             body: |
               `compare_exchange(false, true, …)` atomically sets the flag only if it is still
-              `false`, and reports whether this call did it. Of many stages calling
-              `claim_report`, exactly one gets `true`.
+              `false`, and reports whether this call did it. Once the scope is cancelled, of many
+              stages calling `claim_report` exactly one gets `true`.
       - type: code
         snippet: c15-cancel-test
         caption: |
@@ -336,8 +337,9 @@ lessons:
           the others. Remove the atomics and `cancel(&self)` could not change anything. The two
           are independent, and the code needs both.
 
-          `Arc<T>` is `Send` and `Sync` only if `T` is `Send + Sync`; `AtomicBool` is, so the
-          token can be shared across the runtime's threads. An `Arc` around a type that is not
+          `Arc<T>` is `Send` and `Sync` only if `T` is `Send + Sync`; `Inner`'s fields
+          (`AtomicBool`s and Tokio's `Notify`) all are, so the token can be shared across the
+          runtime's threads. An `Arc` around a type that is not
           `Sync` could not be shared between threads at all — `Arc` never adds thread safety that
           `T` lacks.
       - type: prose
@@ -412,7 +414,8 @@ lessons:
           `publish_env` calls `publish(&self)`, which locks the mutex and replaces the vector; a
           `get env` query goes through the registry to `snapshot`, whose `selected` calls
           `bindings(&self)`, which locks the mutex and clones the vector. The lock makes these two
-          operations take turns.
+          operations take turns. (In a build with the `temporal` feature the registry's handle
+          sits inside a `TemporalProvider` wrapper — still one `Arc` to the same provider.)
       - type: prose
         kind: ono
         title: Why does Ono-Sendai do this?
@@ -467,7 +470,9 @@ lessons:
         solution:
           summary: |
             Two handles (the test's `token` and the clone stored inside `invocation`) and one
-            `Inner`, whose reference count is 2. `cancel()` stores `true` into the shared
+            `Inner`, whose reference count is 2. (`Invocation::new` starts with a fresh token of
+            its own, but `with_cancel` overwrites that field, so the fresh token and its `Inner`
+            are dropped within line 183.) `cancel()` stores `true` into the shared
             `AtomicBool` and wakes waiters. `is_cancelled()` on the invocation's handle loads the
             same atomic, so it reads `true`.
           analysis:
@@ -653,21 +658,24 @@ lessons:
         kind: ownership
         title: "Before and after `adopt(new)`"
         art: |
-          before:  PluginProvider.plugin: Mutex ─► Arc ──► [count: 2 | LoadedPlugin v1]
+          before:  PluginProvider.plugin: Mutex ─► Arc ──► [count: k+1 | LoadedPlugin v1]
                    running query:  p = self.plugin() ──┘
 
           adopt(new):  lock; *guard = new; unlock
 
-          after:   PluginProvider.plugin: Mutex ─► Arc ──► [count: 1 | LoadedPlugin v2]
-                   running query:  p ──────────────────► [count: 1 | LoadedPlugin v1]
-                   (v1 is dropped when the query drops p)
+          after:   PluginProvider.plugin: Mutex ─► Arc ──► [count: … | LoadedPlugin v2]
+                   running query:  p ──────────────────► [count: k   | LoadedPlugin v1]
+                   (v1 is freed once p and every other handle to it are dropped)
         description: |
           Before the reload the provider's mutex holds an `Arc` to plugin instance v1, and a
-          running query has obtained its own handle through `plugin()`, so v1's count is 2.
-          `adopt(new)` locks the mutex and assigns the handle to v2; the provider's old handle to
-          v1 is dropped, and v1's count falls to 1. The running query still holds its handle and
-          keeps using v1 undisturbed; new calls to `plugin()` get v2. When the query drops its
-          handle, v1's count reaches 0 and the instance is dropped.
+          running query has obtained its own handle through `plugin()`; together with whatever
+          other handles exist (the KUANG/11 host's table of loaded packages, the providers for the
+          package's other targets) v1's count is some k+1. `adopt(new)` locks the mutex and
+          assigns the handle to v2; the provider's old handle to v1 is dropped, and v1's count
+          falls by one. The running query still holds a valid handle — the `Arc` guarantees the
+          `LoadedPlugin` value stays alive, not that the stopped instance still answers usefully;
+          that is the supervisor's business. New calls to `plugin()` get v2. When the last handle
+          to v1 is dropped, its count reaches 0 and the value is freed.
       - type: prose
         kind: ono
         title: Why does Ono-Sendai do this?
@@ -777,7 +785,8 @@ lessons:
         title: What does this Rust mean?
         body: |
           `Box<T>` is the simplest smart pointer: **one owner**, value on the heap, freed when the
-          box is dropped. No counting and no sharing. Ono-Sendai uses it for three things:
+          box is dropped. No counting and no sharing. In Ono-Sendai you meet it in three roles
+          in this chapter (and a fourth, `Pin<Box<dyn Future>>`, in the next):
 
           - a **recursive type** that needs a finite size, such as `DeclaredType::List(Box<DeclaredType>)`
             ([lesson conversions-02](lesson:conversions-02));
@@ -805,8 +814,10 @@ lessons:
             token: "self: Box<Self>"
             kind: ownership
             body: |
-              The method consumes the **boxed** transform. The transform is used up by applying
-              it, and the box is freed when `apply`'s body is done with it.
+              The method consumes the **boxed** transform: `apply` owns the box and may move it
+              on — `Where::apply`, for instance, moves it into the stage task it spawns
+              ([chapter 18](lesson:execution-path-02)). The box is freed when its last owner
+              drops it.
       - type: code
         snippet: c15-stream-transform-box
         annotations:
@@ -833,8 +844,8 @@ lessons:
           `Box<dyn Transform>` could call `apply`, whereas a plain `self` receiver cannot be
           called on an unsized `dyn Transform`. At v0.6.2, however, no code in the workspace
           writes `dyn Transform`; the only caller shown here boxes a concrete type. The source
-          does not document why the receiver was chosen, so describe what it does — one heap
-          allocation per applied transform, i.e. per pipeline stage, not per value — rather than
+          does not document why the receiver was chosen, so describe what it does — at most one
+          heap allocation per applied transform, i.e. per pipeline stage, not per value — rather than
           guessing at intent.
       - type: prose
         kind: context
@@ -879,8 +890,9 @@ lessons:
           will run in, as in a shell." `Cow` ("clone on write") lets the function return the
           common case — an absolute path, or no separate working directory — without allocating,
           and the uncommon case as an owned value, behind one type the caller does not need to
-          inspect. `Cow` is rare in Ono-Sendai (two uses at v0.6.2); `Arc` and `Box` are the
-          smart pointers you will meet constantly.
+          inspect. `Cow` is rare in Ono-Sendai's own signatures (two functions name it at v0.6.2,
+          although std methods it calls, such as `to_string_lossy`, return one); `Arc` and `Box`
+          are the smart pointers you will meet constantly.
       - type: exercise
         id: smart-pointers-04-q1
         exercise_type: trace-value
@@ -961,8 +973,10 @@ lessons:
                 case is immutable once shared or has a single owner.
             - aspect: async
               body: |
-                `Arc`, atomics and `std::sync::Mutex` are all thread-safe, which is required
-                because these values are used from Tokio tasks; `Rc` or `Cell` would not be.
+                Atomics and `std::sync::Mutex` synchronize access across threads, and `Arc`'s
+                count is atomic — but an `Arc<T>` may only cross threads when `T: Send + Sync`,
+                which each of these contents is. That is required because these values are used
+                from Tokio tasks; `Rc` or `Cell` could not be.
           guarantees: |
             In each example the type itself states who owns the data and who may change it; there
             is no hidden sharing.

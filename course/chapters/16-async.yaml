@@ -487,7 +487,9 @@ lessons:
                 cancelled at the await it was paused on.
           guarantees: |
             Every call through `budgeted` finishes within `CALL_BUDGET` (10 seconds) with either
-            the value or a `BusError`; it never waits indefinitely.
+            the value or a `BusError`; it never waits indefinitely at an `.await`. (A timeout can
+            only act between polls: it cannot interrupt code that blocks a thread inside a single
+            poll, which is why blocking work goes to `spawn_blocking` — lesson 4.)
           semantics: |
             `match` exhaustiveness forces all three outcomes to be handled; `?` propagates the
             `BusError` unchanged because `connect` returns the same error type.
@@ -917,7 +919,8 @@ lessons:
 
           (The same holds for `tokio::spawn`: dropping its `JoinHandle` detaches the task rather
           than stopping it. Stopping a spawned task needs `JoinHandle::abort`, which you will see
-          in the next chapter.)
+          in the next chapter — and even `abort` cannot stop a `spawn_blocking` closure that has
+          already started.)
       - type: prose
         kind: ono
         title: Why does Ono-Sendai do this?
@@ -997,7 +1000,8 @@ lessons:
         solution:
           summary: |
             `run_bounded` moves the whole `Lookup` (and the schema) into a blocking task that
-            calls the synchronous `self.run(&schema)` (which uses `getaddrinfo`), and waits at
+            calls the synchronous `self.run(&schema)` (which uses `getaddrinfo`/`getnameinfo`, or
+            asks a named `--server` directly), and waits at
             most `LOOKUP_TIMEOUT` (15 s). Success returns the lookup's own `Result`; a failed
             blocking task becomes `ProviderUnavailable` naming the `JoinError`; a timeout becomes
             a retryable `ProviderUnavailable` with the help "no nameserver is answering; the name
@@ -1032,9 +1036,11 @@ lessons:
             Moving `self` into the closure ends its use in the enclosing function; the borrow
             checker would reject using `self.query` after line 251, hence the earlier clone.
           interpretation: |
-            DNS and NSS are the two places the providers call a blocking C library function;
-            both use the same "blocking pool plus deadline" shape, which suggests a deliberate
-            convention for blocking calls in async providers.
+            NSS and DNS lookups both use the same "blocking pool plus deadline" shape, and
+            `spawn_blocking` recurs wherever an async provider must make a blocking call (the
+            netlink provider and the network probe use it too). That suggests a deliberate
+            convention for blocking calls in async code — an interpretation, not a documented
+            rule.
       - type: exercise
         id: async-04-q3
         exercise_type: trace-value

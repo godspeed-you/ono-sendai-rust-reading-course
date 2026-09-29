@@ -58,7 +58,7 @@ lessons:
           faster than its consumer reads, when a consumer stops reading or is dropped, and what
           the local side does when the peer misbehaves.
 
-          The first snippet contains the module doc, the shared state of a link and two of its
+          The first snippet contains the module doc, the shared state of a link and three of its
           small methods. The second contains the per-stream handle and the task that reads
           frames. `ValueStream`, `EventStream`, `StreamSink` and `CancelToken` are the pipeline
           types from [the tasks and channels chapter](chapter:tasks-channels).
@@ -257,7 +257,7 @@ lessons:
         caption: |
           `crates/ono-command/src/narrow.rs`, shortened: the module doc, `narrow`, `contribute`,
           `identity_fields` and `cannot_narrow`. The `spelling` function between them, which
-          `explain` uses, is omitted.
+          `explain` uses, and its helper `text_of` are omitted.
       - type: exercise
         id: independent-reading-05-q1
         exercise_type: read-function

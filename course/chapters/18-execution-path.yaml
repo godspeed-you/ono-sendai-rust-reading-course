@@ -133,7 +133,8 @@ lessons:
           - lines: 114
             kind: flow
             body: |
-              Enters the foreground line: clears a stale Ctrl-C note, as
+              Enters the foreground line: the outermost run clears a stale Ctrl-C note (a nested
+              one, inside `each`, keeps it), as
               [lesson tasks-channels-04](lesson:tasks-channels-04) explained.
           - lines: 117
             token: "super::native::check(session, pipeline, source).map_err(Flow::Failed)?;"
@@ -280,8 +281,9 @@ lessons:
         solution:
           summary: |
             The evaluator only needs "something to call with each error". A `dyn FnMut` accepts
-            any closure — the REPL's forwarding closure, or another caller's (script runner,
-            capture) — without `eval` depending on the REPL's `Reporter` type. `&mut` is needed
+            any closure — the REPL's forwarding closure in `run_source`, or the one the
+            configuration loader (`config.rs`) builds — without `eval` depending on the REPL's
+            `Reporter` type. `&mut` is needed
             because an `FnMut` may mutate what it captures when called.
           analysis:
             - aspect: traits
@@ -304,9 +306,10 @@ lessons:
             Calling an `FnMut` requires `&mut` access; passing `&mut dyn FnMut` is dynamic
             dispatch through a vtable.
           interpretation: |
-            Other callers of `run_program` exist in the codebase (for example running a script
-            from a reader, `run_from_reader`, a few lines below `run_source`); the closure
-            parameter is what lets them report differently.
+            `run_program` has a second caller: `crates/ono-cli/src/config.rs` runs configuration
+            files through it with its own closure (scripts read by `run_from_reader` go through
+            `run_source`). Both closures happen to forward to a `Reporter` today; the closure
+            parameter is what would let a caller report differently.
   - id: execution-path-02
     title: "Resolve, bind, assemble: two stages become two tasks"
     stage: practice
@@ -408,7 +411,8 @@ lessons:
           and then awaits `implementation.invoke_async(ctx)` —
           [the trait method from chapter 16](lesson:async-03). Which implementation sits behind
           an id is decided when the table is built (`ono_command::builtin_commands_for`): the
-          verbs `get`, `find`, `resolve` and `test` map to one `ProviderProducer`, and
+          verbs `get`, `find`, `resolve` and `test` each map to a `ProviderProducer` (one per
+          command id), and
           `ono.data.where` maps to a `TransformCommand` of kind `Where`. Both implement only the
           synchronous `invoke`, so the default `invoke_async` runs it at once.
       - type: code
@@ -465,8 +469,9 @@ lessons:
             token: "fn apply(self: Box<Self>, input: ValueStream) -> ValueStream"
             kind: rust
             body: |
-              `self: Box<Self>` — the transform is consumed out of its box, so the task below can
-              own it (`move`).
+              `self: Box<Self>` — `apply` owns the boxed transform, so the `move` closure below
+              can take the whole box (and the predicate in it) into the spawned task; the box is
+              freed when that task ends.
           - lines: 58
             kind: flow
             body: |
@@ -487,9 +492,10 @@ lessons:
           its input, so neither has to await anything: the awaiting happens inside the stream".
 
           Be precise about what has run, though. The producer and the `where` stage are spawned
-          tasks, and spawned tasks start running on the worker threads as soon as they are
-          spawned. They may already have read processes and filled their channels — but each can
-          get at most one channel's capacity (64) ahead of its consumer before its `send` waits.
+          tasks, and a spawned task is scheduled at once: it can start running on a worker thread
+          before anyone awaits anything. They may already have read processes and filled their
+          channels — but each can get only about one channel's capacity (64 queued values, plus
+          the one it is trying to send) ahead of its consumer before its `send` waits.
           Nothing further moves until the driver drains the final stream.
       - type: diagram
         kind: control-flow
@@ -610,9 +616,12 @@ lessons:
           write.
         solution:
           summary: |
-            If a later stage cannot be bound (unknown command, bad argument), the earlier stages
-            are never started — no process enumeration begins for `get process | wherre …`, and a
-            mutation earlier in the pipeline is never executed half-way. `bind_stage` returns
+            If a later native stage cannot be bound (an argument or option that does not resolve
+            against its contract, a switched-off spatial command, a glob that cannot be
+            expanded), the earlier stages are never started — no process enumeration begins, and
+            a mutation earlier in the pipeline is never executed half-way. (A misspelt command
+            such as `wherre` is different: `segments` does not classify it as native at all, so
+            it becomes an external segment of its own.) `bind_stage` returns
             `Eval<Option<…>>`, so each failure leaves the function with `?` before any task
             exists.
           analysis:
@@ -758,8 +767,9 @@ lessons:
         id: execution-path-03-q1
         exercise_type: multiple-choice
         prompt: |
-          Why does `get process | where cpu > 20` show nothing until every process has been
-          read, while `get process | where cpu > 20 | to json` could stream?
+          `Sink::write`'s doc says a table is "necessarily collected first", while `to json` and
+          the other serialising views could stream. Why must a table of
+          `get process | where cpu > 20` wait until every value is in hand?
         choices:
           - text: "Because the `where` stage buffers its whole input before filtering."
             correct: false
@@ -770,12 +780,15 @@ lessons:
             correct: true
             feedback: |
               Right, as `Sink::write`'s doc says: collecting first is "a property of tables, not
-              of the pipeline".
+              of the pipeline". (Note what the code does at v0.6.2, though: for a bounded stream
+              `drive_segment` collects every segment's values into `drained.values` before
+              `write_result` runs, so a bounded `… | to json` is also written in one go; the
+              doc states what the representation permits, not what this path does.)
           - text: "Because `block_on` can only return once, at the end."
             correct: false
             feedback: |
-              `drive_segment` calls `block_on` once per event; the collecting is a choice made
-              for rendering.
+              `drive_segment` calls `block_on` once per loop iteration, not once overall; the
+              reason a *table* must be complete before its first row is its column widths.
           - text: "Because the process provider sends all records in one message."
             correct: false
             feedback: |
@@ -785,16 +798,21 @@ lessons:
         exercise_type: trace-control-flow
         prompt: |
           Trace `write_result` for three variants of our command: (a) typed at the prompt as is;
-          (b) `get process | where cpu > 20 > procs.txt`; (c) the same pipeline evaluated while
-          the session is capturing its value (for example as the right-hand side of a binding).
-          For each: which branch runs, is anything retained for `@-1`, and what is written where?
+          (b) `get process | where cpu > 20 | to json > procs.json`; (c) the pipeline of (a)
+          evaluated while the session is capturing its value (for example as the right-hand side
+          of a binding). For each: which branch runs, is anything retained for `@-1`, and what
+          is written where? Then say what happens to `get process | where cpu > 20 > procs.txt`.
         solution:
           summary: |
             (a) The final `None` arm: values retained, then rendered as a table on stdout by
-            `Sink`. (b) `Some(file)`: values retained, then rendered into bytes with
-            `rendered_bytes` (the table, subject to the row limit) and written to the file.
-            (c) The capture branch at the top: the values are handed to `session.capture` and the
-            function returns; nothing is rendered or retained.
+            `Sink`. (b) The last stage is `to json`, so `serialised` is true: nothing is retained,
+            and the `Some(file)` arm writes `bytes_of(values)` — the JSON document — to
+            `procs.json`. (c) The capture branch at the top: the values are handed to
+            `session.capture` and the function returns; nothing is rendered or retained. The last
+            line never reaches `write_result`: `where` reads its arguments in expression mode, and
+            the parser rejects a redirection there ("a stage whose arguments are expressions
+            cannot be redirected", help: "`| to text > file`"), so `run_source` reports it with
+            status `USAGE`.
           analysis:
             - aspect: control-flow
               body: |
@@ -803,8 +821,10 @@ lessons:
                 stdout, or rendered stdout.
             - aspect: inputs
               body: |
-                `serialised` is false for our pipeline: the last contract is `where`, which does
-                not produce bytes, and the values are records, not text.
+                `serialised` is computed by the caller (`deliver_segment`) from the last
+                contract: false in (a) and (c), where the last contract is `where`, which does not
+                produce bytes and yields records, not text; true in (b), because `to json`
+                produces bytes.
             - aspect: side-effects
               body: |
                 Writing to the file uses `write_all` and `flush`, mapping I/O errors to
@@ -820,9 +840,10 @@ lessons:
             `match` arms with a guard (`None if serialised`) are tried in order, so the last
             `None` arm means "not serialised".
           interpretation: |
-            The redirection in (b) is parsed as a redirection of the last stage (words mode),
-            not as part of `where`'s expression; how the parser decides that is outside these
-            snippets.
+            The redirection in (b) belongs to `to json`, a words-mode stage (ADR-0009: "`to`,
+            `from` and `format` are Words mode … This is what makes `get process | to json >
+            out.json` parse"). The parser code that enforces this (`parse_stage_inner` in
+            `pipelines.rs`) is outside these snippets.
       - type: exercise
         id: execution-path-03-q3
         exercise_type: read-subsystem

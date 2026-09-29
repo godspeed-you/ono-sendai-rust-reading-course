@@ -94,15 +94,16 @@ lessons:
           same as `&T: Send`. `Cell<bool>` is `Send` but not `Sync`, which matters in
           [lesson 4](lesson:tasks-channels-04).
 
-          Because `ValueStream::spawn` states these bounds, every producer in Ono-Sendai is
-          written as `move |sink| async move { … }` over owned data — you will see the pattern in
+          Because `ValueStream::spawn` states these bounds, producers in Ono-Sendai are written
+          as `move |sink| async move { … }` over owned data — you will see the pattern in
           the process provider in [chapter 19](chapter:provider-boundary).
       - type: prose
         kind: ono
         title: Why does Ono-Sendai do this?
         body: |
-          ADR-0013 makes each stage a task so the stages run concurrently — and, on the
-          multi-thread runtime, possibly in parallel on different workers. The bounded channels
+          ADR-0013 decides that "native stages run as Tokio tasks", joined by bounded `mpsc`
+          channels. So the stages run concurrently — and, on the multi-thread runtime, possibly
+          in parallel on different workers. The bounded channels
           decide how far ahead a producer may run. The rationale for 64 is on lines 38–41:
           "Large enough that a fast producer and a fast consumer never hand off one value at a
           time, small enough that a stalled consumer stops an endless producer within a few
@@ -158,9 +159,12 @@ lessons:
         id: tasks-channels-01-q2
         exercise_type: read-function
         prompt: |
-          `take 3` becomes a windowed stage built by these two functions. Read them and explain
-          how `get log --follow | take 3` terminates, although the producer never ends on its
-          own.
+          `forward_at_most` is the helper behind every "first *n* values" stage: `windowed` (a
+          window on a blocking transform) uses it as shown, and `take 3`'s `Take::apply` (in
+          `transforms/slice.rs`, not shown) is the same shape —
+          `input.stage(Boundedness::Bounded, move |input, sink| async move { forward_at_most(input, &sink, count).await; })`.
+          Read the two functions and explain how `get log --follow | take 3` terminates,
+          although the producer never ends on its own.
         snippets: [c17-forward-at-most]
         hints:
           - level: 1
@@ -169,10 +173,10 @@ lessons:
               `input`'s channels?
         solution:
           summary: |
-            `windowed` spawns a bounded stage whose body is `forward_at_most`. After three values
-            it returns; `input` (the stage's receiving end) is dropped, so the producer's
-            channel has no receiver and its next `send` fails with `SinkClosed`, which ends the
-            producer task.
+            `take 3` (like `windowed`) spawns a bounded stage whose body is `forward_at_most`.
+            After three values it returns; `input` (the stage's receiving end) is dropped, so the
+            producer's channel has no receiver and its next `send` fails with `SinkClosed`, which
+            ends the producer task.
           analysis:
             - aspect: control-flow
               body: |
@@ -190,14 +194,14 @@ lessons:
                 `yes | head -1` receiving `SIGPIPE`.
             - aspect: types
               body: |
-                `windowed` declares the output `Boundedness::Bounded`: whatever the input was, at
-                most `limit` values come out.
+                Both `windowed` and `Take::apply` declare the output `Boundedness::Bounded`:
+                whatever the input was, at most `limit` values come out.
           guarantees: |
             The doc comment guarantees that dropping the input "is what makes `get log --follow |
             take 3` terminate".
           semantics: |
-            Dropping all receivers of a Tokio `mpsc` channel closes it; a later `send` returns
-            `Err(SendError)`, which `StreamSink::send` maps to `SinkClosed`.
+            Dropping the (single) `Receiver` of a Tokio `mpsc` channel closes it; a later `send`
+            returns `Err(SendError)`, which `StreamSink::send` maps to `SinkClosed`.
           interpretation: |
             Cancellation "by dropping" is the default way work stops in this pipeline; the next
             lesson shows the second, explicit way (the `CancelToken`).
@@ -289,8 +293,9 @@ lessons:
             token: "result.map_err(|_| SinkClosed)"
             kind: type
             body: |
-              `mpsc::Sender::send` fails only if every receiver is gone; that error is reduced
-              to the unit struct `SinkClosed`, which a producer treats like `SIGPIPE`.
+              `mpsc::Sender::send` fails only if the channel's one `Receiver` has been dropped (or
+              closed); that error is reduced to the unit struct `SinkClosed`, which a producer
+              treats like `SIGPIPE`.
       - type: code
         snippet: c17-cancel-token-cancelled
         caption: |
@@ -750,8 +755,9 @@ lessons:
             - aspect: ownership
               body: |
                 The task owns `bound`, `providers`, `scope`, `context`, `adapters`, `resolver`
-                and the three `task_*` `Arc` clones, all moved in by `async move`. It borrows
-                nothing from the session.
+                and the three `task_*` `Arc` clones, all moved in by `async move`; `table` is a
+                `&'static CommandTable` (a process-wide `OnceLock`), which `'static` allows. It
+                borrows nothing from the session.
             - aspect: mutation
               body: |
                 Every mutation of shared state goes through `lock()`; a poisoned lock is
@@ -807,14 +813,16 @@ lessons:
             kind: type
             body: |
               A `static` is shared by every thread of the process, so its type must be `Sync`.
-              `AtomicBool` is; a plain `bool` behind a `static` could not be mutated safely.
+              `AtomicBool` is, and it can be changed through that shared access; a plain
+              `static bool` could not be changed at all without `static mut` and `unsafe`.
           - lines: 115-117
             kind: rust
             body: |
               An `extern "C" fn` with the C calling convention, installed as the `SIGINT` handler
               (in `install_shell_signals`, same file). A signal handler may interrupt any code
               at any instant, so it may only do async-signal-safe things; it stores one atomic
-              flag and nothing else.
+              flag and nothing else. `Ordering::Relaxed` suffices because the flag is the whole
+              message: no other data is published along with it.
           - lines: 127
             kind: flow
             body: |
