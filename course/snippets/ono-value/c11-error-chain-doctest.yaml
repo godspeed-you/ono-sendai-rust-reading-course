@@ -1,0 +1,13 @@
+id: c11-error-chain-doctest
+source:
+  file: crates/ono-value/src/error.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 84
+  end_line: 86
+  anchor: IoPermissionDenied, "access denied")
+  content_hash: sha256:677c300cb19b24189e0fb46bc74fcd80a949485ee39199d7ead9935e6e6d3bfb
+  code: |
+    /// let error = ErrorValue::new(ErrorCode::IoPermissionDenied, "access denied")
+    ///     .with_target(ValueRef::path(Path::new("/etc/shadow")))
+    ///     .with_help("requires root or read capability");

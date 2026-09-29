@@ -223,6 +223,13 @@ real numbers.
 Snippets used in `transfer` and `independent` lessons must not overlap (same file, overlapping
 lines) any snippet shown in an earlier lesson. The validator enforces this.
 
+### Illustrations are not quotations
+
+A fenced ```` ```rust ```` block in prose is rendered with the label *"Illustration — not
+Ono-Sendai source"*. Use it only for code you wrote (a minimal contrast, a hypothetical
+reordering). Never paste real Ono-Sendai code into prose — not even one line: extract it as a
+snippet so it is hash-validated and shown with its provenance.
+
 ## Stage policies
 
 See [architecture.md](architecture.md#stage-model). In short: guided → assisted → practice →

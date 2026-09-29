@@ -1,0 +1,25 @@
+id: c18-foreground-run-guard
+source:
+  file: crates/ono-cli/src/eval/pipeline.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 82
+  end_line: 86
+  anchor: pub(crate) struct ForegroundRun(());
+  content_hash: sha256:0d95ff46f0906f063ee368ea51c5666bf262bd075cb7d6f14ea5fdb020bf5cd9
+  code: |
+    pub(crate) struct ForegroundRun(());
+
+    impl ForegroundRun {
+        /// Enters a foreground pipeline, beginning the line where none was running.
+        pub(crate) fn begin() -> Self {
+- start_line: 103
+  end_line: 107
+  anchor: impl Drop for ForegroundRun
+  content_hash: sha256:07b8c4e30cd6e1c78eae8edfd9a60d05e4aea7fae0b74795ac2007c8b97f812e
+  code: |
+    impl Drop for ForegroundRun {
+        fn drop(&mut self) {
+            RUNNING.with(|running| running.set(running.get().saturating_sub(1)));
+        }
+    }

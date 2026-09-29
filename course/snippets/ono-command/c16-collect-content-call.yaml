@@ -1,0 +1,11 @@
+id: c16-collect-content-call
+source:
+  file: crates/ono-command/src/impls/mutate.rs
+  commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
+segments:
+- start_line: 135
+  end_line: 135
+  anchor: collect_content(input, &spelling).await?
+  content_hash: sha256:623b5493ba7e6f6b1c97ff71370033ad2bfaeb692da65e8d3817d5e5da80c9be
+  code: |2
+                    collect_content(input, &spelling).await?,

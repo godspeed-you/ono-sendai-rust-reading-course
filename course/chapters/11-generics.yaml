@@ -124,15 +124,18 @@ lessons:
         title: Why the constructors are written this way
         body: |
           The `ErrorValue` doc says errors "are built in a chain rather than assembled field by
-          field, so a call site reads as one statement":
-
-          ```rust
-          ErrorValue::new(ErrorCode::IoPermissionDenied, "access denied")
-              .with_target(ValueRef::path(Path::new("/etc/shadow")))
-              .with_help("requires root or read capability")
-          ```
-
-          (quoted from the doc test on lines 84–86). With `impl Into<Arc<str>>`, the same chain
+          field, so a call site reads as one statement". The doc test on lines 84–86 shows such a
+          chain:
+      - type: code
+        snippet: c11-error-chain-doctest
+        caption: |
+          A doc test inside the `///` comment: `rustdoc` compiles and runs it, so the example
+          cannot drift from the real API.
+      - type: prose
+        kind: ono
+        title: One chain for literals and formatted messages
+        body: |
+          With `impl Into<Arc<str>>`, the same chain
           works whether the message is a literal or a `format!` result. Inside, the message is
           stored as `Arc<str>`, so cloning an `ErrorValue` shares the message text (a
           reference-count increment) instead of copying it.

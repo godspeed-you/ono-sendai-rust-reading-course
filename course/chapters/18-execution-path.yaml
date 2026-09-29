@@ -159,15 +159,23 @@ lessons:
           Line 114 binds a value that is never mentioned again: `let _running =
           ForegroundRun::begin();`. It is a **guard**. Its type, defined just above `run_pipeline` in
           the same file, implements the standard `Drop` trait:
-
-          ```rust
-          impl Drop for ForegroundRun {
-              fn drop(&mut self) {
-                  RUNNING.with(|running| running.set(running.get().saturating_sub(1)));
-              }
-          }
-          ```
-
+      - type: code
+        snippet: c18-foreground-run-guard
+        annotations:
+          - lines: 82
+            kind: type
+            body: |
+              A tuple struct whose only field is `()`: the value carries no data. Its whole job is
+              to exist — and to be dropped.
+          - lines: 103-107
+            kind: rust
+            body: |
+              `impl Drop` gives the type a destructor. `drop(&mut self)` runs automatically when a
+              `ForegroundRun` value goes out of scope; nobody calls it by name.
+      - type: prose
+        kind: rust
+        title: "When `drop` runs"
+        body: |
           `Drop::drop` is code Rust runs automatically when a value is [dropped](glossary:drop) —
           here when `run_pipeline` returns, whether normally, through `?`, or by an early
           `return`. `begin` counted one more running foreground pipeline; `drop` counts it down
