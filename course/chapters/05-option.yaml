@@ -63,7 +63,10 @@ lessons:
             body: |
               `self.0` is the `u8` inside the newtype. The comparison is strictly greater than
               128. A status of exactly 128 would mean "signal 0", and signal 0 does not exist,
-              so 128 is not a signal death.
+              so 128 is not a signal death. Note that the method reads only the number: the
+              struct's doc comment says a program's own status "passes through unchanged",
+              including values that collide with these conventions, so a program that chose to
+              exit with 143 would also report `Some(15)`.
           - lines: 64
             token: "Some(self.0 - 128)"
             kind: rust
@@ -523,11 +526,12 @@ lessons:
         body: |
           ADR-0215 ("An error a schema declares is data, not a failed read") explains why.
           Earlier, every stored error was reported as `Failed`. That broke results such as
-          `ono.action-result/1`, whose `error` field is *meant* to hold an error. For
-          `stop process 999999 | select error.name`, the ADR records: "The path never
-          descended." The
-          decision: "The three §10.5 outcomes are therefore decided by the schema, not by the
-          bytes in the slot — which is what a schema is for." In the code, that sentence is the
+          `ono.action-result/1`, whose `error` field is *meant* to hold an error. The ADR's
+          example is `stop process 999999 | select error.name`: instead of the error's name it
+          answered a record holding the whole error, because reading `error` counted as a
+          failed read and `select` stored the raised error as the field — "The path never
+          descended." The decision: "The three §10.5 outcomes are therefore decided by the
+          schema, not by the bytes in the slot — which is what a schema is for." In the code, that sentence is the
           guard on line 196.
       - type: exercise
         id: option-03-q1

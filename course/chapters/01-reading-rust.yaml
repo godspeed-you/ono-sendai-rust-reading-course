@@ -29,8 +29,8 @@ lessons:
         body: |
           This course teaches you to **read** Rust, not to write it. You already know at least one
           programming language; you do not need to know any Rust. The textbook is the real source
-          code of one program, **Ono-Sendai**, pinned to version v0.6.2. Every code block you see
-          is copied, byte for byte, from that version, with its real file name and line numbers.
+          code of one program, **Ono-Sendai**, pinned to version v0.6.2. Every block of Rust code
+          you see is copied, byte for byte, from that version, with its real file name and line numbers.
 
           Nothing in the course asks you to install Rust or run a compiler. You read, you predict,
           you explain to yourself, and you compare your reasoning with a worked answer.
@@ -91,25 +91,26 @@ lessons:
           ono-cli ............. the `ono` binary: evaluator, REPL, wiring
              │  depends on almost every crate below
              ▼
-          ono-command ......... command registry        ono-provider-linux, -net, … providers
-             │                                              │
-             ▼                                              ▼
-          ono-render .......... tables and text         ono-provider-api .. the provider contract
-             │                                              │
-             ▼                                              ▼
-          ono-pipeline ........ streams of values ◄─────────┘
+          ono-command ......... command registry (also uses ono-parser and ono-render)
              │
              ▼
-          ono-value ........... Value, records,      ono-parser ... lexer,     ono-process ... Unix
-                                schemas, units                      AST, parser                programs
-             │                                          │                         │
-             ▼                                          ▼                         ▼
+          ono-provider-api .... the provider contract ◄── ono-provider-linux, -net, … providers
+             │
+             ▼
+          ono-pipeline ........ streams of values        ono-render .......... tables and text
+             │                                              │
+             ▼                                              ▼
+          ono-value ........... Value, records, schemas, units
+             │         ono-parser ... lexer, AST, parser    ono-process ... Unix programs
+             │            │                                    │
+             ▼            ▼                                    ▼
           ono-core ............ spans, error codes, exit statuses — no dependencies at all
         description: |
           Ono-Sendai is a Cargo *workspace*: one repository holding 48 *crates* (Rust's unit of
           compilation, roughly "a library or a program") under `crates/`. ADR-0005, the
           architecture decision record that fixed the layout, arranges them in layers, and every
-          arrow in the diagram points from a crate to a crate it depends on.
+          arrow in the diagram points from a crate to a crate it depends on. (Only the most
+          important arrows are drawn; the list below is complete for these crates.)
 
           - At the bottom, `ono-core` depends on nothing.
           - `ono-value` (the value model), `ono-parser` (the shell language) and `ono-process`
@@ -118,8 +119,8 @@ lessons:
           - `ono-render` (presentation) depends on `ono-value` and `ono-core`.
           - `ono-provider-api` (the contract every provider implements) depends on `ono-value` and
             `ono-pipeline`, and the concrete providers such as `ono-provider-linux` depend on it.
-          - `ono-command` (the command registry) uses the parser, the pipeline, the renderer and
-            the provider contract.
+          - `ono-command` (the command registry) uses the parser, the value model, the pipeline,
+            the renderer and the provider contract.
           - At the top, `ono-cli` builds the `ono` binary and depends on almost everything.
 
           Later versions added further families of crates — `ono-spatial-*`, `ono-temporal-*`,
@@ -179,8 +180,11 @@ lessons:
               `#![...]` makes it an *inner* attribute that applies to the enclosing item — here,
               the whole crate. `forbid(unsafe_code)` turns any use of `unsafe` (code that opts
               out of some compiler checks) into a hard error that nothing further down can switch
-              back on. The whole workspace already *denies* `unsafe` in its `Cargo.toml`; `forbid`
-              is the stronger, non-overridable form that this crate adds on top.
+              back on. The whole workspace already *denies* `unsafe` in its `Cargo.toml`
+              (`unsafe_code = "deny"`), but a crate may override a `deny` with `allow` — and one
+              crate does: `ono-process`, the only crate ADR-0007 permits to use `unsafe`, writes
+              `#![allow(unsafe_code, ...)]` in its root. `forbid` is the stronger form that
+              cannot be overridden, and `ono-core` adds it on top.
           - lines: 14-17
             token: "mod diagnostic;"
             kind: rust
@@ -221,18 +225,22 @@ lessons:
           - lines: 27-30
             kind: ono
             body: |
-              The product name and the binary name live here too, because every crate may need
-              them and `ono-core` is the one crate every other crate can depend on.
+              The product name and the binary name live here too. The file gives no separate
+              reason, but the effect is clear: `ono-core` depends on nothing, so any crate of the
+              workspace can depend on it and read these names from one place.
       - type: prose
         kind: ono
         title: Why does the shell have a crate this small?
         body: |
           Look at what `ono-core` holds: spans (positions in a line of source), error codes, error
           kinds and exit statuses. The doc comment says it holds "only what all of them need and
-          nothing that any of them owns". ADR-0005 explains the consequence: `ono-parser`,
-          `ono-value` and `ono-process` depend only on `ono-core`, not on each other, so none of
-          them can accidentally start depending on the internals of another. A parse error and a
-          failed process can still use the *same* error codes, because both come from here.
+          nothing that any of them owns". ADR-0005, which fixed the crate layout, gives the reason:
+          `ono-core` is dependency-free "so that `ono-parser`, `ono-value` and `ono-process` can be
+          developed concurrently against a stable shared vocabulary". Each of the three depends
+          only on `ono-core`, not on the others (you can check this in their `Cargo.toml` files),
+          and the same ADR rejects a single big crate because it "lets layers leak into each
+          other". A parse error and a failed process can still use the *same* error codes,
+          because both come from here.
       - type: prose
         kind: black-box
         title: The diagnostic! macro
@@ -593,8 +601,8 @@ lessons:
           - text: "`span.start()` — a method of the same name"
             correct: true
             feedback: |
-              Right. The type offers a public method `start()` (you will see it in chapter 2)
-              that returns the private field's value. Outside code reads the data only through
+              Right. The type offers a public method `start()` (the integration test in the
+              next lesson calls it) that returns the private field's value. Outside code reads the data only through
               such functions.
           - text: "Neither: private data can never be read from outside"
             feedback: |
@@ -696,7 +704,8 @@ lessons:
             token: "fn should_describe_a_half_open_byte_range_when_constructed()"
             kind: rust
             body: |
-              `fn` declares a function. This one takes no parameters (`()`) and returns nothing.
+              `fn` declares a function. This one takes no parameters (`()`) and returns nothing
+              useful (strictly, the empty value `()`, which chapter 2 explains).
               Ono-Sendai names its tests `should_<behaviour>_when_<situation>`, so the name alone
               is a sentence about the code under test.
           - lines: 8

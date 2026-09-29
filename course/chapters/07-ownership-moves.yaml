@@ -121,7 +121,7 @@ lessons:
 
           builder.set(...)?.build()
                                 build(self): self.record ─move──► caller's RecordValue
-                                             (the empty RecordBuilder shell is dropped)
+                                             (RecordBuilder has no other field: nothing is left)
         description: |
           The caller moves `schema` and `provenance` into `builder`. Inside, `schema` is first
           borrowed by `field_count()`, and the borrow ends when that call returns. Then `schema`
@@ -129,8 +129,8 @@ lessons:
           `provenance` field, and the freshly created `fields` vector into the `fields` field.
           The record is moved into a `RecordBuilder`, which is returned, so it moves to the
           caller. Later, `build(self)` consumes the builder: it moves the record out and
-          returns it, and what is left of the builder is dropped. At every moment each piece
-          has exactly one owner.
+          returns it; the builder had no other field, so nothing of it remains. At every
+          moment each piece has exactly one owner.
       - type: exercise
         id: ownership-moves-01-q2
         exercise_type: multiple-choice
@@ -468,9 +468,11 @@ lessons:
         solution: |
           **Why not move?** An `Arc` is *shared* ownership: several handles may point to the same
           `ErrorValue`, and the value lives until the last one is dropped. Owning one handle does
-          not mean owning the value, so Rust does not let you move the value out of an `Arc`.
-          Here other handles certainly exist: `access` created this one with
-          `Arc::clone(error)`, and the record still holds its own. `require` must return an
+          not mean owning the value, so Rust does not let you move the value out through `*`.
+          (`Arc::try_unwrap` can take it out, but only when the handle turns out to be the last
+          one.) Here other handles typically exist: when the `FieldAccess` came from
+          `RecordValue::access`, that method created this handle with `Arc::clone(error)`, and
+          the record still holds its own. `require` must return an
           owned `ErrorValue` (its type is `Result<Value, ErrorValue>`), so it has to make one.
 
           **What is duplicated?** `*error` names the `ErrorValue` behind the handle, and

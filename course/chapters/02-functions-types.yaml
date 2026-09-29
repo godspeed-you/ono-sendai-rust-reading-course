@@ -51,8 +51,10 @@ lessons:
               A **tuple struct**: a struct whose fields have no names, only positions. This one has
               a single field of type `u8`, an unsigned 8-bit integer (0 to 255) — exactly the
               range of a Unix exit status. A struct that wraps one value to give it a meaning is
-              called a **newtype**. The field is private: outside code cannot build
-              `ExitStatus(300)` or anything else unchecked.
+              called a **newtype**. The field is private: outside code cannot write
+              `ExitStatus(42)` itself. It must use the named constants or the functions below
+              (`from_code`, `from_signal`), so every status is created in one of the ways this
+              file defines.
           - lines: 19
             token: "impl ExitStatus {"
             kind: rust
@@ -485,7 +487,8 @@ lessons:
             kind: flow
             body: |
               `||` is boolean "or". The condition is true if the span is backwards or if it ends
-              beyond the text. `source.len()` is the length of the text in **bytes**, a `usize` —
+              beyond the text. (`Span::new` already puts the two ends in order, as chapter 3
+              shows, so the first half is a defensive check: `of` does not rely on it.) `source.len()` is the length of the text in **bytes**, a `usize` —
               which is why the offsets were cast to `usize` first: Rust does not compare a `u32`
               with a `usize` without an explicit conversion.
           - lines: 89
@@ -802,8 +805,9 @@ lessons:
           scan: in `take_cells`, only `used` and `kept` change, and you can find every change by
           looking for them. Everything else — `text`, `width`, `cells`, `character` — is fixed once
           bound. This default is deliberate in Rust: a reader can assume that a binding without
-          `mut` keeps the value it was given. (Chapter 9 adds the full story, including
-          `&mut`.)
+          `mut` keeps the value it was given. (This is a first approximation: chapter 9 adds
+          the full story, including `&mut`, and chapter 15 shows the few types that are built to
+          be changed through a shared reference.)
       - type: exercise
         id: functions-types-04-q1
         exercise_type: predict

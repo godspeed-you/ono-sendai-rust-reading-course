@@ -104,7 +104,7 @@ lessons:
 
           So a `match` without `_` is a promise: *each* case was considered. `as_str` makes that
           promise, which is why adding a kind is safe — every exhaustive `match` over
-          `ErrorKind` in the workspace will point at itself until it is updated.
+          `ErrorKind` in the workspace becomes a compile error until it is updated.
       - type: prose
         kind: black-box
         title: The ErrorCode enum below
@@ -182,8 +182,8 @@ lessons:
             such `match` to be revisited. That fits the doc's "closed and additive" taxonomy.
           - **One stable spelling.** The text form lives in one function, `as_str`, instead of
             being repeated wherever a kind is mentioned.
-          - **Cheap values.** The enum is `Copy` and carries no data, so passing kinds around
-            costs nothing.
+          - **Cheap values.** The enum is `Copy` and carries no data, so passing a kind around
+            is as cheap as passing a small integer.
 
   - id: enums-matching-02
     title: "The central enum: Value"
@@ -403,8 +403,8 @@ lessons:
           and, being the last expression, it is `is_null`'s return value. `Null` is a unit
           variant — it carries nothing — so its pattern is just the name. `Error` is a tuple
           variant carrying an `Arc<ErrorValue>`, so its pattern must say something about the
-          payload; `_` says "any payload". Writing `Value::Error` without `(_)` would not match
-          the variant's shape.
+          payload; `_` says "any payload". Writing `Value::Error` without `(_)` would be a compile
+          error: a pattern must have the variant's shape, and `Error` has one field.
 
   - id: enums-matching-03
     title: "Patterns that bind: Statement"
@@ -687,8 +687,8 @@ lessons:
             kind: ono
             body: |
               Each variant's doc comment gives its shell syntax: `N< path`, `N> path`,
-              `N>> path`, `N>&M`. The enum is exactly the list of redirection forms the shell
-              supports.
+              `N>> path`, `N>&M` (and `N<&M`). The four variants are the forms of redirection
+              the process layer knows how to apply; each one is a case of its own.
           - lines: 80
             token: "Duplicate {"
             kind: rust

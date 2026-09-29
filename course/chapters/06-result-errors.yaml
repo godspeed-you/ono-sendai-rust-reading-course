@@ -208,8 +208,9 @@ lessons:
             token: "pub type Result<T>"
             kind: rust
             body: |
-              A **type alias**: a new name for an existing type. Inside this crate, `Result<Pid>`
-              means `std::result::Result<Pid, Error>`. The error type is fixed and only the
+              A **type alias**: a new name for an existing type. In the modules of this crate
+              that import it (`use crate::Result;` or similar), `Result<Pid>` means
+              `std::result::Result<Pid, Error>`. The error type is fixed and only the
               success type `T` varies. Many crates do this, so when you see a `Result` with a
               single parameter, look for the alias.
           - lines: 26
@@ -223,8 +224,9 @@ lessons:
             kind: ono
             body: |
               The same stable taxonomy (`io.not_found`, `resolve.command_not_found`, ...) that
-              `ErrorValue` uses. The two error types can therefore be converted into each other
-              without losing the identity of the failure.
+              `ErrorValue` uses. A higher layer can therefore turn a process error into a value
+              error without losing the identity of the failure: `ono-cli` does exactly that with
+              `ErrorValue::new(error.code(), error.message().to_owned())`.
           - lines: 64
             token: "impl fmt::Display for Error"
             kind: rust
@@ -252,13 +254,16 @@ lessons:
             kind: flow
             body: |
               The standard library's `io::ErrorKind` has many variants, and new ones can be
-              added in later Rust versions. Four are mapped explicitly...
+              added in later Rust versions. Three are mapped explicitly, each to its own code...
           - lines: 82
             token: "_ => ErrorCode::IoPermissionDenied"
             kind: flow
             body: |
-              ...and the wildcard `_` catches every other kind. Without it, the `match` would not
-              compile, because `io::ErrorKind` has more variants than the four listed.
+              ...and the wildcard `_` catches every other kind and gives it the taxonomy's
+              fourth I/O code, `io.permission_denied`. Without it, the `match` would not compile: `io::ErrorKind` has
+              far more variants than the three listed, and it is marked `#[non_exhaustive]`, so
+              code outside the standard library must always have a wildcard arm when matching
+              on it.
       - type: prose
         kind: ono
         title: Two error types, on purpose
@@ -279,12 +284,12 @@ lessons:
         exercise_type: predict
         prompt: |
           This test sits at the bottom of the same file. Error 24 is `EMFILE` ("too many open
-          files"), which `io::ErrorKind` does not classify as any of the four kinds in
+          files"), which `io::ErrorKind` does not classify as any of the three kinds listed in
           `code_for_io`. Predict whether both assertions pass, and explain why.
         snippets: [c06-process-error-test]
         hints:
           - level: 1
-            body: Which arm of the `match` on line 78 handles an I/O error that is none of the four listed kinds?
+            body: Which arm of the `match` on line 78 handles an I/O error that is none of the three listed kinds?
           - level: 2
             body: |
               `from_io(context, error)` builds `Self::new(code_for_io(error), format!("{context}: {error}"))`.
@@ -314,8 +319,9 @@ lessons:
           - text: "`std::result::Result<OwnedFd, std::io::Error>`"
             correct: false
             feedback: |
-              Inside this crate, the name `Result` refers to the alias from `error.rs`, whose
-              error type is `crate::Error`, not `io::Error`.
+              A `Result` with a single type parameter cannot be the standard `Result`, which
+              needs two. It is the alias from `error.rs`, whose error type is `crate::Error`,
+              not `io::Error`.
           - text: "`Option<OwnedFd>`"
             correct: false
             feedback: |
@@ -357,9 +363,10 @@ lessons:
           so an error of type `E` can leave a function whose error type is `F`, as long as the
           conversion "`F` from `E`" exists. When `E` and `F` are the same type, as in every
           function in this lesson, the conversion does nothing: every type converts into itself.
-          Ono-Sendai also uses the non-trivial case. The evaluator in `ono-cli` returns its own
-          `Flow` type, and it declares how an `ErrorValue` becomes a `Flow`, so `?` wraps value
-          errors automatically. [Chapter 13](concept:conversions) reads that code; for now,
+          Ono-Sendai also uses the non-trivial case. The evaluator in `ono-cli` returns
+          `Result<T, Flow>`, where the enum `Flow` says why evaluation stopped early (an error,
+          but also `break`, `return` or `exit`). It declares how an `ErrorValue` becomes a
+          `Flow`, so `?` wraps value errors automatically. [Chapter 13](concept:conversions) reads that code; for now,
           remember that `?` *returns early and converts*.
 
           `?` on an `Option` (the previous chapter) returns `None` early. The two forms do not
@@ -400,8 +407,9 @@ lessons:
             token: "ByteUnit::from_suffix(suffix)"
             kind: flow
             body: |
-              Same pattern again. `from_suffix` returns `Option<ByteUnit>` (`None` for an unknown
-              unit such as `GB`), and it is adapted and propagated in one line.
+              Same pattern again. `from_suffix` returns `Option<ByteUnit>` (`None` for a suffix
+              that is not a byte unit, such as `gib` — matching is case-sensitive — or `s`), and
+              it is adapted and propagated in one line.
           - lines: 160-162
             kind: flow
             body: |
@@ -411,8 +419,8 @@ lessons:
           - lines: 163-165
             kind: rust
             body: |
-              The tail expression has no `?`. `scale_to_base` returns `Option<i128>` (`None` on
-              overflow). `.map(...)` transforms the value inside a `Some`, and `.ok_or_else(...)`
+              The tail expression has no `?`. `scale_to_base` returns `Option<i128>` (`None` if
+              the number part is not a number, such as `1.2.3`, or if the result overflows). `.map(...)` transforms the value inside a `Some`, and `.ok_or_else(...)`
               makes it a `Result<ByteSize, ErrorValue>`. That is already the return type, so it
               is returned as is.
       - type: diagram
@@ -426,14 +434,14 @@ lessons:
             ├─ number starts with '-' ─ return ─► Err(unit_error)
             └─ scale_to_base(...)
                   ├─ Some(bytes) ──────────────► Ok(ByteSize(bytes))
-                  └─ None (overflow) ──────────► Err(unit_error)
+                  └─ None (bad number/overflow) ► Err(unit_error)
         description: |
           `ByteSize::parse` has three early exits and one final expression. If `split_literal`
           finds no number or no unit, the `?` on line 158 returns an error. If the unit is not
           a byte unit, the `?` on line 159 returns an error. If the number is negative, the
           explicit `return` on line 161 returns an error. Otherwise, the final expression
-          scales the number: if it fits, the result is `Ok` with the size, and if the
-          calculation overflows, the result is an error. All four failures use the same
+          scales the number: if it fits, the result is `Ok` with the size, and if the number
+          part cannot be read as a number or the calculation overflows, the result is an error. All four failures use the same
           `type.invalid_unit` error built by `unit_error`.
       - type: code
         snippet: c06-schema-id-from-str
@@ -512,8 +520,9 @@ lessons:
         id: result-errors-03-q2
         exercise_type: trace-control-flow
         prompt: |
-          `RecordBuilder::set` is one step of the record-building chain from chapter 5
-          (`.set("known", ...)?.set(...)?.build()`). Trace what happens when the schema does not
+          `RecordBuilder::set` is one step of the chain a provider uses to build a record:
+          `RecordValue::builder(schema, provenance).set("name", ...)?.set("version", ...)?`,
+          and finally `.build()` (the Linux package provider is written exactly like this). Trace what happens when the schema does not
           declare `name`. Which line returns, what does the caller receive, and what happens to
           the builder `self` that was passed in?
         snippets: [c06-record-builder-set]

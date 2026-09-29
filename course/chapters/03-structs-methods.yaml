@@ -122,7 +122,9 @@ lessons:
           `self.end - self.start` on unsigned integers: if `start` could be larger than `end`,
           the subtraction would underflow. The compiler enforces the privacy; the module's own
           constructors enforce the rule. Together they make it impossible for another crate to
-          build a backwards span.
+          build a backwards span. (`of`, which you read in chapter 2, still checks
+          `start > end` anyway, as a defensive check: rendering a diagnostic must not panic even
+          if that rule were ever broken.)
       - type: exercise
         id: structs-methods-01-q1
         exercise_type: predict
@@ -222,8 +224,9 @@ lessons:
             kind: rust
             body: |
               No `Copy` this time. A `Column` owns a `String`, and a `String` owns memory on the
-              heap; duplicating it takes a real copy of the text, so Rust only allows it
-              explicitly, with `clone()`. Types that own heap memory are never `Copy`.
+              heap; duplicating it means allocating and copying the text, so `String` is not
+              `Copy` and Rust only duplicates it when asked, with `clone()`. A struct can be
+              `Copy` only if every one of its fields is, so `Column` cannot be either.
           - lines: 42
             token: "header: String"
             kind: type
@@ -255,7 +258,9 @@ lessons:
             body: |
               `&self` means the method **borrows** the column for reading: it gets a reference
               to it, not the column itself and not a copy. The caller keeps its `Column` and can
-              use it afterwards. Nothing can be changed through a `&self` reference.
+              use it afterwards. Through `&self` the method can read the fields but not assign
+              to them. (A few types are built to allow change through a shared reference;
+              chapter 15 reads them. `Column` has none.)
           - lines: 65
             token: "-> &str"
             kind: ownership
@@ -269,7 +274,8 @@ lessons:
             body: |
               `&` takes a reference to the field. Its type is `&String`, and Rust converts it to
               the `&str` the signature asks for automatically — a `&String` can always be viewed
-              as a `&str` (this automatic conversion is called *deref coercion*; chapter 15).
+              as a `&str` (this automatic conversion is called *deref coercion*;
+              [chapter 8](lesson:borrowing-02) reads it).
           - lines: 71
             token: "pub fn alignment(&self) -> Align {"
             kind: ownership
