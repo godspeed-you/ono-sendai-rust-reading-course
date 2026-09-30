@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Manifest overlay for every build type (see sourceSets in app/build.gradle).
+
+  androidx.core merges an app-private signature permission,
+  <applicationId>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION, into every app manifest for
+  ContextCompat.registerReceiver(..., RECEIVER_NOT_EXPORTED) on Android 7-12. Nothing in this app
+  registers a broadcast receiver, so the permission and its use are removed: the built APK/AAB
+  declares no uses-permission at all (verified by tests/mobile/android.test.mjs, the Android CI
+  workflow and the release workflow). src/main/AndroidManifest.xml itself requests nothing.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <permission
+        android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        tools:node="remove" />
+    <uses-permission
+        android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        tools:node="remove" />
+</manifest>

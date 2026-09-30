@@ -48,6 +48,11 @@ android {
             signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
         }
     }
+    // The manifest overlay removes the one permission a library merges in (see the file itself).
+    sourceSets {
+        debug.manifest.srcFile 'src/nopermissions/AndroidManifest.xml'
+        release.manifest.srcFile 'src/nopermissions/AndroidManifest.xml'
+    }
     lint {
         abortOnError true
     }
