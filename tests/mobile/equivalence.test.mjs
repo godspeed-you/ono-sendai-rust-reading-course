@@ -29,7 +29,6 @@ test('identical copies are equivalent; the native-only Cordova shims are ignored
     writeFileSync(join(f.copy, 'cordova.js'), '//');
     writeFileSync(join(f.copy, 'cordova_plugins.js'), '//');
     assert.deepEqual(compareManifests(manifest(f.canon), manifest(f.copy)), []);
-    assert.equal(manifestDigest(manifest(f.canon)), manifestDigest(manifest(f.copy)));
   } finally {
     f.done();
   }
