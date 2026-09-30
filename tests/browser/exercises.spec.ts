@@ -194,6 +194,7 @@ test.describe('exercises', () => {
   });
 
   test('keyboard only: hints, solution, multiple choice, annotations, menu', async ({ page }) => {
+    test.slow(); // long keyboard walk through a whole lesson; see navigation.spec.ts
     const enter: Activate = async (t) => {
       await tabTo(page, t);
       await page.keyboard.press('Enter');

@@ -94,6 +94,7 @@ test.describe('navigation', () => {
   });
 
   test('first and last lesson pager links lead home; every lesson links its neighbours', async ({ page }) => {
+    test.slow(); // visits all lessons: ~40 s on an idle machine, over the default 60 s on a busy one
     for (const [i, lesson] of lessons.entries()) {
       await open(page, lesson.path);
       const prev = page.locator('.pager a[rel=prev]');
