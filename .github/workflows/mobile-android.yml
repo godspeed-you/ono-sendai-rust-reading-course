@@ -1,0 +1,185 @@
+name: Mobile (Android)
+
+# Android validation (spec §65-§66, §68): build the normal course with the pinned toolchain,
+# synchronise dist/ into the Capacitor project, run the mobile static tests, build the debug APK,
+# lint, build the release AAB (debug-signed: no store secrets exist or are needed here), then
+# run the installed-app test suite on emulators: API 36 phone (whole suite), API 36 tablet
+# (tablet sizes) and API 24 phone (minimum-SDK smoke run, minsdk.spec.ts). APK, AAB, lint report, screenshots,
+# logcat and test reports are uploaded as artifacts.
+#
+# Store signing is not part of this workflow; release.yml signs the release APK/AAB when the
+# repository secrets exist (see docs/mobile/android.md, "Signing").
+
+on:
+  push:
+    branches: [main, mobile-v1]
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - 'tests/mobile/**'
+      - 'assets/**'
+      - 'generator/**'
+      - 'course/**'
+      - '.github/workflows/mobile-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUNDLETOOL_VERSION: 1.18.3
+  BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: Build the course (the one canonical dist/)
+        run: scripts/course build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+
+      - name: Install the pinned Capacitor packages
+        run: cd mobile && npm ci
+
+      - name: Synchronise dist/ into the native projects (proves content equivalence)
+        run: node mobile/tools/mobile.mjs sync
+
+      - name: Mobile static tests
+        run: MOBILE_REQUIRE_SYNC=1 node --test "tests/mobile/*.test.mjs"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Debug APK, lint, release AAB and APK (debug key)
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon assembleDebug lint bundleRelease assembleRelease
+
+      - name: Fetch bundletool (pinned, checksum verified)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" \
+            "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VERSION/bundletool-all-$BUNDLETOOL_VERSION.jar"
+          echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
+
+      - name: Check the built packages (permissions, versions, SDK levels, embedded dist/)
+        run: |
+          ONO_REQUIRE_ANDROID_BUILD=1 ONO_BUNDLETOOL="$RUNNER_TEMP/bundletool.jar" node --test tests/mobile/android.test.mjs
+          out=mobile/android/app/build/outputs
+          node mobile/tools/mobile.mjs verify-package $out/apk/debug/app-debug.apk
+          node mobile/tools/mobile.mjs verify-package $out/apk/release/app-release.apk
+          node mobile/tools/mobile.mjs verify-package $out/bundle/release/app-release.aab
+          {
+            echo "### Android package sizes"
+            echo '```'
+            ls -l $out/apk/debug/app-debug.apk $out/apk/release/app-release.apk $out/bundle/release/app-release.aab
+            du -sh dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-packages
+          path: |
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/android/app/build/outputs/apk/release/app-release.apk
+            mobile/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-lint-report
+          path: mobile/android/app/build/reports/
+          if-no-files-found: ignore
+
+  emulator:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: phone-api36
+            api-level: 36
+            profile: pixel_7
+            args: ''
+          - name: tablet-api36
+            api-level: 36
+            profile: pixel_tablet
+            args: 'tablet.spec.ts'
+          - name: phone-api24-smoke
+            api-level: 24
+            profile: pixel_7
+            args: 'minsdk.spec.ts'
+    name: emulator (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-packages
+          path: mobile/android/app/build/outputs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install the test runner (Playwright drives the WebView over adb; no browser download)
+        run: npm ci
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Installed-app tests on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: ${{ matrix.profile }}
+          ram-size: 3072M
+          disk-size: 6G
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: tests/mobile/android/run.sh --avd ${{ matrix.name }} -- ${{ matrix.args }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-${{ matrix.name }}
+          path: mobile/build/android-test/
+          if-no-files-found: ignore
