@@ -1,6 +1,6 @@
 # Convenience targets. Every target runs the pinned generator through scripts/course.
 # Mobile targets package the normal dist/ (see mobile/README.md); they never render the course.
-.PHONY: build validate check-offline package test browser-test clean \
+.PHONY: mobile-info build validate check-offline package test browser-test clean \
         mobile-setup mobile-version mobile-sync mobile-verify android android-release android-bundle \
         ios ios-archive mobile-test mobile-test-android
 
@@ -27,6 +27,9 @@ browser-test: build ## Playwright tests against dist/ (network blocked)
 
 mobile-setup:   ## install the pinned Capacitor dependencies (mobile/package-lock.json)
 	cd mobile && npm ci
+
+mobile-info:    ## print course, Ono-Sendai pin, Capacitor, SDK baselines and build numbers
+	node mobile/tools/mobile.mjs info
 
 mobile-version: ## regenerate Android/iOS version metadata from course-lock.yaml
 	node mobile/tools/mobile.mjs version

@@ -1,0 +1,6 @@
+{
+  "comment": "Platform baselines the project builds against (spec §49-52). Checked by tests/mobile and CI.",
+  "android": { "minTargetSdk": 36, "jdk": 21 },
+  "apple": { "minXcode": "26.0", "minDeploymentTarget": "15.0" },
+  "node": "see .nvmrc"
+}

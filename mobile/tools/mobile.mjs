@@ -3,6 +3,7 @@
 //
 //   mobile.mjs sync      copy the canonical dist/ into the Android and iOS projects, then verify
 //   mobile.mjs verify    prove the packaged web content equals dist/ (hash manifests)
+//   mobile.mjs info      print the reproducibility record (course, Ono-Sendai pin, Capacitor, SDKs, build numbers)
 //   mobile.mjs version   write version.properties + Xcode version settings from course-lock.yaml
 //   mobile.mjs version --check   fail if they are out of date
 //
@@ -83,12 +84,34 @@ function cmdSync() {
   }, null, 2) + '\n');
 }
 
+function cmdInfo() {
+  const lock = readLock();
+  const rev = readVersionJson().buildRevision;
+  const code = buildNumbers(lock.courseVersion, rev);
+  const pkg = JSON.parse(readFileSync(join(MOBILE, 'package.json'), 'utf8'));
+  const vars = readFileSync(join(MOBILE, 'android/variables.gradle'), 'utf8');
+  const num = (n) => new RegExp(`${n}\\s*=\\s*(\\d+)`).exec(vars)?.[1];
+  const pbx = readFileSync(PBXPROJ, 'utf8');
+  const baseline = JSON.parse(readFileSync(join(MOBILE, 'baseline.json'), 'utf8'));
+  const info = {
+    course: { version: lock.courseVersion },
+    onoSendai: { version: lock.onoVersion, commit: lock.onoCommit },
+    capacitor: pkg.dependencies['@capacitor/core'],
+    plugins: Object.entries(pkg.dependencies).filter(([n]) => !/core|android|ios/.test(n)),
+    android: { applicationId: JSON.parse(readFileSync(join(MOBILE, 'capacitor.config.json'), 'utf8')).appId, versionName: lock.courseVersion, versionCode: code, minSdk: Number(num('minSdkVersion')), compileSdk: Number(num('compileSdkVersion')), targetSdk: Number(num('targetSdkVersion')) },
+    apple: { bundleId: /PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/.exec(pbx)?.[1], shortVersion: lock.courseVersion, build: String(code), deploymentTarget: /IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/.exec(pbx)?.[1], minXcode: baseline.apple.minXcode },
+    buildRevision: rev,
+  };
+  console.log(JSON.stringify(info, null, 2));
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 try {
   if (cmd === 'sync') cmdSync();
   else if (cmd === 'verify') cmdVerify();
+  else if (cmd === 'info') cmdInfo();
   else if (cmd === 'version') cmdVersion(args.includes('--check'));
-  else throw new Error('usage: mobile.mjs sync | verify | version [--check]');
+  else throw new Error('usage: mobile.mjs sync | verify | info | version [--check]');
 } catch (e) {
   console.error(`mobile: ${e.message}`);
   process.exit(1);
