@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# iOS/iPadOS build entry point (macOS + Xcode 26 or newer). See docs/mobile/apple.md.
+#
+#   scripts/ios build-simulator          Debug build for the iOS Simulator (one universal iPhone+iPad
+#                                        app), unsigned; checks it really targets iPhone and iPad
+#   scripts/ios test-simulator           build once, then run the in-app integration tests (AppTests)
+#                                        and the XCUITest smoke tests (AppUITests) on an iPhone and an
+#                                        iPad simulator; exports screenshots from the result bundles
+#   scripts/ios check-archive-readiness  unsigned Release archive + validation of everything App
+#                                        Store Connect checks that does not need credentials
+#   scripts/ios archive                  signed App Store archive      (needs APPLE_TEAM_ID)
+#   scripts/ios export                   archive + export .ipa          (needs APPLE_TEAM_ID)
+#   scripts/ios upload                   archive + upload to App Store Connect / TestFlight
+#                                        (needs APPLE_TEAM_ID and an App Store Connect API key)
+#
+# Signing input comes only from the environment, never from files in the repository:
+#   APPLE_TEAM_ID              10-character Apple Developer Team ID
+#   ASC_KEY_ID, ASC_ISSUER_ID  App Store Connect API key id and issuer id    (optional for archive,
+#   ASC_KEY_PATH               path to the AuthKey_<id>.p8 file, outside Git  required for upload)
+# Without an API key, `archive` uses the signing identities and accounts of the local Xcode.
+#
+# Options (environment): IOS_SIM_IPHONE (default "iPhone 17 Pro Max"), IOS_SIM_IPAD (default
+# "iPad Pro 13-inch (M5)"), IOS_SIM_OS (default "latest"), DEVELOPER_DIR (select an Xcode).
+# All output goes to mobile/build/ios (git-ignored).
+set -euo pipefail
+
+die() { printf 'scripts/ios: %s\n' "$*" >&2; exit 1; }
+say() { printf '\n==> %s\n' "$*"; }
+
+[ "$(uname -s)" = Darwin ] || die "this command needs macOS with Xcode 26 or newer (this is $(uname -s)).
+On Linux you can still run the static mobile checks: make mobile-test"
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PROJECT="$ROOT/mobile/ios/App/App.xcodeproj"
+SCHEME=App
+OUT="$ROOT/mobile/build/ios"
+DERIVED="$OUT/DerivedData"
+RESULTS="$OUT/results"
+APP_ID=io.github.godspeedyou.rustreadingcourse
+IPHONE=${IOS_SIM_IPHONE:-iPhone 17 Pro Max}
+IPAD=${IOS_SIM_IPAD:-iPad Pro 13-inch (M5)}
+SIM_OS=${IOS_SIM_OS:-latest}
+
+command -v xcodebuild >/dev/null 2>&1 || die "xcodebuild not found: install Xcode 26+ and run xcode-select"
+XCODE_VERSION=$(xcodebuild -version | awk '/^Xcode /{print $2; exit}')
+[ "${XCODE_VERSION%%.*}" -ge 26 ] 2>/dev/null || die "Xcode $XCODE_VERSION found; App Store Connect requires Xcode 26 or newer (set DEVELOPER_DIR)"
+
+require_web_copy() {
+  [ -f "$ROOT/mobile/ios/App/App/public/index.html" ] && [ -f "$ROOT/mobile/ios/App/App/capacitor.config.json" ] ||
+    die "the course is not synchronised into the iOS project: run \`make mobile-sync\` first"
+  node "$ROOT/mobile/tools/mobile.mjs" verify >/dev/null || die "the iOS web copy differs from dist/: run \`make mobile-sync\`"
+}
+
+xcb() {
+  mkdir -p "$OUT"
+  echo "+ xcodebuild $*"
+  xcodebuild -project "$PROJECT" -scheme "$SCHEME" -derivedDataPath "$DERIVED" "$@"
+}
+
+plist() { plutil -extract "$2" raw -o - "$1" 2>/dev/null || true; }
+
+expected_versions() {
+  node --input-type=module -e "
+    import { readLock, readVersionJson, buildNumbers } from '$ROOT/mobile/tools/lib.mjs';
+    const l = readLock();
+    console.log(l.courseVersion, buildNumbers(l.courseVersion, readVersionJson().buildRevision));"
+}
+
+cmd_build_simulator() {
+  require_web_copy
+  say "Simulator build (Debug, unsigned) with Xcode $XCODE_VERSION"
+  xcb -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+  local app="$DERIVED/Build/Products/Debug-iphonesimulator/App.app"
+  [ -d "$app" ] || die "no simulator app at $app"
+  local family
+  family=$(plutil -extract UIDeviceFamily json -o - "$app/Info.plist")
+  [ "$family" = "[1,2]" ] || die "built app UIDeviceFamily is $family, expected iPhone and iPad [1,2]"
+  echo "OK: $app (UIDeviceFamily $family: one app for iPhone and iPad simulators)"
+}
+
+sim_destination() { printf 'platform=iOS Simulator,name=%s,OS=%s' "$1" "$SIM_OS"; }
+
+cmd_test_simulator() {
+  require_web_copy
+  say "Build for testing (Debug) with Xcode $XCODE_VERSION"
+  xcb -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build-for-testing
+  rm -rf "$RESULTS" "$OUT/screenshots"
+  mkdir -p "$RESULTS" "$OUT/screenshots"
+  local failed=""
+  local device slug result
+  for device in "$IPHONE" "$IPAD"; do
+    slug=$(printf '%s' "$device" | tr -c 'A-Za-z0-9' '-' | tr -s '-')
+    result="$RESULTS/$slug.xcresult"
+    say "Tests on $device (iOS Simulator $SIM_OS)"
+    if ! xcb -configuration Debug -destination "$(sim_destination "$device")" CODE_SIGNING_ALLOWED=NO \
+        -resultBundlePath "$result" test-without-building; then
+      failed="$failed [$device]"
+    fi
+    if [ -d "$result" ]; then
+      mkdir -p "$OUT/screenshots/$slug"
+      xcrun xcresulttool export attachments --path "$result" --output-path "$OUT/screenshots/$slug" >/dev/null 2>&1 ||
+        echo "note: could not export attachments from $result"
+    fi
+  done
+  [ -z "$failed" ] || die "simulator tests failed on:$failed (result bundles in $RESULTS)"
+  echo "OK: simulator tests passed on $IPHONE and $IPAD; screenshots in $OUT/screenshots"
+}
+
+# Validates what App Store Connect would check that is under the project's control, on an
+# unsigned Release archive. Signing, provisioning and the upload itself need the owner's account.
+cmd_check_archive_readiness() {
+  require_web_copy
+  local archive="$OUT/unsigned.xcarchive"
+  rm -rf "$archive"
+  say "Unsigned Release archive (generic iOS device) with Xcode $XCODE_VERSION"
+  xcb -configuration Release -destination 'generic/platform=iOS' -archivePath "$archive" \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= archive
+  local app="$archive/Products/Applications/App.app"
+  [ -d "$app" ] || die "archive has no App.app"
+  local info="$app/Info.plist"
+  local problems=""
+  bad() { problems="$problems\n  - $*"; }
+  local want_version want_build
+  read -r want_version want_build <<EOF
+$(expected_versions)
+EOF
+
+  [ "$(plist "$info" CFBundleIdentifier)" = "$APP_ID" ] || bad "CFBundleIdentifier is $(plist "$info" CFBundleIdentifier)"
+  [ "$(plist "$info" CFBundleDisplayName)" = "Ono Rust Course" ] || bad "CFBundleDisplayName"
+  [ "$(plist "$info" CFBundleShortVersionString)" = "$want_version" ] || bad "CFBundleShortVersionString $(plist "$info" CFBundleShortVersionString) != course $want_version"
+  [ "$(plist "$info" CFBundleVersion)" = "$want_build" ] || bad "CFBundleVersion $(plist "$info" CFBundleVersion) != $want_build"
+  [ "$(plist "$info" MinimumOSVersion)" = "15.0" ] || bad "MinimumOSVersion $(plist "$info" MinimumOSVersion)"
+  [ "$(plutil -extract UIDeviceFamily json -o - "$info")" = "[1,2]" ] || bad "UIDeviceFamily is not iPhone+iPad"
+  [ "$(plist "$info" ITSAppUsesNonExemptEncryption)" = "false" ] || bad "ITSAppUsesNonExemptEncryption must be false"
+  [ "$(plist "$info" UILaunchStoryboardName)" = "LaunchScreen" ] || bad "no launch storyboard"
+  [ -d "$app/Base.lproj/LaunchScreen.storyboardc" ] || bad "LaunchScreen.storyboardc missing"
+  [ -z "$(plist "$info" UIRequiresFullScreen)" ] || bad "UIRequiresFullScreen opts out of iPad multitasking"
+  plutil -extract NSAppTransportSecurity xml1 -o - "$info" >/dev/null 2>&1 && bad "NSAppTransportSecurity exceptions present"
+  plutil -extract UIBackgroundModes xml1 -o - "$info" >/dev/null 2>&1 && bad "UIBackgroundModes present"
+  case "$(plist "$info" DTSDKName)" in iphoneos2[6-9]*|iphoneos[3-9][0-9]*) ;; *) bad "built with SDK $(plist "$info" DTSDKName), need iOS 26+ SDK";; esac
+  [ "$(plist "$info" CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName)" = "AppIcon" ] || bad "CFBundleIcons has no AppIcon"
+  [ "$(plist "$info" 'CFBundleIcons~ipad.CFBundlePrimaryIcon.CFBundleIconName')" = "AppIcon" ] || bad "CFBundleIcons~ipad has no AppIcon"
+  [ -f "$app/Assets.car" ] || bad "compiled asset catalog (Assets.car) missing"
+  ls "$app"/AppIcon60x60@2x.png >/dev/null 2>&1 || bad "iPhone home-screen icon (AppIcon60x60@2x.png) missing"
+  ls "$app"/AppIcon76x76@2x~ipad.png >/dev/null 2>&1 || bad "iPad home-screen icon (AppIcon76x76@2x~ipad.png) missing"
+  [ -f "$app/PrivacyInfo.xcprivacy" ] || bad "PrivacyInfo.xcprivacy not in the app bundle"
+  plutil -lint "$app/PrivacyInfo.xcprivacy" >/dev/null || bad "PrivacyInfo.xcprivacy is not a valid plist"
+  [ "$(lipo -archs "$app/App")" = "arm64" ] || bad "executable architectures: $(lipo -archs "$app/App")"
+  [ ! -e "$app/embedded.mobileprovision" ] || bad "unexpected provisioning profile in an unsigned archive"
+  [ -f "$app/public/index.html" ] || bad "course web root missing"
+  # The archived course is byte-for-byte the canonical dist/ (same check as mobile.mjs verify).
+  node --input-type=module -e "
+    import { DIST, manifest, compareManifests } from '$ROOT/mobile/tools/lib.mjs';
+    const p = compareManifests(manifest(DIST), manifest('$app/public'));
+    if (p.length) { console.error(p.join('\n')); process.exit(1); }" || bad "archived web content differs from dist/"
+  if grep -rIl --include='*.html' --include='*.js' --include='*.json' -E 'localhost:[0-9]+|livereload' "$app/public" "$app/capacitor.config.json" >/dev/null 2>&1; then
+    bad "development server reference in the archived app"
+  fi
+
+  local size
+  size=$(du -sk "$app" | awk '{print $1}')
+  {
+    echo "Archive readiness (unsigned): Xcode $XCODE_VERSION, SDK $(plist "$info" DTSDKName)"
+    echo "  bundle id        $(plist "$info" CFBundleIdentifier)"
+    echo "  version / build  $(plist "$info" CFBundleShortVersionString) / $(plist "$info" CFBundleVersion)"
+    echo "  minimum iOS      $(plist "$info" MinimumOSVersion), devices $(plutil -extract UIDeviceFamily json -o - "$info")"
+    echo "  app size         ${size} KiB (uncompressed .app)"
+  } | tee "$OUT/archive-readiness.txt"
+  if [ -n "$problems" ]; then
+    printf 'NOT READY:%b\n' "$problems" >&2
+    exit 1
+  fi
+  echo "OK: the archive satisfies every credential-free App Store requirement checked here."
+  echo "Remaining for a store upload: signing with the owner's Apple Developer team (scripts/ios archive)."
+}
+
+require_signing_env() {
+  [ -n "${APPLE_TEAM_ID:-}" ] || die "APPLE_TEAM_ID is not set.
+Signed archives need the repository owner's Apple Developer team, supplied through the environment:
+  export APPLE_TEAM_ID=XXXXXXXXXX            # Membership details in developer.apple.com
+  export ASC_KEY_ID=... ASC_ISSUER_ID=...    # App Store Connect API key (optional for archive,
+  export ASC_KEY_PATH=/secure/AuthKey_ID.p8  # required for upload); never commit these
+See docs/mobile/apple.md, \"Signing and distribution\"."
+  printf '%s' "$APPLE_TEAM_ID" | grep -Eq '^[A-Z0-9]{10}$' || die "APPLE_TEAM_ID must be the 10-character team identifier"
+}
+
+auth_args() {
+  if [ -n "${ASC_KEY_ID:-}" ] || [ -n "${ASC_ISSUER_ID:-}" ] || [ -n "${ASC_KEY_PATH:-}" ]; then
+    [ -n "${ASC_KEY_ID:-}" ] && [ -n "${ASC_ISSUER_ID:-}" ] && [ -f "${ASC_KEY_PATH:-/nonexistent}" ] ||
+      die "ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_PATH (an existing .p8 file) must be set together"
+    printf '%s\n' -allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" \
+      -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+  else
+    printf '%s\n' -allowProvisioningUpdates
+  fi
+}
+
+cmd_archive() {
+  require_web_copy
+  require_signing_env
+  local archive="$OUT/App.xcarchive"
+  local args=()
+  local a
+  while IFS= read -r a; do args+=("$a"); done < <(auth_args)
+  rm -rf "$archive"
+  say "Signed App Store archive for team $APPLE_TEAM_ID with Xcode $XCODE_VERSION"
+  xcb -configuration Release -destination 'generic/platform=iOS' -archivePath "$archive" \
+    "${args[@]}" DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic archive
+  echo "OK: $archive"
+}
+
+# export (destination=export, writes an .ipa) or upload (destination=upload, sends the build to
+# App Store Connect, where it appears in TestFlight after processing).
+cmd_export() {
+  local destination=$1
+  cmd_archive
+  local opts="$OUT/ExportOptions.plist"
+  cp "$ROOT/mobile/ios/ExportOptions.plist" "$opts"
+  plutil -replace teamID -string "$APPLE_TEAM_ID" "$opts"
+  plutil -replace destination -string "$destination" "$opts"
+  local args=()
+  local a
+  while IFS= read -r a; do args+=("$a"); done < <(auth_args)
+  if [ "$destination" = upload ] && [ -z "${ASC_KEY_ID:-}" ]; then
+    die "upload needs an App Store Connect API key (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH)"
+  fi
+  say "Export ($destination)"
+  rm -rf "$OUT/export"
+  xcodebuild -exportArchive -archivePath "$OUT/App.xcarchive" -exportOptionsPlist "$opts" \
+    -exportPath "$OUT/export" "${args[@]}"
+  echo "OK: $destination finished (see $OUT/export)"
+}
+
+case "${1:-}" in
+  build-simulator) cmd_build_simulator ;;
+  test-simulator) cmd_test_simulator ;;
+  check-archive-readiness) cmd_check_archive_readiness ;;
+  archive) cmd_archive ;;
+  export) cmd_export export ;;
+  upload) cmd_export upload ;;
+  *) die "usage: scripts/ios build-simulator | test-simulator | check-archive-readiness | archive | export | upload" ;;
+esac

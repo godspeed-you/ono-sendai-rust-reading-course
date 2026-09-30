@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  App privacy manifest (see docs/store/apple/privacy.md).
+  - No tracking, no tracking domains, no collected data: the course sends nothing anywhere.
+  - Required-reason API: UserDefaults. The @capacitor/preferences plugin stores the learner's
+    local progress backup ("CapacitorStorage.ono-rrc.snapshot") and Capacitor itself stores the
+    last installed binary version in UserDefaults. Both are read and written only by this app,
+    which is reason CA92.1.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

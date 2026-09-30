@@ -1,0 +1,11 @@
+// In-app integration tests (hosted in App.app). Test-only: never part of an archive.
+// Kept in an xcconfig so project.pbxproj only carries the shipping app's bundle identifier.
+PRODUCT_BUNDLE_IDENTIFIER = io.github.godspeedyou.rustreadingcourse.apptests
+PRODUCT_NAME = $(TARGET_NAME)
+GENERATE_INFOPLIST_FILE = YES
+SWIFT_VERSION = 5.0
+TARGETED_DEVICE_FAMILY = 1,2
+IPHONEOS_DEPLOYMENT_TARGET = 15.0
+TEST_HOST = $(BUILT_PRODUCTS_DIR)/App.app/App
+BUNDLE_LOADER = $(TEST_HOST)
+CODE_SIGN_STYLE = Automatic

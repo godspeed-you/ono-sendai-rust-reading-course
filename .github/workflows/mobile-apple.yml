@@ -1,0 +1,212 @@
+name: Mobile (Apple)
+
+# iOS/iPadOS validation on a macOS runner (spec §65, §67, §68). Builds the normal course, copies
+# that exact dist/ into the Capacitor iOS project, proves the copy is identical, runs the static
+# mobile tests, builds for the simulator, runs the in-app and XCUITest simulator tests on an iPhone
+# and an iPad, and validates archive readiness without credentials. Needs no secrets.
+#
+# The `testflight` job is separate and optional: it runs only on version tags or a manual run that
+# asks for it, and only when the owner has configured the signing secrets (docs/mobile/apple.md).
+
+on:
+  push:
+    branches: [main, mobile-v1]
+    tags: ['v*']
+    # Path filters do not apply to tag pushes.
+    paths:
+      - mobile/**
+      - tests/mobile/**
+      - assets/**
+      - generator/**
+      - course/**
+      - course-lock.yaml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - scripts/ios
+      - .nvmrc
+      - .github/workflows/mobile-apple.yml
+  pull_request:
+    paths:
+      - mobile/**
+      - tests/mobile/**
+      - assets/**
+      - generator/**
+      - course/**
+      - course-lock.yaml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - scripts/ios
+      - .nvmrc
+      - .github/workflows/mobile-apple.yml
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: Also sign, archive and upload to TestFlight (needs the Apple secrets)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-apple-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Explicit Xcode (spec §51): App Store Connect requires Xcode 26+ since 2026-04-28.
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  IOS_SIM_IPHONE: iPhone 17 Pro Max
+  IOS_SIM_IPAD: iPad Pro 13-inch (M5)
+
+jobs:
+  apple:
+    name: iOS/iPadOS simulator build, tests and archive readiness
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes available
+          sw_vers
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-macos-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Build the course (the one canonical dist/)
+        run: scripts/course build
+
+      - name: Install the pinned Capacitor dependencies
+        run: npm ci
+        working-directory: mobile
+
+      - name: Synchronise dist/ into the native projects and prove equality
+        run: node mobile/tools/mobile.mjs sync
+
+      - name: Version metadata matches course-lock.yaml
+        run: node mobile/tools/mobile.mjs version --check
+
+      - name: Mobile static tests (synchronised copy required)
+        run: node --test "tests/mobile/*.test.mjs"
+        env:
+          MOBILE_REQUIRE_SYNC: '1'
+
+      # The native steps below still run when a static test fails, so one run reports everything.
+      - uses: actions/cache@v4
+        if: ${{ !cancelled() }}
+        with:
+          path: mobile/build/ios/DerivedData/SourcePackages
+          key: spm-${{ hashFiles('mobile/ios/App/CapApp-SPM/Package.swift', 'mobile/package-lock.json') }}
+
+      - name: Simulator build (iPhone + iPad, unsigned)
+        if: ${{ !cancelled() }}
+        run: scripts/ios build-simulator
+
+      - name: Simulator tests (iPhone and iPad)
+        if: ${{ !cancelled() }}
+        run: scripts/ios test-simulator
+
+      - name: Archive readiness (unsigned Release archive)
+        if: ${{ !cancelled() }}
+        run: scripts/ios check-archive-readiness
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Apple build"
+            echo '```'
+            xcodebuild -version
+            cat mobile/build/ios/archive-readiness.txt 2>/dev/null || echo "archive readiness did not run"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-screenshots
+          path: mobile/build/ios/screenshots/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-xcresult
+          path: mobile/build/ios/results/
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Optional, credential-dependent (spec §68): isolated from ordinary CI, never runs on pull
+  # requests, and does nothing unless the owner has configured all four secrets below.
+  testflight:
+    name: Signed archive and TestFlight upload (owner credentials)
+    needs: apple
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.testflight)
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: app-store
+    steps:
+      - name: Check for signing secrets
+        id: creds
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ -n "$APPLE_TEAM_ID" ] && [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Apple signing secrets are not configured; skipping the TestFlight upload (see docs/mobile/apple.md)."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.present == 'true'
+
+      - name: Install the pinned Rust toolchain
+        if: steps.creds.outputs.present == 'true'
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.present == 'true'
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build and synchronise the course
+        if: steps.creds.outputs.present == 'true'
+        run: |
+          scripts/course build
+          (cd mobile && npm ci)
+          node mobile/tools/mobile.mjs sync
+
+      - name: Sign, archive and upload to App Store Connect
+        if: steps.creds.outputs.present == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          export ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$ASC_KEY_PATH"
+          chmod 600 "$ASC_KEY_PATH"
+          trap 'rm -f "$ASC_KEY_PATH"' EXIT
+          scripts/ios upload
