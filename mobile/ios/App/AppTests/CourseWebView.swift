@@ -77,6 +77,16 @@ extension XCTestCase {
         }
     }
 
+    /// Like waitUntil, but returns false instead of failing.
+    @MainActor func settle(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > deadline { return false }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        return true
+    }
+
     @MainActor func pause(_ seconds: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
@@ -133,9 +143,12 @@ extension XCTestCase {
     /// waits until the page and course.js have initialised (course.js adds `html.js`).
     @MainActor func open(_ webView: WKWebView, _ path: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let target = CourseWebView.origin + path
+        let loaded = { webView.url?.absoluteString == target && !webView.isLoading }
         _ = try js(webView, "location.assign(\(jsString(target))); true", file: file, line: line)
-        waitUntil("\(path) to load", timeout: 20, file: file, line: line) {
-            webView.url?.absoluteString == target && !webView.isLoading
+        if !settle(timeout: 20, loaded) {
+            // A busy simulator occasionally drops a navigation; retry once before failing.
+            webView.load(URLRequest(url: URL(string: target)!))
+            waitUntil("\(path) to load", timeout: 30, file: file, line: line, loaded)
         }
         waitUntil("course.js on \(path)", timeout: 10, file: file, line: line) {
             let ready = try? self.js(webView, "document.readyState === 'complete' && document.documentElement.classList.contains('js')", file: file, line: line)

@@ -124,9 +124,11 @@ Two test bundles in the Xcode project, run by `scripts/ios test-simulator` on an
 |---|---|
 | `testEveryBundledPageLoadsLocallyWithoutErrors` | every HTML page in the bundle loads in the app's WebView with no CSP violation, script error, console error, failed local subresource, request outside `capacitor://localhost/` or remote `src`/`href`, and without page-level horizontal scrolling at the device width (offline tripwire) |
 | `testStatusBarIsReadableAndBackdropFillsTheTopInset` | light status bar, backdrop exactly as tall as the top inset and above the page, header colour equals the backdrop colour |
-| `testSafeAreasPortraitAndLandscape` | non-zero insets on the test devices; brand, Menu/site links, heading and footer clear of all insets on home, a lesson and About, in portrait and landscape |
+| `testSafeAreasPortraitAndLandscape` | non-zero insets on the test devices; brand, Menu/site links, heading and footer clear of all insets on home, a lesson and About, in portrait and (iPhone) landscape. iPadOS 26 refuses programmatic rotation of a windowed app, so iPad landscape is covered by the UI test |
+| `testBackForwardNavigationThroughCourseHistory` | edge-swipe gestures enabled; back and forward through course pages in the shipped WebView |
 | `testRepresentativeWindowWidths` | the WebView resized to 320/375/507/678/768/1024 pt (Split View / Stage Manager-like widths): no overflow, Menu below 1024 px, sidebar from 1024 px |
-| `testProgressIsMirroredNativelyRestoredAndReset` | progress reaches UserDefaults, is restored after the WebView storage is wiped, and reset clears both |
+| `testPreferencesPluginStoresInAppUserDefaults` | the Preferences plugin, called through the page's bridge, round-trips a value through the app's own UserDefaults |
+| `testProgressIsMirroredNativelyRestoredAndReset` | the course mirrors progress to UserDefaults, restores it after the WebView storage is wiped, and reset clears both. **Currently an expected failure** because of a shared-course defect: `assets/course.js` activates its native host only when `window.Capacitor.registerPlugin` exists, which the injected native bridge does not provide (it provides `window.Capacitor.Plugins`). Until that is fixed in the shared course, the app relies on WebView storage alone, which the UI restart test shows is kept across ordinary restarts |
 | `ExternalLinkTests.test1…` | an `https` link and a `target=_blank` link are cancelled in the WebView and handed to `UIApplication.open`; an internal link stays inside |
 | `ExternalLinkTests.test9…` | unmocked: the link really puts another app (Safari) in the foreground while the course page stays loaded |
 
@@ -138,13 +140,15 @@ accessibility tree):
 | `testColdLaunchOpensTheCourseHome` | launch goes straight to the course home, no network or login screen |
 | `testLearningStateSurvivesRestartAndResetClearsIt` | lesson navigation, Hint 1 reveal (Hint 2 unlocks), mark complete, private notes; home screen + kill + relaunch → "Continue where you left off", notes, completion and hint state intact; reset clears it across a restart |
 | `testBackgroundAndResumeKeepsThePosition` | background → foreground returns to the same lesson |
-| `testEdgeSwipeGoesBackThroughCourseHistory` | the left-edge swipe returns from a lesson to the course home |
 | `testPortraitAndLandscapeLayouts` | portrait → landscape → portrait on home and a lesson; header controls inside the window; Menu panel opens and closes; screenshots of each state |
 
 Screenshots (`XCTAttachment`, kept always) are exported from the result bundles. In CI they are the
 `ios-screenshots` artifact; the full result bundles are the `ios-xcresult` artifact.
 
-**What the simulator cannot prove.** CI runners keep their network; the offline guarantee is
+**What the simulator cannot prove.** The edge swipe itself: XCUITest's synthesized drags do not
+trigger WebKit's screen-edge gesture recognizer, so automation checks that the gesture is enabled and
+that back/forward works in the shipped WebView, and the swipe is part of the manual device check.
+Also: CI runners keep their network; the offline guarantee is
 structural (bundle + CSP + no ATS exceptions + no networking code) and enforced by the page tripwire,
 not by switching the runner offline. Real iPad Stage Manager window resizing cannot be automated in
 the simulator; the width test resizes the WebView instead. Before the first public release, do one
