@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the page background (bg) of assets/course.css (light). -->
+    <color name="course_background">#FBFAF7</color>
+    <!-- The course header colour (header-bg), also the launcher icon background. -->
+    <color name="splash_background">#0B1F2A</color>
+    <color name="course_mark">#5EEAD4</color>
+</resources>

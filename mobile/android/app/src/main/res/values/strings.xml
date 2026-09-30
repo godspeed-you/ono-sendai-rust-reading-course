@@ -2,6 +2,4 @@
 <resources>
     <string name="app_name">Ono Rust Course</string>
     <string name="title_activity_main">Ono Rust Course</string>
-    <string name="package_name">io.github.godspeedyou.rustreadingcourse</string>
-    <string name="custom_url_scheme">io.github.godspeedyou.rustreadingcourse</string>
 </resources>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the page background (bg) of assets/course.css under prefers-color-scheme: dark. -->
+    <color name="course_background">#11161C</color>
+</resources>

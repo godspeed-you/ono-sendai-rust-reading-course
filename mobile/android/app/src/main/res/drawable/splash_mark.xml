@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launch-screen icon: the course's ">_" mark (same paths as assets/favicon.svg and
+  mobile/resources/*.svg) centred in the 240dp splash icon area, inside its 160dp visible circle.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="40"
+    android:viewportHeight="40">
+    <group android:translateX="3.5" android:translateY="3.5">
+        <path
+            android:pathData="M9,11l6,5l-6,5"
+            android:strokeColor="@color/course_mark"
+            android:strokeWidth="3"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M17,22h7"
+            android:strokeColor="@color/course_mark"
+            android:strokeWidth="3"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

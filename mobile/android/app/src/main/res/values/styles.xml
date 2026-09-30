@@ -1,22 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Native themes only: the launch screen and the window behind the WebView. Everything the learner
+  reads is the generated course in the WebView; no lesson is styled here.
+  - AppTheme.NoActionBarLaunch: the androidx core-splashscreen theme shown while the process starts
+    (Android 12+ system splash, and the compat splash on Android 7-11). No delay is added: it is
+    removed on the first drawn frame.
+  - AppTheme.NoActionBar: what BridgeActivity switches to. Follows the system light/dark setting,
+    like the course (prefers-color-scheme); its window colour is the course page colour, so the
+    areas behind the status and navigation bars blend with the page.
+-->
 <resources>
-
-    <!-- Base application theme. -->
-    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
-        <!-- Customize your theme here. -->
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <item name="colorAccent">@color/colorAccent</item>
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/course_background</item>
     </style>
 
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <item name="android:windowBackground">@color/course_background</item>
     </style>
 
-
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

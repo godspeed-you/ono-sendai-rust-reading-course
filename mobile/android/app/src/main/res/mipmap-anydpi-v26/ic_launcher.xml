@@ -6,4 +6,8 @@
     <foreground>
         <inset android:drawable="@mipmap/ic_launcher_foreground" android:inset="16.7%" />
     </foreground>
+    <!-- Android 13+ themed icons: the ">_" mark alone, tinted by the launcher. -->
+    <monochrome>
+        <inset android:drawable="@mipmap/ic_launcher_foreground" android:inset="16.7%" />
+    </monochrome>
 </adaptive-icon>
