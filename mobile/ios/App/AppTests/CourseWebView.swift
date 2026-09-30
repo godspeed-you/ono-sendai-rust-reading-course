@@ -106,6 +106,21 @@ extension XCTestCase {
         return result.value
     }
 
+    /// Runs an async function body (may `await`) in the page and returns its result.
+    @MainActor func asyncJS(_ webView: WKWebView, _ body: String, _ arguments: [String: Any] = [:],
+                            file: StaticString = #filePath, line: UInt = #line) throws -> Any? {
+        let outcome = Box<Result<Any, Error>?>(nil)
+        webView.callAsyncJavaScript(body, arguments: arguments, in: nil, in: .page) { result in
+            outcome.value = result
+        }
+        waitUntil("async JavaScript result", timeout: 15, file: file, line: line) { outcome.value != nil }
+        switch outcome.value {
+        case .success(let value): return value
+        case .failure(let error): throw error
+        case .none: return nil
+        }
+    }
+
     /// JSON-returning variant: the script must evaluate to JSON.stringify(...).
     @MainActor func jsJSON(_ webView: WKWebView, _ script: String, file: StaticString = #filePath, line: UInt = #line) throws -> [String: Any] {
         let raw = try js(webView, script, file: file, line: line)

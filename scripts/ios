@@ -42,7 +42,9 @@ IPAD=${IOS_SIM_IPAD:-iPad Pro 13-inch (M5)}
 SIM_OS=${IOS_SIM_OS:-latest}
 
 command -v xcodebuild >/dev/null 2>&1 || die "xcodebuild not found: install Xcode 26+ and run xcode-select"
-XCODE_VERSION=$(xcodebuild -version | awk '/^Xcode /{print $2; exit}')
+# Read the whole output first: closing the pipe early makes xcodebuild abort (SIGPIPE).
+XCODE_INFO=$(xcodebuild -version)
+XCODE_VERSION=$(printf '%s\n' "$XCODE_INFO" | awk '/^Xcode /{print $2}')
 [ "${XCODE_VERSION%%.*}" -ge 26 ] 2>/dev/null || die "Xcode $XCODE_VERSION found; App Store Connect requires Xcode 26 or newer (set DEVELOPER_DIR)"
 
 require_web_copy() {
@@ -78,6 +80,43 @@ cmd_build_simulator() {
   echo "OK: $app (UIDeviceFamily $family: one app for iPhone and iPad simulators)"
 }
 
+# Copies the screenshots the tests attached (XCTAttachment, named "<device> - <state>") out of a
+# result bundle under readable names; failure screenshots are kept too, videos are dropped.
+export_screenshots() {
+  local raw="$OUT/attachments-tmp"
+  rm -rf "$raw"
+  mkdir -p "$raw" "$2"
+  if ! xcrun xcresulttool export attachments --path "$1" --output-path "$raw" >/dev/null 2>&1; then
+    echo "note: could not export attachments from $1"
+    return 0
+  fi
+  node --input-type=module -e "
+    import { readFileSync, copyFileSync, existsSync } from 'node:fs';
+    import { join } from 'node:path';
+    const [raw, out] = process.argv.slice(1);
+    const found = [];
+    const walk = (x, test) => {
+      if (Array.isArray(x)) x.forEach((y) => walk(y, test));
+      else if (x && typeof x === 'object') {
+        const t = typeof x.testIdentifier === 'string' ? x.testIdentifier.replace(/.*\\//, '').replace(/\\(\\)$/, '') : test;
+        if (typeof x.exportedFileName === 'string') found.push({ ...x, test: t });
+        Object.values(x).forEach((y) => walk(y, t));
+      }
+    };
+    walk(JSON.parse(readFileSync(join(raw, 'manifest.json'), 'utf8')));
+    let n = 0;
+    for (const a of found) {
+      if (!/\\.(png|jpe?g|heic)$/i.test(a.exportedFileName) || !existsSync(join(raw, a.exportedFileName))) continue;
+      const base = (a.suggestedHumanReadableName || a.exportedFileName).replace(/_[0-9]+_[0-9A-F-]{36}(?=\\.)/i, '');
+      const name = (a.isAssociatedWithFailure ? 'FAILURE ' + (a.test || '') + ' ' + n + ' ' : '') + base.replace(/[^A-Za-z0-9 ()._-]+/g, '_');
+      copyFileSync(join(raw, a.exportedFileName), join(out, name));
+      n++;
+    }
+    console.log('exported ' + n + ' screenshots to ' + out);
+  " "$raw" "$2" || echo "note: could not read the attachment manifest of $1"
+  rm -rf "$raw"
+}
+
 sim_destination() { printf 'platform=iOS Simulator,name=%s,OS=%s' "$1" "$SIM_OS"; }
 
 cmd_test_simulator() {
@@ -96,11 +135,7 @@ cmd_test_simulator() {
         -resultBundlePath "$result" test-without-building; then
       failed="$failed [$device]"
     fi
-    if [ -d "$result" ]; then
-      mkdir -p "$OUT/screenshots/$slug"
-      xcrun xcresulttool export attachments --path "$result" --output-path "$OUT/screenshots/$slug" >/dev/null 2>&1 ||
-        echo "note: could not export attachments from $result"
-    fi
+    [ -d "$result" ] && export_screenshots "$result" "$OUT/screenshots/$slug"
   done
   [ -z "$failed" ] || die "simulator tests failed on:$failed (result bundles in $RESULTS)"
   echo "OK: simulator tests passed on $IPHONE and $IPAD; screenshots in $OUT/screenshots"

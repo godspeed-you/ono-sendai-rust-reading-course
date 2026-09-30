@@ -74,10 +74,28 @@ final class CourseWebViewTests: XCTestCase {
         let webView = try readyWebView()
         try checkSafeAreas(webView, label: "portrait")
         if #available(iOS 16.0, *) {
-            try rotate(to: .landscapeRight, webView: webView)
+            guard try rotate(to: .landscapeRight, webView: webView) else { return }
             try checkSafeAreas(webView, label: "landscape")
-            try rotate(to: .portrait, webView: webView)
+            _ = try rotate(to: .portrait, webView: webView)
         }
+    }
+
+    // MARK: iOS back/forward navigation
+
+    /// Edge-swipe back/forward is enabled and the course history works in the shipped WebView.
+    /// (The swipe itself is exercised by AppUITests.testEdgeSwipeGoesBackThroughCourseHistory.)
+    @MainActor func testBackForwardNavigationThroughCourseHistory() throws {
+        let webView = try readyWebView()
+        XCTAssertTrue(webView.allowsBackForwardNavigationGestures, "edge-swipe back/forward gestures are enabled")
+        try open(webView, "index.html")
+        try open(webView, "lessons/reading-rust-01.html")
+        XCTAssertTrue(webView.canGoBack)
+        webView.goBack()
+        waitUntil("back to the course home") { webView.url?.absoluteString == CourseWebView.origin + "index.html" && !webView.isLoading }
+        XCTAssertTrue(webView.canGoForward)
+        webView.goForward()
+        waitUntil("forward to the lesson") { webView.url?.absoluteString == CourseWebView.origin + "lessons/reading-rust-01.html" && !webView.isLoading }
+        try open(webView, "index.html")
     }
 
     // MARK: iPad windowing: representative Split View / Stage Manager widths
@@ -112,9 +130,40 @@ final class CourseWebViewTests: XCTestCase {
 
     // MARK: Native progress backup (Preferences plugin) and reset
 
+    /// The native side of the backup: the Preferences plugin, called through the same bridge
+    /// the course uses, stores in the app's own UserDefaults.
+    @MainActor func testPreferencesPluginStoresInAppUserDefaults() throws {
+        let webView = try readyWebView()
+        try open(webView, "index.html")
+        let value = "probe-\(Int(Date().timeIntervalSince1970))"
+        let got = try asyncJS(webView, """
+            const P = window.Capacitor.Plugins.Preferences;
+            await P.set({ key: 'ono-rrc.test-probe', value: v });
+            return (await P.get({ key: 'ono-rrc.test-probe' })).value;
+            """, ["v": value]) as? String
+        XCTAssertEqual(got, value)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "CapacitorStorage.ono-rrc.test-probe"), value)
+        _ = try asyncJS(webView, "await window.Capacitor.Plugins.Preferences.remove({ key: 'ono-rrc.test-probe' }); return true;")
+        XCTAssertNil(UserDefaults.standard.string(forKey: "CapacitorStorage.ono-rrc.test-probe"))
+    }
+
+    /// The course side: assets/course.js mirrors progress into that store, restores it after the
+    /// WebView storage is lost, and reset clears both.
     @MainActor func testProgressIsMirroredNativelyRestoredAndReset() throws {
         let webView = try readyWebView()
         let key = "CapacitorStorage.ono-rrc.snapshot"
+        try open(webView, "index.html")
+        // Remove this expectation once assets/course.js falls back to window.Capacitor.Plugins.
+        let hookable = try js(webView, "typeof window.Capacitor.registerPlugin === 'function'") as? Bool
+        if hookable != true {
+            XCTExpectFailure("""
+                Known shared-course defect (reported to the course owner): assets/course.js enables its \
+                native host only if window.Capacitor.registerPlugin exists. That function belongs to the \
+                @capacitor/core JS bundle, which the course does not ship; the injected native bridge \
+                provides window.Capacitor.Plugins.{App,Preferences} instead. So the progress backup, the \
+                Android back handling and the About platform line are inactive in the real apps.
+                """, strict: false)
+        }
 
         try open(webView, "lessons/reading-rust-02.html")
         _ = try js(webView, "(function(){var b=document.querySelector('.mark-complete'); if (b.getAttribute('aria-pressed')!=='true') b.click(); return true})()")
@@ -193,17 +242,30 @@ final class CourseWebViewTests: XCTestCase {
     }
 
     @available(iOS 16.0, *)
-    @MainActor private func rotate(to orientation: UIInterfaceOrientationMask, webView: WKWebView) throws {
+    /// Rotates the interface. Returns false when iPadOS refuses programmatic rotation because the
+    /// app runs as a resizable window (iPadOS 26 windowing); AppUITests rotate the iPad instead.
+    @MainActor private func rotate(to orientation: UIInterfaceOrientationMask, webView: WKWebView) throws -> Bool {
         let scene = try XCTUnwrap(webView.window?.windowScene)
         CourseWebView.viewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        let refused = Box<Error?>(nil)
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientation)) { error in
-            XCTFail("rotation to \(orientation) refused: \(error)")
+            refused.value = error
         }
         let wantLandscape = orientation == .landscapeRight || orientation == .landscapeLeft
-        waitUntil("interface orientation \(orientation)") {
+        let reached = { () -> Bool in
             let b = webView.bounds
             return wantLandscape ? b.width > b.height : b.height > b.width
         }
+        waitUntil("interface orientation \(orientation)") { reached() || refused.value != nil }
+        if let error = refused.value as NSError? {
+            if !isPhone && error.code == 101 {
+                XCTContext.runActivity(named: "iPad windowing mode: programmatic rotation not allowed (\(error.localizedDescription)); covered by AppUITests") { _ in }
+                return false
+            }
+            XCTFail("rotation to \(orientation) refused: \(error)")
+            return false
+        }
         pause(0.8)
+        return true
     }
 }

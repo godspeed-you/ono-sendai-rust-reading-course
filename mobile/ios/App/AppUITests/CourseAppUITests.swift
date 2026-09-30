@@ -14,9 +14,8 @@ final class CourseAppUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    /// A fresh handle on the app, in portrait (tests leave the device where they want it).
+    /// A fresh handle on the app. Only the orientation test rotates, and it ends in portrait.
     @MainActor private func makeApp() {
-        XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
     }
 
@@ -52,8 +51,8 @@ final class CourseAppUITests: XCTestCase {
         XCTAssertFalse(element(beginningWith: "Hint 2").label.contains("open Hint 1 first"))
 
         // Mark complete.
-        tap(element(beginningWith: "Mark lesson complete"))
-        XCTAssertTrue(element(beginningWith: "Completed").waitForExistence(timeout: 10))
+        tap(web.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Mark lesson complete")).firstMatch)
+        XCTAssertTrue(completedButton.waitForExistence(timeout: 10))
 
         // Private notes.
         let note = "ui-test note \(Int(Date().timeIntervalSince1970))"
@@ -79,7 +78,7 @@ final class CourseAppUITests: XCTestCase {
         let reopenedNotes = app.textViews.firstMatch
         XCTAssertTrue(reopenedNotes.waitForExistence(timeout: 20))
         XCTAssertEqual(reopenedNotes.value as? String, note, "notes survived the restart")
-        XCTAssertTrue(element(beginningWith: "Completed").exists, "completion survived the restart")
+        XCTAssertTrue(completedButton.waitForExistence(timeout: 10), "completion survived the restart")
         XCTAssertFalse(element(beginningWith: "Hint 2").label.contains("open Hint 1 first"), "opened hints survived the restart")
 
         // Reset clears it, also across a restart (native backup included).
@@ -114,9 +113,18 @@ final class CourseAppUITests: XCTestCase {
         tap(element(beginningWith: startLabel))
         XCTAssertTrue(lessonOneMarker.waitForExistence(timeout: 20))
         sleep(1)
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
-        start.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
+        // A screen-edge pan: the touch must begin within a few points of the left edge.
+        let window = app.windows.firstMatch
+        let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.55)).withOffset(CGVector(dx: 3, dy: 0))
+        let target = window.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.55))
+        edge.press(forDuration: 0.1, thenDragTo: target, withVelocity: .fast, thenHoldForDuration: 0.1)
+        if !element(beginningWith: startLabel).waitForExistence(timeout: 8) {
+            screenshot("edge-swipe-first-attempt")
+            let edge0 = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.4))
+            edge0.press(forDuration: 0.02, thenDragTo: target, withVelocity: .default, thenHoldForDuration: 0.3)
+        }
         XCTAssertTrue(element(beginningWith: startLabel).waitForExistence(timeout: 15), "edge swipe returned to the course home")
+        screenshot("edge-swipe-back")
     }
 
     // MARK: orientation, layout, screenshots
@@ -125,6 +133,7 @@ final class CourseAppUITests: XCTestCase {
         makeApp()
         app.launch()
         XCTAssertTrue(element(beginningWith: startLabel).waitForExistence(timeout: 30))
+        defer { XCUIDevice.shared.orientation = .portrait }
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .portrait] {
             XCUIDevice.shared.orientation = orientation
             sleep(2)
@@ -148,10 +157,11 @@ final class CourseAppUITests: XCTestCase {
             app.swipeDown(velocity: .fast)
         }
         // The navigator on narrow layouts: open and close the Menu panel.
-        let menu = app.buttons["Menu"]
+        reveal(element(beginningWith: "Ono-Sendai", type: .link))
+        let menu = web.buttons["Menu"]
         if menu.exists && menu.isHittable {
             menu.tap()
-            let close = app.buttons["Close menu"]
+            let close = web.buttons["Close menu"]
             XCTAssertTrue(close.waitForExistence(timeout: 5))
             screenshot("menu-open")
             close.tap()
@@ -173,29 +183,51 @@ final class CourseAppUITests: XCTestCase {
         web.descendants(matching: type).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
 
-    /// Scrolls the web content until the element is hittable, then taps it.
-    @MainActor private func tap(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    /// "Completed — mark as not complete": the lesson's completion button in its pressed state.
+    @MainActor private var completedButton: XCUIElement {
+        web.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Completed")).firstMatch
+    }
+
+    /// Scrolls the page (like a finger) until the element is on screen and hittable. Web elements
+    /// report their real page position, so the direction is known.
+    @MainActor private func reveal(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(element.waitForExistence(timeout: 20), "\(element) exists", file: file, line: line)
+        let window = app.windows.firstMatch.frame
         var tries = 0
-        while !element.isHittable && tries < 25 {
-            web.swipeUp(velocity: .slow)
+        while !element.isHittable && tries < 60 {
+            let f = element.frame
+            let distance = f.midY > window.midY ? f.midY - window.maxY : window.minY - f.midY
+            let velocity: XCUIGestureVelocity = distance > window.height * 2 ? .fast : .slow
+            if f.midY > window.midY { web.swipeUp(velocity: velocity) } else { web.swipeDown(velocity: velocity) }
             tries += 1
         }
-        var back = 0
-        while !element.isHittable && back < 25 {
-            web.swipeDown(velocity: .slow)
-            back += 1
-        }
+        if !element.isHittable { attachHierarchy("not reachable: \(element)") }
         XCTAssertTrue(element.isHittable, "\(element) can be reached", file: file, line: line)
+    }
+
+    @MainActor private func tap(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        reveal(element, file: file, line: line)
         element.tap()
     }
 
+    /// Opens one of the course's site links the way a reader does: from the header on wide
+    /// layouts, from the Menu panel on narrow ones.
+    @MainActor private func openSiteLink(_ label: String) {
+        reveal(element(beginningWith: "Ono-Sendai", type: .link))
+        let menu = web.buttons["Menu"]
+        if menu.exists && menu.isHittable {
+            menu.tap()
+            XCTAssertTrue(web.buttons["Close menu"].waitForExistence(timeout: 5), "Menu panel opened")
+        }
+        tap(web.links.matching(NSPredicate(format: "label == %@", label)).firstMatch)
+    }
+
     @MainActor private func resetProgress() throws {
-        tap(element(beginningWith: "About this build"))
-        tap(element(beginningWith: "Reset local progress"))
-        tap(element(beginningWith: "Yes, reset my progress"))
+        openSiteLink("About")
+        tap(web.buttons["Reset local progress"])
+        tap(web.buttons["Yes, reset my progress"])
         XCTAssertTrue(element(containing: "Your local progress for this course was reset").waitForExistence(timeout: 10))
-        tap(element(beginningWith: "Ono-Sendai", type: .link))
+        openSiteLink("Course home")
         XCTAssertTrue(element(beginningWith: startLabel).waitForExistence(timeout: 20))
     }
 
@@ -203,11 +235,21 @@ final class CourseAppUITests: XCTestCase {
     @MainActor private func checkChromeIsReachable(_ name: String) {
         let window = app.windows.firstMatch.frame
         let brand = element(beginningWith: "Ono-Sendai", type: .link)
-        XCTAssertTrue(brand.waitForExistence(timeout: 10), "brand link (\(name))")
+        reveal(brand)
         XCTAssertTrue(window.contains(brand.frame), "brand inside the window (\(name)): \(brand.frame) in \(window)")
-        let menu = app.buttons["Menu"]
-        let about = element(beginningWith: "About", type: .link)
-        XCTAssertTrue((menu.exists && menu.isHittable) || (about.exists && about.isHittable), "Menu or site links reachable (\(name))")
+        let menu = web.buttons["Menu"]
+        let about = web.links.matching(NSPredicate(format: "label == %@", "About")).firstMatch
+        let ok = (menu.exists && menu.isHittable) || (about.exists && about.isHittable)
+        if !ok { attachHierarchy("chrome \(name)") }
+        XCTAssertTrue(ok, "Menu or site links reachable (\(name)); window \(window)")
+    }
+
+    @MainActor private func attachHierarchy(_ name: String) {
+        screenshot("FAILURE \(name)")
+        let text = XCTAttachment(string: app.debugDescription)
+        text.name = "hierarchy \(name)"
+        text.lifetime = .keepAlways
+        add(text)
     }
 
     @MainActor private func screenshot(_ name: String) {
