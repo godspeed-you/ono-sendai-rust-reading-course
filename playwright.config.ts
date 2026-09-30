@@ -20,7 +20,7 @@ const phone = { isMobile: true, hasTouch: true };
 const flow = /(navigation|exercises|final)\.spec\.ts$/;
 const functional = /(storage|nojs|a11y)\.spec\.ts$/;
 // Viewport-independent specs, or specs that create their own phone/tablet contexts: run once.
-const once = /(offline|orientation|zoom|hover)\.spec\.ts$/;
+const once = /(offline|orientation|zoom|hover|native-host)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: 'tests/browser',

@@ -85,7 +85,7 @@ pub(crate) fn exercise(
 
     if ex.has_scratchpad() {
         out.push_str(&format!(
-            "<div class=\"scratchpad\">\n<label for=\"{eid}-notes\">Private notes — stay in this browser and are never graded</label>\n<textarea id=\"{eid}-notes\" class=\"notes\" data-exercise=\"{id}\" rows=\"5\" spellcheck=\"false\"></textarea>\n<p class=\"notes-status\" aria-live=\"polite\"></p>\n</div>\n",
+            "<div class=\"scratchpad\">\n<label for=\"{eid}-notes\">Private notes — stay on this device and are never graded</label>\n<textarea id=\"{eid}-notes\" class=\"notes\" data-exercise=\"{id}\" rows=\"5\" spellcheck=\"false\"></textarea>\n<p class=\"notes-status\" aria-live=\"polite\"></p>\n</div>\n",
             id = escape(&ex.id),
         ));
     }

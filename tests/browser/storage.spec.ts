@@ -119,7 +119,7 @@ test.describe('local storage', () => {
     const notes = page.locator('textarea.notes').first();
     await notes.fill('first reading: the loop ends on the first error');
     await notes.blur();
-    await expect(page.locator('.notes-status').first()).toHaveText('Saved in this browser only.');
+    await expect(page.locator('.notes-status').first()).toHaveText('Saved on this device only.');
     await page.reload();
     await expect(box).toBeChecked();
     await expect(notes).toHaveValue('first reading: the loop ends on the first error');

@@ -207,7 +207,7 @@ th, td { border: 1px solid var(--border); padding: 0.375rem 0.625rem; text-align
   border: 2px solid var(--focus);
   border-radius: var(--radius);
 }
-.skip-link:focus { top: 0.5rem; }
+.skip-link:focus { top: calc(0.5rem + env(safe-area-inset-top)); }
 
 /* ---------- Buttons and disclosures ---------- */
 
@@ -263,6 +263,12 @@ details[open] > summary::before { transform: rotate(45deg); }
 /* ---------- Header ---------- */
 
 .site-header { background: var(--header-bg); color: var(--header-fg); }
+/* Safe areas (notches, rounded corners, status and navigation bars, home indicator). The insets are
+   0 in ordinary browsers, so this changes nothing there; native apps run edge to edge and get real
+   values (viewport-fit=cover in every page). */
+.site-header { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.layout { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.site-footer { padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .header-inner {
   display: flex;
   flex-wrap: wrap; /* with enlarged text on a phone, Menu moves under the brand */
@@ -392,8 +398,8 @@ html.js .course-nav.is-open {
   padding: 0;
 }
 html.js body.nav-open { overflow: hidden; }
-html.js .course-nav.is-open .nav-head { flex: none; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
-html.js .course-nav.is-open .nav-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 1rem 3rem; }
+html.js .course-nav.is-open .nav-head { flex: none; padding: calc(0.75rem + env(safe-area-inset-top)) calc(1rem + env(safe-area-inset-right)) 0.75rem calc(1rem + env(safe-area-inset-left)); border-bottom: 1px solid var(--border); }
+html.js .course-nav.is-open .nav-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 calc(1rem + env(safe-area-inset-right)) calc(3rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left)); }
 
 @media (min-width: 1024px) {
   .site-links { display: block; margin-left: auto; }
@@ -409,8 +415,8 @@ html.js .course-nav.is-open .nav-body { flex: 1 1 auto; min-height: 0; overflow-
     grid-area: nav;
     display: block;
     position: sticky;
-    top: 0;
-    max-height: 100vh;
+    top: env(safe-area-inset-top);
+    max-height: calc(100vh - env(safe-area-inset-top));
     overflow-y: auto;
     border-top: 0;
     border-right: 1px solid var(--border);

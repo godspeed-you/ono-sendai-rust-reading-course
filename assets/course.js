@@ -6,6 +6,12 @@
  * navigation panel, and optional local progress (completed lessons, last lesson, hints,
  * checklists, private notes) with a reset.
  *
+ * When the course runs inside a native app (Capacitor, see mobile/), it also (a) keeps a small
+ * backup of the local progress in the platform's key/value store and restores it if the WebView's
+ * storage was cleared, and (b) routes the Android back button through the course's own history.
+ * Both are feature-detected and optional: in a browser, or if the native bridge fails, nothing
+ * below changes and the course behaves exactly as in the static release.
+ *
  * Rules: no network APIs, no dynamic code loading, no inline handlers, no HTML strings built from
  * data (text is always set via textContent / value). All storage access is wrapped; when storage
  * is unavailable the course keeps working with in-memory state and says so.
@@ -33,6 +39,77 @@
     }
   })();
 
+  /* ---------- Optional native host (Capacitor apps only) ---------- */
+
+  // Backup schema (documented in mobile/README.md): one preference, JSON
+  // {"v":1,"entries":{"<key without prefix>":"<string value>"}}. Unknown versions are ignored.
+  var SNAPSHOT = "ono-rrc.snapshot";
+  var SNAPSHOT_VERSION = 1;
+  var host = (function () {
+    try {
+      var c = window.Capacitor;
+      if (c && typeof c.isNativePlatform === "function" && c.isNativePlatform() && typeof c.registerPlugin === "function") {
+        return { prefs: c.registerPlugin("Preferences"), app: c.registerPlugin("App") };
+      }
+    } catch (e) { /* not a native app */ }
+    return null;
+  })();
+  var mirrorTimer = null;
+
+  function localEntries() {
+    var entries = {};
+    if (storage) {
+      try {
+        for (var i = 0; i < storage.length; i++) {
+          var k = storage.key(i);
+          if (k && k.indexOf(PREFIX) === 0) entries[k.slice(PREFIX.length)] = storage.getItem(k);
+        }
+      } catch (e) { /* fall back to memory below */ }
+    }
+    Object.keys(memory).forEach(function (k) { entries[k] = memory[k]; });
+    return entries;
+  }
+
+  function writeSnapshot() {
+    mirrorTimer = null;
+    if (!host) return;
+    try {
+      host.prefs.set({ key: SNAPSHOT, value: JSON.stringify({ v: SNAPSHOT_VERSION, entries: localEntries() }) })
+        .catch(function () { /* the local copy is still there */ });
+    } catch (e) { /* ignore */ }
+  }
+
+  function mirror(now) {
+    if (!host) return;
+    if (now) { if (mirrorTimer) window.clearTimeout(mirrorTimer); writeSnapshot(); return; }
+    if (!mirrorTimer) mirrorTimer = window.setTimeout(writeSnapshot, 300);
+  }
+
+  // If the WebView lost its storage (or it never worked), restore the backup before the page is
+  // initialised. Pages whose storage is intact pay nothing: no native call, no wait.
+  function restoreFromHost(done) {
+    if (!host || Object.keys(localEntries()).length > 0) { done(); return; }
+    var finished = false;
+    function finish() { if (!finished) { finished = true; window.clearTimeout(timer); done(); } }
+    var timer = window.setTimeout(finish, 1500);
+    try {
+      host.prefs.get({ key: SNAPSHOT }).then(function (r) {
+        try {
+          var snap = JSON.parse(r && r.value);
+          if (snap && snap.v === SNAPSHOT_VERSION && snap.entries && typeof snap.entries === "object") {
+            Object.keys(snap.entries).forEach(function (k) {
+              var v = snap.entries[k];
+              if (typeof v !== "string") return;
+              memory[k] = v;
+              if (storage) { try { storage.setItem(PREFIX + k, v); } catch (e) { /* memory copy remains */ } }
+            });
+          }
+        } catch (e) { /* corrupt backup: ignore it, the next save replaces it */ }
+        finish();
+      }, finish);
+    } catch (e) { finish(); }
+  }
+
   function load(key) {
     if (storage) {
       try {
@@ -44,6 +121,7 @@
 
   function save(key, value) {
     memory[key] = value;
+    mirror(false);
     if (storage) {
       try {
         storage.setItem(PREFIX + key, value);
@@ -57,6 +135,7 @@
 
   function remove(key) {
     delete memory[key];
+    mirror(false);
     if (storage) {
       try { storage.removeItem(PREFIX + key); } catch (e) { /* ignore */ }
     }
@@ -77,18 +156,21 @@
 
   function clearAll() {
     memory = {};
-    if (!storage) return true;
-    try {
-      var keys = [];
-      for (var i = 0; i < storage.length; i++) {
-        var k = storage.key(i);
-        if (k && k.indexOf(PREFIX) === 0) keys.push(k);
+    var ok = true;
+    if (storage) {
+      try {
+        var keys = [];
+        for (var i = 0; i < storage.length; i++) {
+          var k = storage.key(i);
+          if (k && k.indexOf(PREFIX) === 0) keys.push(k);
+        }
+        keys.forEach(function (k) { storage.removeItem(k); });
+      } catch (e) {
+        ok = false;
       }
-      keys.forEach(function (k) { storage.removeItem(k); });
-      return true;
-    } catch (e) {
-      return false;
     }
+    mirror(true); // the native backup is part of the learner's progress: reset clears it too
+    return ok;
   }
 
   function all(sel, root) {
@@ -101,6 +183,8 @@
   }
 
   /* ---------- Navigation panel (narrow screens) ---------- */
+
+  var closeNav = null;
 
   function initNav() {
     var toggle = doc.querySelector(".nav-toggle");
@@ -149,6 +233,12 @@
       setInert(false);
       if (restoreFocus) toggle.focus();
     }
+
+    closeNav = function () {
+      if (!nav.classList.contains("is-open")) return false;
+      shut(true);
+      return true;
+    };
 
     toggle.addEventListener("click", function () {
       if (nav.classList.contains("is-open")) shut(true); else open();
@@ -466,7 +556,7 @@
         var ok = ta.value === "" ? (remove(key), true) : save(key, ta.value);
         if (status) {
           status.textContent = ok
-            ? "Saved in this browser only."
+            ? "Saved on this device only."
             : "Not saved: this browser does not allow the course to store notes.";
         }
       }
@@ -517,6 +607,30 @@
     });
   }
 
+  /* ---------- Android back button (native app only) ---------- */
+
+  // Order: close a transient local panel; otherwise go back in the course's own history; only at
+  // the start of that history let Android move the app to the background. The event exists only
+  // on Android; iOS has no system back button.
+  function initNativeBack() {
+    if (!host) return;
+    try {
+      host.app.addListener("backButton", function (ev) {
+        if (closeNav && closeNav()) return;
+        var confirmBox = doc.querySelector(".reset-confirm:not([hidden])");
+        if (confirmBox) {
+          var no = confirmBox.querySelector(".reset-no");
+          if (no) { no.click(); return; }
+        }
+        if (ev && ev.canGoBack) { window.history.back(); return; }
+        host.app.minimizeApp().catch(function () { host.app.exitApp(); });
+      });
+    } catch (e) { /* without the bridge the platform default back behaviour applies */ }
+    var flush = function () { if (doc.visibilityState === "hidden") mirror(true); };
+    doc.addEventListener("visibilitychange", flush);
+    window.addEventListener("pagehide", function () { mirror(true); });
+  }
+
   function init() {
     showStorageNote();
     initNav();
@@ -529,8 +643,11 @@
     initChecklists();
     initNotes();
     initReset();
+    initNativeBack();
   }
 
-  if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", init);
-  else init();
+  function start() { restoreFromHost(init); }
+
+  if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", start);
+  else start();
 })();

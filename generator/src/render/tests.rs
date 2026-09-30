@@ -57,7 +57,7 @@ fn every_page_has_the_required_skeleton() {
         assert_eq!(html.matches("<h1").count(), 1, "{path}: exactly one h1");
         assert!(
             html.contains(
-                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+                "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">"
             ),
             "{path}"
         );
@@ -372,7 +372,7 @@ fn hints_and_solutions() {
     assert!(l1.contains("<details class=\"hint\" data-level=\"1\"><summary><span class=\"hint-title\">Hint 1</span></summary>"));
     assert!(l1.contains("<details class=\"hint\" data-level=\"2\"><summary><span class=\"hint-title\">Hint 2</span><span class=\"hint-lock\" hidden> — open Hint 1 first</span></summary>"));
     assert!(l1.contains("<details class=\"solution\"><summary>Show worked solution</summary>"));
-    assert!(l1.contains("<label for=\"ex-values-01-q2-notes\">Private notes — stay in this browser and are never graded</label>"));
+    assert!(l1.contains("<label for=\"ex-values-01-q2-notes\">Private notes — stay on this device and are never graded</label>"));
     let practice = page(&f, "lessons/eval-01.html");
     assert!(
         practice.contains("<summary>I have made my attempt — show the worked analysis</summary>")
