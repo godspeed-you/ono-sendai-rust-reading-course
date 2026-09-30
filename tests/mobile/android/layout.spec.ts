@@ -10,6 +10,7 @@ import * as h from './helpers';
 
 test.beforeAll(() => { h.resetDevice(); h.clearAppData(); });
 test.afterEach(() => h.resetDevice());
+test.beforeEach(() => test.skip(h.legacyWebView(), 'Playwright needs WebView 74+; API < 26 runs minsdk.spec.ts'));
 test.afterAll(() => h.closeDevice());
 
 const PAGES = ['index.html', h.LESSON, 'lessons/smart-pointers-02.html', 'glossary.html', 'about.html'];
@@ -200,6 +201,7 @@ test('accessibility: axe-core finds no serious or critical violations in the Web
 });
 
 test('accessibility: keyboard focus order, skip link and ARIA states of the menu', async () => {
+  h.clearAppData(); // hint 2 must still be locked
   const { page } = await h.coldStart('index.html');
   await h.open(page, h.LESSON);
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());

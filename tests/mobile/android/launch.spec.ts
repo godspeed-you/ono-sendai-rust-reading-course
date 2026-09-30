@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import * as h from './helpers';
 
 test.beforeAll(() => h.resetDevice());
+test.beforeEach(() => test.skip(h.legacyWebView(), 'Playwright needs WebView 74+; API < 26 runs minsdk.spec.ts'));
 test.afterAll(() => h.closeDevice());
 
 test('cold launch of a fresh install opens the course home directly @smoke', async () => {
@@ -29,12 +30,17 @@ test('cold launch of a fresh install opens the course home directly @smoke', asy
 
 test('cold start time to first course content (median of 3, recorded for the docs)', async () => {
   const times: number[] = [];
+  const content: number[] = [];
   for (let i = 0; i < 3; i++) {
-    const { totalTime } = await h.coldStart('index.html');
+    const { totalTime, contentMs, page } = await h.coldStart('index.html');
     times.push(totalTime);
+    content.push(contentMs);
+    const nav = await page.evaluate(() => Math.round((performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming).loadEventEnd));
+    h.note(`cold-start run ${i + 1}: first frame (am start -W TotalTime) ${totalTime}ms, course initialised ${contentMs}ms, page load ${nav}ms after navigation start`);
   }
   times.sort((a, b) => a - b);
-  h.note(`cold-start TotalTime runs=${times.join(',')}ms median=${times[1]}ms`);
+  content.sort((a, b) => a - b);
+  h.note(`cold-start median: first frame ${times[1]}ms, course content ready ${content[1]}ms (sdk ${h.sdkInt()})`);
   expect(times[1]).toBeLessThan(30_000); // emulator bound; the point is the recorded number
 });
 
@@ -64,7 +70,13 @@ test('after process death in the background: home page with "Continue where you 
   await h.open(page, h.LESSON);
   h.home();
   await h.sleep(1500);
+  // What the system does to a cached background app under memory pressure: `am kill` (only
+  // allowed for background processes), else SIGKILL from the app's own uid. The task and its
+  // saved state stay in Recents, as after a low-memory kill.
+  const pid = h.pidOf();
   h.sh(`am kill ${h.PKG}`);
+  const killed = await h.waitFor('process killed', () => !h.pidOf(), 5_000).catch(() => false);
+  if (!killed) h.runAs(`kill -9 ${pid}`, { allowFail: true });
   await h.waitFor('process killed', () => !h.pidOf(), 10_000);
   const t = h.launch();
   expect(t.state).toBe('COLD');

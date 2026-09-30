@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import * as h from './helpers';
 
 test.beforeAll(() => h.resetDevice());
+test.beforeEach(() => test.skip(h.legacyWebView(), 'Playwright needs WebView 74+; API < 26 runs minsdk.spec.ts'));
 test.afterAll(() => h.closeDevice());
 
 /** Progress a learner makes in one lesson: last lesson, notes, hint level, completion. */
@@ -96,10 +97,15 @@ for (const [name, raw] of [
     await page.locator(`textarea.notes[data-exercise="${h.LESSON_EX}"]`).blur();
     await h.sleep(800);
     await h.backgroundAndStop();
-    // The next save replaced the bad backup with a valid one.
+    // The next save replaced the bad backup with a valid one (schema v1, string entries only).
     const snap = h.snapshotFromPrefs();
     expect(snap?.v).toBe(1);
-    expect(snap?.entries[`notes:${h.LESSON_EX}`]).toBe('fresh');
+    expect(snap?.entries.last).toBe('reading-rust-01');
+    for (const v of Object.values(snap!.entries)) expect(typeof v).toBe('string');
+    // And the learner's note is there after a restart.
+    const again = await h.coldStart('index.html');
+    await h.open(again.page, h.LESSON);
+    await expect(again.page.locator(`textarea.notes[data-exercise="${h.LESSON_EX}"]`)).toHaveValue('fresh');
   });
 }
 

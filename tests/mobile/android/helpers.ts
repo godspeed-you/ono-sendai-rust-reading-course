@@ -167,9 +167,13 @@ export async function coursePage(path?: string | RegExp, timeout = 60_000): Prom
 export async function coldStart(path?: string | RegExp) {
   forceStop();
   await sleep(300);
+  const t0 = Date.now();
   const t = launch();
   const page = await coursePage(path);
-  return { page, ...t };
+  // Wall-clock time from `am start` until the course page is loaded and course.js initialised
+  // (observed over the DevTools socket, so it includes up to one polling interval of slack).
+  const contentMs = Date.now() - t0;
+  return { page, ...t, contentMs };
 }
 
 /** The page URL relative to the packaged course root. */
@@ -341,3 +345,75 @@ export const LESSON = 'lessons/reading-rust-01.html';   // multiple choice, 2 or
 export const LESSON_EX = 'reading-rust-01-q2';
 export const CHECKLIST_LESSON = 'lessons/independent-reading-03.html';
 export const CHAPTER = 'chapters/01-reading-rust.html';
+
+/* ---------- Old WebViews (Android 7-9 images): raw DevTools protocol ---------- */
+
+/**
+ * Playwright attaches to WebViews over flattened CDP sessions, which need Chromium 74+, and finds
+ * them with `ps -A`, which Android 7 lacks. The minimum-SDK suite (minsdk.spec.ts) therefore talks
+ * to old WebViews with plain Runtime.evaluate over an adb-forwarded DevTools socket.
+ */
+export const legacyWebView = () => sdkInt() < 26;
+const INITIALISED_ES5 = "document.readyState === 'complete' && document.documentElement.classList.contains('js') && !!document.querySelector('.nav-toggle') && document.querySelector('.nav-toggle').hidden === false";
+
+export class RawPage {
+  private id = 0;
+  private pending = new Map<number, (v: any) => void>();
+  private constructor(private ws: WebSocket, readonly port: number) {
+    ws.onmessage = (m) => {
+      const d = JSON.parse(String(m.data));
+      const cb = this.pending.get(d.id);
+      if (cb) { this.pending.delete(d.id); cb(d); }
+    };
+  }
+
+  static async attach(timeout = 60_000): Promise<RawPage> {
+    const pid = (await waitFor('app process', () => pidOf(), timeout)).split(/\s+/)[0];
+    await waitFor('DevTools socket', () => sh('cat /proc/net/unix').includes(`webview_devtools_remote_${pid}`), timeout, 500);
+    const port = 9300 + (Number(pid) % 500);
+    adb(['forward', `tcp:${port}`, `localabstract:webview_devtools_remote_${pid}`]);
+    const target = await waitFor('page target', async () => {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+      return list.find((t: any) => t.type === 'page' && String(t.url).startsWith('https://localhost'));
+    }, timeout, 500);
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+    const p = new RawPage(ws, port);
+    await p.ready();
+    return p;
+  }
+
+  async evaluate<T = any>(expression: string): Promise<T> {
+    const id = ++this.id;
+    const d: any = await new Promise((res) => {
+      this.pending.set(id, res);
+      this.ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
+    });
+    if (d.error || d.result?.exceptionDetails) throw new Error(`evaluate failed: ${JSON.stringify(d.error ?? d.result.exceptionDetails)}`);
+    return d.result.result.value as T;
+  }
+
+  /** Waits for the (possibly new) document to be initialised by course.js; path relative to the course root. */
+  async ready(path?: string) {
+    await waitFor(`page ${path ?? ''}`, async () => {
+      const at = await this.evaluate<string>('location.pathname.replace(/^\\//, "") || "index.html"').catch(() => '');
+      if (path !== undefined && at !== path) return false;
+      return this.evaluate<boolean>(INITIALISED_ES5).catch(() => false);
+    }, 30_000, 300);
+  }
+
+  /** Real touch tap on the first element matching the selector. */
+  async tap(selector: string) {
+    const r = await this.evaluate<{ x: number; y: number; dpr: number }>(`(function () {
+      var el = document.querySelector(${JSON.stringify(selector)});
+      el.scrollIntoView({ block: 'center' });
+      var b = el.getBoundingClientRect();
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2, dpr: window.devicePixelRatio };
+    })()`);
+    await sleep(300);
+    const wv = webViewBounds();
+    sh(`input tap ${Math.round(wv.x1 + r.x * r.dpr)} ${Math.round(wv.y1 + r.y * r.dpr)}`);
+  }
+
+  close() { try { this.ws.close(); } catch { /* ignore */ } adb(['forward', '--remove', `tcp:${this.port}`], { allowFail: true }); }
+}

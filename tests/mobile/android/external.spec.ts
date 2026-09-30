@@ -8,6 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 import * as h from './helpers';
 
 test.beforeAll(() => { h.resetDevice(); h.clearAppData(); });
+test.beforeEach(() => test.skip(h.legacyWebView(), 'Playwright needs WebView 74+; API < 26 runs minsdk.spec.ts'));
 test.afterAll(() => { h.resetDevice(); return h.closeDevice(); });
 
 async function inject(page: Page, attrs: Record<string, string>) {
