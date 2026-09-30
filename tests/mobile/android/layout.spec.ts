@@ -146,11 +146,15 @@ for (const scale of ['1.3', '2.0']) {
     // WebView applies the system font scale as text zoom: body text gets larger.
     expect(zoom.font).toBeGreaterThan(base.font * (Number(scale) - 0.1));
     expect(zoom.sw).toBeLessThanOrEqual(zoom.w);
-    await expect(page.locator('.nav-toggle')).toBeVisible();
-    await page.locator('.nav-toggle').click();
-    await h.waitFor('menu open', () => h.navOpen(page), 5_000);
-    h.screenshot(`layout-font-${scale}-menu`);
-    await page.locator('.nav-close').click();
+    // Navigation stays reachable: the menu button on narrow layouts, the side navigation on wide ones.
+    if (await page.locator('.nav-toggle').isVisible()) {
+      await page.locator('.nav-toggle').click();
+      await h.waitFor('menu open', () => h.navOpen(page), 5_000);
+      h.screenshot(`layout-font-${scale}-menu`);
+      await page.locator('.nav-close').click();
+    } else {
+      await expect(page.locator('#course-nav')).toBeVisible();
+    }
     const ex = `.exercise[data-exercise="${h.LESSON_EX}"]`;
     await page.locator(`${ex} details.hint[data-level="1"] > summary`).click();
     await expect(page.locator(`${ex} details.hint[data-level="1"] .hint-body`)).toBeVisible();
@@ -207,7 +211,16 @@ test('accessibility: keyboard focus order, skip link and ARIA states of the menu
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('Tab');
   expect(await page.evaluate(() => document.activeElement?.className)).toContain('skip-link');
+  // Hint lock is announced, not only drawn.
+  await expect(page.locator(`.exercise[data-exercise="${h.LESSON_EX}"] details.hint[data-level="2"] > summary`)).toHaveAttribute('aria-disabled', 'true');
+  // Text stays selectable (spec §32).
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('main p')!).userSelect)).not.toBe('none');
   const toggle = page.locator('.nav-toggle');
+  if (!(await toggle.isVisible())) {
+    // Wide (tablet landscape) layout: the contents are always shown beside the page, no menu.
+    await expect(page.locator('#course-nav')).toBeVisible();
+    return;
+  }
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.focus();
   await page.keyboard.press('Enter');
@@ -218,8 +231,4 @@ test('accessibility: keyboard focus order, skip link and ARIA states of the menu
   await page.keyboard.press('Escape');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   expect(await page.evaluate(() => document.activeElement?.classList.contains('nav-toggle'))).toBe(true);
-  // Hint lock is announced, not only drawn.
-  await expect(page.locator(`.exercise[data-exercise="${h.LESSON_EX}"] details.hint[data-level="2"] > summary`)).toHaveAttribute('aria-disabled', 'true');
-  // Text stays selectable (spec §32).
-  expect(await page.evaluate(() => getComputedStyle(document.querySelector('main p')!).userSelect)).not.toBe('none');
 });

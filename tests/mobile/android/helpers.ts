@@ -10,7 +10,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { _android, type AndroidDevice, type Page } from '@playwright/test';
+import { _android, test, type AndroidDevice, type Page } from '@playwright/test';
 
 export const PKG = 'io.github.godspeedyou.rustreadingcourse';
 export const ACTIVITY = `${PKG}/.MainActivity`;
@@ -60,7 +60,8 @@ export const appInForeground = () => topActivity().startsWith(`${PKG}/`);
 
 /** The window that has input focus (what the user actually sees in front). */
 export function focusedWindow(): string {
-  return (sh('dumpsys window', { timeout: 30_000 }).match(/mCurrentFocus=Window\{[^}]*\s(\S+)\}/) ?? [])[1] ?? '';
+  // "Window{2f27659 u0 com.example/.Activity}" or "Window{… u0 Application Not Responding: com.android.systemui}"
+  return ((sh('dumpsys window', { timeout: 30_000 }).match(/mCurrentFocus=Window\{\S+ u\d+ ([^}]*)\}/) ?? [])[1] ?? '').trim();
 }
 
 export function screenshot(name: string): string {
@@ -88,7 +89,7 @@ export function launch(): { state: string; totalTime: number } {
 }
 
 export function home() { sh('input keyevent KEYCODE_HOME'); }
-export function back() { sh('input keyevent KEYCODE_BACK'); }
+export function back() { dismissSystemAnr(); sh('input keyevent KEYCODE_BACK'); }
 
 /** Private app files (debug builds are debuggable, so run-as works). */
 export const runAs = (cmd: string, opts: { allowFail?: boolean } = {}) => sh(`run-as ${PKG} sh -c '${cmd.replace(/'/g, "'\\''")}'`, opts);
@@ -163,8 +164,26 @@ export async function coursePage(path?: string | RegExp, timeout = 60_000): Prom
   return page;
 }
 
+/**
+ * A slow emulator occasionally shows "System UI isn't responding" (an ANR dialog of the system, not
+ * of this app). It takes input focus, so key events would go to it. Answer "Wait" and go on; this
+ * is recorded in measurements.txt so it stays visible.
+ */
+export function dismissSystemAnr() {
+  for (let i = 0; i < 3; i++) {
+    const focus = focusedWindow();
+    if (!/Not Responding|isn't responding/i.test(focus)) return;
+    note(`dismissed system dialog: ${focus}`);
+    const m = dumpUi().match(/text="Wait"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+    if (m) sh(`input tap ${Math.round((+m[1] + +m[3]) / 2)} ${Math.round((+m[2] + +m[4]) / 2)}`);
+    else sh('input keyevent KEYCODE_ENTER');
+    spawnSync('sleep', ['1']);
+  }
+}
+
 /** Cold start: stop, launch, return the page and launch timing. */
 export async function coldStart(path?: string | RegExp) {
+  dismissSystemAnr();
   forceStop();
   await sleep(300);
   const t0 = Date.now();
@@ -416,4 +435,27 @@ export class RawPage {
   }
 
   close() { try { this.ws.close(); } catch { /* ignore */ } adb(['forward', '--remove', `tcp:${this.port}`], { allowFail: true }); }
+}
+
+/* ---------- Known shared-course defect (reported to the course owner) ---------- */
+
+/**
+ * assets/course.js looks for the native bridge only through `Capacitor.registerPlugin`, which is
+ * part of the @capacitor/core JavaScript package. The course loads no bundler output, so inside the
+ * app only the native bridge's global exists, and it exposes plugins as `Capacitor.Plugins.<Name>`.
+ * Result: the Preferences snapshot, the Android back handling (menu/history/minimize) and the About
+ * build line are inactive in the installed app. The tests that depend on them are marked as
+ * expected failures while the APK under test still carries that course.js; once the fix (use
+ * `Capacitor.Plugins` when `registerPlugin` is absent) is in the packaged course, the marks switch
+ * themselves off and the tests must pass.
+ */
+export function hostHookDefect(): boolean {
+  const apk = process.env.ONO_APK ?? join(ROOT, 'mobile/android/app/build/outputs/apk/debug/app-debug.apk');
+  const r = spawnSync('unzip', ['-p', apk, 'assets/public/assets/course.js'], { encoding: 'utf8', maxBuffer: 16 << 20 });
+  if (r.status !== 0 || !r.stdout) return false;
+  return /registerPlugin/.test(r.stdout) && !/\bPlugins\b/.test(r.stdout);
+}
+
+export function expectHostHookDefect() {
+  test.fail(hostHookDefect(), 'known shared-course defect: course.js uses Capacitor.registerPlugin only (see helpers.ts hostHookDefect)');
 }

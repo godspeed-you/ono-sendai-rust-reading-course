@@ -39,6 +39,7 @@ const modes: Mode[] = [
 
 for (const mode of modes) {
   test(`${mode.name}: menu closes, history walks back, home leaves the app @smoke`, async () => {
+    h.expectHostHookDefect();
     test.skip(mode.name !== modes[0].name && h.sdkInt() < 29, 'navigation-mode overlays need Android 10+');
     mode.setup();
     await h.sleep(1500);
@@ -78,6 +79,7 @@ for (const mode of modes) {
 }
 
 test('back cancels an open reset confirmation before leaving the page', async () => {
+  h.expectHostHookDefect();
   h.setNavigationMode('gestural');
   const { page } = await h.coldStart('index.html');
   await h.open(page, 'about.html');

@@ -50,6 +50,7 @@ test('progress, notes, hints, checklist and last lesson survive leaving the app 
 });
 
 test('the native snapshot mirrors the local progress (schema v1)', async () => {
+  h.expectHostHookDefect();
   await makeProgress();
   await h.backgroundAndStop();
   const snap = h.snapshotFromPrefs();
@@ -66,6 +67,7 @@ test('the native snapshot mirrors the local progress (schema v1)', async () => {
 });
 
 test('WebView storage wiped, native snapshot kept: progress is restored and "Continue" reappears', async () => {
+  h.expectHostHookDefect();
   await makeProgress('restored from the snapshot');
   await h.backgroundAndStop();
   expect(h.snapshotFromPrefs()?.entries.last).toBe('reading-rust-01');
@@ -84,6 +86,7 @@ for (const [name, raw] of [
   ['wrong entry types', '{"v":1,"entries":{"last":42,"done":{"x":1}}}'],
 ] as const) {
   test(`a corrupt snapshot (${name}) is ignored and the course stays usable`, async () => {
+    h.expectHostHookDefect();
     h.clearAppData();
     await h.coldStart('index.html');
     h.forceStop();
