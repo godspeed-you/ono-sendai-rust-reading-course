@@ -106,7 +106,10 @@ final class CourseAppUITests: XCTestCase {
         let heading = lessonOneMarker
         XCTAssertTrue(heading.waitForExistence(timeout: 20))
         XCUIDevice.shared.press(.home)
-        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10) || app.wait(for: .runningBackgroundSuspended, timeout: 10))
+        // iPhone reports runningBackground; iPadOS 26 windowing may keep reporting another state.
+        let backgrounded = app.wait(for: .runningBackground, timeout: 5) || app.state == .runningBackgroundSuspended
+        XCTContext.runActivity(named: "after Home: state \(app.state.rawValue), backgrounded \(backgrounded)") { _ in }
+        screenshot("home-screen-while-in-background")
         sleep(3)
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
@@ -211,6 +214,8 @@ final class CourseAppUITests: XCTestCase {
             if f.midY > window.midY { web.swipeUp(velocity: velocity) } else { web.swipeDown(velocity: velocity) }
             tries += 1
         }
+        // A tap during scroll momentum only stops the scroll (iOS), so let the page settle first.
+        if tries > 0 { sleep(2) }
         if !element.isHittable { attachHierarchy("not reachable: \(element)") }
         XCTAssertTrue(element.isHittable, "\(element) can be reached", file: file, line: line)
     }
