@@ -47,7 +47,7 @@ final class CourseAppUITests: XCTestCase {
         // Opening Hint 1 unlocks that exercise's Hint 2 ("— open Hint 1 first" disappears).
         let lockedBefore = lockedHintCount
         XCTAssertGreaterThan(lockedBefore, 0, "Hint 2 starts locked")
-        tap(element(beginningWith: "Hint 1"))
+        openFirstHint()
         var lockedAfter = lockedHintCount
         let deadline = Date().addingTimeInterval(10)
         while lockedAfter >= lockedBefore && Date() < deadline {
@@ -171,6 +171,21 @@ final class CourseAppUITests: XCTestCase {
 
     @MainActor private func element(containing text: String, type: XCUIElement.ElementType = .any) -> XCUIElement {
         web.descendants(matching: type).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+
+    /// Taps the first "Hint 1" disclosure. Lesson prose also mentions "Hint 1" in bold text, so
+    /// the summary is found by role; if WebKit exposes it only as text, it is the control directly
+    /// above the first locked "Hint 2 — open Hint 1 first".
+    @MainActor private func openFirstHint() {
+        let summary = web.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ AND elementType != %lu", "Hint 1", XCUIElement.ElementType.staticText.rawValue)).firstMatch
+        if summary.exists {
+            tap(summary)
+            return
+        }
+        let locked = web.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "open Hint 1 first")).firstMatch
+        reveal(locked)
+        locked.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: -0.6)).tap()
     }
 
     /// Number of hint summaries still showing "— open Hint 1 first".
