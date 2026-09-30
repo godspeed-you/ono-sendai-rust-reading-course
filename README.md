@@ -40,6 +40,21 @@ teaches the language and the architecture together.
 
 ## Using the course
 
+The same course, generated once, is distributed in three forms. Pick one:
+
+| Form | Where | Notes |
+|---|---|---|
+| **Static course** (`.zip` / `.tar.gz`) | [releases page](https://github.com/godspeed-you/ono-sendai-rust-reading-course/releases) | any desktop, tablet or phone browser; described below |
+| **Android app** (`.apk` for direct installation, `.aab` for Google Play) | [releases page](https://github.com/godspeed-you/ono-sendai-rust-reading-course/releases) | installs like a normal app, fully offline, requests no permissions |
+| **iPhone / iPad app** | TestFlight / App Store, once the maintainer publishes it | fully offline; see [docs/store/apple](docs/store/apple/) |
+
+The apps are wrappers around exactly the same generated pages as the static course, not a separate
+product (they add only installation, an app icon, safe-area handling, Android's back button and a
+backup of your progress that survives the system clearing web storage). Everything below about
+offline use, progress and notes applies to all three.
+
+### Static course
+
 1. Download `ono-sendai-rust-reading-course-vX.Y.Z.zip` (or `.tar.gz`) from the
    [releases page](https://github.com/godspeed-you/ono-sendai-rust-reading-course/releases).
    Optionally check it: `sha256sum --check --ignore-missing SHA256SUMS`.
@@ -49,7 +64,7 @@ teaches the language and the architecture together.
 
 That's all. The course works fully offline from the local file system: no web server, internet
 connection, account, Rust installation, Ono-Sendai checkout or browser extension is needed.
-Progress, checklist ticks and your private notes are kept in your browser's local storage if it
+Progress, checklist ticks and your private notes are kept in your browser's (or the app's) local storage if it
 is available; the course works the same without it, and "Reset local progress" on the About page
 clears only this course's data.
 
@@ -85,6 +100,9 @@ make browser-test                 # Playwright: offline, responsive, interaction
 make package                      # release/*.zip, *.tar.gz, SHA256SUMS
 ```
 
+Native mobile packaging (Android, iOS, iPadOS) lives in [`mobile/`](mobile/README.md) and consumes the
+normal `dist/`; see [Mobile packaging](#mobile-packaging).
+
 The build is deterministic and never contacts the network, an LLM or GitHub: the course source
 (YAML + Markdown under `course/`, including exact snippet snapshots) is all it needs. The generated
 `dist/` is a build artifact and is never committed.
@@ -95,9 +113,27 @@ The build is deterministic and never contacts the network, an LLM or GitHub: the
 | `course-lock.yaml` | course version and the pinned Ono-Sendai revision |
 | `generator/` | the Rust generator, validator and packager (`ono-course`), with its templates and tests |
 | `assets/` | CSS, JavaScript and icon shipped with the course |
-| `tests/browser/` | Playwright browser tests |
+| `tests/browser/` | Playwright browser tests (including the native-host logic with a fake bridge) |
+| `mobile/` | Capacitor projects for Android and iOS/iPadOS, sync/verify tools, icons — a consumer of `dist/`, never a second course |
+| `tests/mobile/` | mobile static tests, content equivalence, and the Android emulator suite |
 | `scripts/course` | command-line entry point |
 | `docs/` | specification and maintainer documentation |
+
+### Mobile packaging
+
+```bash
+make mobile-setup     # npm ci (pinned Capacitor 8.5.2)
+make mobile-sync      # build dist/, copy it into the native projects, prove they are identical
+make android          # debug APK        (Linux/macOS, JDK 21, Android SDK)
+make android-bundle   # release AAB      (signing secrets only for the upload key)
+make ios              # simulator build  (macOS, Xcode 26+)
+make mobile-test      # static tests + content equivalence (Node only)
+```
+
+The architecture rule is simple: **build the course once, package that exact course everywhere.**
+The native projects hold no lesson content; `make mobile-verify` fails if their copy of the
+course differs from `dist/`. See [mobile/README.md](mobile/README.md) for the layout, version mapping,
+persistence design and signing boundary, and [docs/mobile/](docs/mobile/README.md) for the platform guides.
 
 Documentation:
 
@@ -105,14 +141,18 @@ Documentation:
 - [docs/maintaining.md](docs/maintaining.md) — validation against Ono-Sendai, updating the pin, stale snippets, releasing
 - [docs/frontend.md](docs/frontend.md) — the page markup contract, responsive and accessibility expectations
 - [docs/architecture.md](docs/architecture.md) — build design and decisions
+- [mobile/README.md](mobile/README.md) and [docs/mobile/](docs/mobile/README.md) — native packaging, Android and Apple guides, testing, release
+- [docs/store/](docs/store/) — Google Play and App Store readiness (metadata, privacy answers, review notes)
 - [docs/implementation-run-report.md](docs/implementation-run-report.md) — how version 1.0.0 was built
 - [docs/spec/ono-sendai-rust-reading-course-spec.md](docs/spec/ono-sendai-rust-reading-course-spec.md) — the product specification
+- [docs/spec/ono-sendai-rust-reading-course-native-mobile-packaging-spec.md](docs/spec/ono-sendai-rust-reading-course-native-mobile-packaging-spec.md) — the native mobile packaging specification
 
 ### Releases
 
 Tag `vX.Y.Z` matching `course.version` in `course-lock.yaml`. The release workflow reruns every
-check (including the offline and browser tests against an extracted archive) and publishes the
-`.zip`, `.tar.gz` and `SHA256SUMS`. See [docs/maintaining.md](docs/maintaining.md#releasing).
+check (including the offline and browser tests against an extracted archive), builds the Android APK and
+AAB from the same `dist/` and publishes the `.zip`, `.tar.gz`, `.apk`, `.aab` and `SHA256SUMS`. iOS/iPadOS goes
+through TestFlight/App Store Connect, not a downloadable `.ipa`. See [docs/maintaining.md](docs/maintaining.md#releasing).
 
 ## Contributing corrections
 

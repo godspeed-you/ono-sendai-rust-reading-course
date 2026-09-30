@@ -17,6 +17,28 @@ Snippet source text is embedded in the course source (`course/snippets/**`) as a
 of the pinned revision, so a plain checkout of this repository is enough to build the course.
 Validation against a real Ono-Sendai checkout is a separate, explicit maintainer command.
 
+## Native packaging (Android, iOS, iPadOS)
+
+```text
+course source ─► one generator ─► one dist/ ─┬─► ZIP / TAR
+                                              ├─► Android (Capacitor)  APK / AAB
+                                              └─► iOS / iPadOS (Capacitor)
+```
+
+**Mobile packages are consumers of the normal generated course artifact. They do not define a separate
+course implementation.** `mobile/` holds Capacitor 8 projects, icons and small tools; their web copy is a
+disposable, git-ignored copy of `dist/` made by `cap sync`, and `mobile/tools/mobile.mjs verify` compares SHA-256
+manifests of `dist/` and every packaged copy (changed, missing and extra files are all errors; only the two
+Cordova shims added by the Capacitor CLI are exempt). Nothing renders, rewrites or post-processes the course
+per platform. Shared course code has three deliberately tiny, feature-detected native-host hooks in
+`assets/course.js` (progress backup in the platform key/value store, Android back routing, About-page build line) and
+declares `viewport-fit=cover`, safe-area padding and a strict CSP in every page; all are no-ops in a browser.
+Details, commands, persistence schema and platform baselines: [mobile/README.md](../mobile/README.md).
+
+Which requirements belong to which layer: the original specification governs the course (content, generation,
+offline behaviour, responsive design, accessibility, deterministic builds, versioning); the native mobile
+packaging specification governs only the distribution/integration layer (see [docs/mobile/README.md](mobile/README.md)).
+
 ## Decisions
 
 | Decision | Choice | Why |
@@ -30,6 +52,7 @@ Validation against a real Ono-Sendai checkout is a separate, explicit maintainer
 | Disclosures | native `<details>`/`<summary>` for annotations, hints, solutions | expanded state exposed natively, works without JS; JS only adds ordering (Hint 2 after Hint 1) and state |
 | JavaScript | one small `assets/course.js`, progressive enhancement | multiple choice checking, hint ordering, annotation ↔ line linking, mobile navigation, optional local progress |
 | Persistence | `localStorage`, every access wrapped, feature-detected | course is fully usable when storage is unavailable (spec §52–§53) |
+| Native wrapper | Capacitor 8.5.2, two plugins (App, Preferences), checked-in native projects | smallest maintainable shell over a static site; no custom WebView, no native UI; see mobile/README.md |
 | Browser tests | Playwright (`tests/browser`), versions pinned in `package-lock.json`, plus axe-core | real browser, `file://` URLs, network blocked |
 
 ## Commands

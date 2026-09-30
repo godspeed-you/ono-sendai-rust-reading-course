@@ -107,6 +107,14 @@ The course shows both versions in its footer and on the "About" page, and in
    archive smoke test) and then publishes
    `ono-sendai-rust-reading-course-v1.2.3.zip`, `….tar.gz` and `SHA256SUMS` to the GitHub
    release. The tag must equal `v` + `course.version`, or the release fails.
+5. The same workflow builds the Android APK and AAB from the identical `dist/` (`mobile/tools/mobile.mjs sync`
+   proves equality; `verify-package` proves the *built* APK/AAB embed exactly `dist/`), checks the version
+   metadata, the Ono-Sendai pin, permissions and target SDK, and adds them to the release and to a regenerated
+   `SHA256SUMS`. Add the repository secrets `ONO_ANDROID_KEYSTORE_BASE64`, `ONO_ANDROID_KEYSTORE_PASSWORD`,
+   `ONO_ANDROID_KEY_ALIAS` (and optionally `ONO_ANDROID_KEY_PASSWORD`) to sign with the release key; without them the
+   release notes say the APK/AAB are debug-signed test builds. Apple: see [mobile/README.md](../mobile/README.md) and
+   [docs/store/apple](store/apple/) — TestFlight/App Store, not a release asset. Full procedure:
+   [docs/mobile/release.md](mobile/release.md).
 
 Locally, `make package` produces the same archives in `release/`. `package` refuses a `dist/`
 whose `course-metadata.json` names another course version or Ono-Sendai pin than
