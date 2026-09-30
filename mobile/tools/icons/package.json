@@ -1,0 +1,10 @@
+{
+  "name": "ono-sendai-rust-reading-course-icon-tools",
+  "private": true,
+  "description": "Maintainer-only tooling that renders the icon/launch-image artwork. Kept out of mobile/package.json so the audited runtime and build dependency set stays minimal. Run: node mobile/tools/icons.mjs",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@capacitor/assets": "3.0.5",
+    "sharp": "0.34.5"
+  }
+}

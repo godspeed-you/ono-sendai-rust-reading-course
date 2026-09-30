@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // Regenerates every native icon and launch image from the vector source in resources/*.svg.
-// Source of truth: resources/icon-glyph.svg-derived vectors below (the course's `>_` mark, the same
-// mark as assets/favicon.svg). Outputs are committed native resources; this is only re-run when the
-// artwork changes:  node tools/icons.mjs
+// Source of truth: the vectors below (the course's `>_` mark, the same mark as assets/favicon.svg).
+// Outputs are committed native resources; this is only re-run when the artwork changes:
+//   (cd mobile/tools/icons && npm ci) && node mobile/tools/icons/icons.mjs
+// Its dependencies (sharp, @capacitor/assets) live in tools/icons/package.json, separate from the
+// audited runtime/build dependencies in mobile/package.json.
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
-const MOBILE = join(dirname(fileURLToPath(import.meta.url)), '..');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const MOBILE = join(HERE, '..', '..');
 const RES = join(MOBILE, 'resources');
 mkdirSync(RES, { recursive: true });
 
@@ -39,7 +42,7 @@ for (const [name, content] of Object.entries(files)) {
   await sharp(Buffer.from(content)).png().toFile(svgPath.replace(/\.svg$/, '.png'));
 }
 console.log('rendered', Object.keys(files).length, 'sources');
-const r = spawnSync('npx', ['--no-install', 'capacitor-assets', 'generate', '--android', '--ios',
+const r = spawnSync(join(HERE, 'node_modules/.bin/capacitor-assets'), ['generate', '--android', '--ios',
   '--iconBackgroundColor', BG, '--iconBackgroundColorDark', BG, '--splashBackgroundColor', BG, '--splashBackgroundColorDark', BG],
   { cwd: MOBILE, stdio: 'inherit' });
 process.exit(r.status ?? 1);

@@ -31,7 +31,7 @@ Which requirements belong to the core course and which to this layer: see
 | `android/app/src/main/assets/public/`, `ios/App/App/public/` | the copy of `dist/` that gets packaged | **disposable, git-ignored**, recreated by `make mobile-sync` |
 | `resources/` | vector icon/splash sources and their rendered PNGs | canonical (sources of the generated icons) |
 | `tools/mobile.mjs` | `sync`, `verify`, `info`, `version` | canonical |
-| `tools/icons.mjs` | regenerates every icon and launch image from `resources/*.svg` | canonical |
+| `tools/icons/` | regenerates every icon and launch image from `resources/*.svg` | canonical |
 | `version.json`, `version.properties`, `baseline.json` | build revision, generated Android version file, platform baselines | canonical |
 | `package.json`, `package-lock.json` | pinned Capacitor dependencies (Node from `.nvmrc`) | canonical |
 | `build/` | test output, `web-manifest.json` | disposable, git-ignored |
@@ -177,7 +177,7 @@ the maintainer's Xcode/CI secrets, never in the repository. Details: the Android
 
 ## Icons
 
-`node tools/icons.mjs` renders `resources/*.svg` (the course's `>_` mark) and runs `@capacitor/assets` to regenerate the Android
+`node tools/icons/icons.mjs` (dependencies in `tools/icons/package.json`, install with `npm ci` there) renders `resources/*.svg` (the course's `>_` mark) and runs `@capacitor/assets` to regenerate the Android
 adaptive/round/legacy launcher icons, the Android launch images and the iOS icon and launch images. The outputs are committed.
 
 ## Tests, CI, release

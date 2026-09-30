@@ -12,7 +12,6 @@
     "@capacitor/preferences": "8.0.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "8.5.2",
-    "@capacitor/assets": "3.0.5"
+    "@capacitor/cli": "8.5.2"
   }
 }

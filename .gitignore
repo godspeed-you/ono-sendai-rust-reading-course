@@ -26,3 +26,4 @@
 *.mobileprovision
 *.cer
 /mobile/android/keystore.properties
+/mobile/tools/icons/node_modules/

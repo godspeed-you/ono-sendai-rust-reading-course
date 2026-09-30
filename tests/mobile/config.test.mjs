@@ -208,7 +208,7 @@ test.describe('resources', () => {
       assert.ok(exists(`mobile/resources/${f}.svg`), `${f}.svg`);
       assert.ok(exists(`mobile/resources/${f}.png`), `${f}.png`);
     }
-    assert.ok(exists('mobile/tools/icons.mjs'));
+    assert.ok(exists('mobile/tools/icons/icons.mjs'));
     for (const d of ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
       for (const n of ['ic_launcher', 'ic_launcher_round', 'ic_launcher_foreground']) assert.ok(exists(`mobile/android/app/src/main/res/mipmap-${d}/${n}.png`), `${d}/${n}`);
     }
