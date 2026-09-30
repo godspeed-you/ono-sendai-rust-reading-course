@@ -1,7 +1,20 @@
 name: Release
 
-# A tag vX.Y.Z builds, verifies and publishes the course (spec §71). Every check of the CI
+# A tag vX.Y.Z builds, verifies and publishes the course (spec §71, §69-§72). Every check of the CI
 # workflow runs first; the release fails if any of them — including the offline check — fails.
+#
+# One course, several distribution forms, all from the same generated dist/:
+#   ono-sendai-rust-reading-course-vX.Y.Z.zip / .tar.gz   static course (unchanged)
+#   ono-sendai-rust-reading-course-vX.Y.Z.apk / .aab      Android app: APK for direct installation,
+#                                                         AAB is the Google Play submission artifact
+#   SHA256SUMS                                            covers every attached file
+# iOS/iPadOS is distributed through TestFlight / the App Store, not as a downloadable .ipa; see
+# docs/store/apple/ and the isolated, secret-gated archive job in mobile-apple.yml.
+#
+# Android signing: with the repository secrets ONO_ANDROID_KEYSTORE_BASE64, ONO_ANDROID_KEYSTORE_PASSWORD,
+# ONO_ANDROID_KEY_ALIAS (and optionally ONO_ANDROID_KEY_PASSWORD) the APK and AAB are signed with the
+# maintainer's release key. Without them the release still builds, signed with the debug key, and the
+# release notes say so: that APK is for testing only and that AAB cannot be uploaded to Google Play.
 
 on:
   push:
@@ -14,8 +27,121 @@ jobs:
   verify:
     uses: ./.github/workflows/ci.yml
 
-  publish:
+  android:
     needs: verify
+    runs-on: ubuntu-24.04
+    outputs:
+      signing: ${{ steps.sign.outputs.mode }}
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the course version
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match course-lock.yaml course.version (v$VERSION)"
+            exit 1
+          fi
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the canonical course and synchronise it into the native projects
+        run: |
+          scripts/course build
+          (cd mobile && npm ci)
+          node mobile/tools/mobile.mjs sync
+
+      - name: Release consistency (versions, Ono-Sendai pin, no development endpoints, credentials)
+        run: |
+          node mobile/tools/mobile.mjs version --check
+          MOBILE_REQUIRE_SYNC=1 node --test "tests/mobile/*.test.mjs"
+          commit=$(sed -n 's/^  commit: \([0-9a-f]\{40\}\)$/\1/p' course-lock.yaml)
+          grep -q "\"commit\": \"$commit\"" dist/course-metadata.json
+          node mobile/tools/mobile.mjs info
+
+      - name: Prepare signing
+        id: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ONO_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ONO_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ONO_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ONO_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            keystore="$RUNNER_TEMP/release.keystore"
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
+            {
+              echo "ONO_ANDROID_KEYSTORE=$keystore"
+              echo "ONO_ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "ONO_ANDROID_KEY_ALIAS=$KEY_ALIAS"
+              echo "ONO_ANDROID_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+              echo "ONO_REQUIRE_RELEASE_SIGNING=1"
+            } >> "$GITHUB_ENV"
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no Android release keystore configured: the APK and AAB are signed with the debug key (testing only)"
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the release APK and AAB
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon assembleRelease bundleRelease
+
+      - name: Collect, verify and name the artifacts
+        run: |
+          mkdir -p out
+          base="ono-sendai-rust-reading-course-v$VERSION"
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk "out/$base.apk"
+          cp mobile/android/app/build/outputs/bundle/release/app-release.aab "out/$base.aab"
+          # The packages must embed exactly the canonical dist/.
+          node mobile/tools/mobile.mjs verify-package "out/$base.apk"
+          node mobile/tools/mobile.mjs verify-package "out/$base.aab"
+          # The APK is signed and installable; report which key.
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "out/$base.apk" | tee out/apk-signing.txt
+          if [ "${{ steps.sign.outputs.mode }}" = release ] && grep -qi "Android Debug" out/apk-signing.txt; then
+            echo "::error::release signing was requested but the APK carries the debug certificate"; exit 1
+          fi
+          # No permissions at all, correct version.
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          "$aapt2" dump badging "out/$base.apk" | tee out/badging.txt | head -5
+          ! grep -q "^uses-permission" out/badging.txt
+          grep -q "versionName='$VERSION'" out/badging.txt
+          grep -q "targetSdkVersion:'3[6-9]'\|targetSdkVersion:'[4-9][0-9]'" out/badging.txt
+          rm out/apk-signing.txt out/badging.txt
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    needs: [verify, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -35,23 +161,50 @@ jobs:
           name: release-archives
           path: release
 
-      - name: Check archives and checksums
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: release
+
+      - name: Checksums cover every attached file
         run: |
           cd release
+          # The static archives keep their verified checksums; the Android artifacts are added.
           sha256sum --check --strict SHA256SUMS
+          rm SHA256SUMS
+          sha256sum ono-sendai-rust-reading-course-v*.zip ono-sendai-rust-reading-course-v*.tar.gz \
+            ono-sendai-rust-reading-course-v*.apk ono-sendai-rust-reading-course-v*.aab > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" = 4
           ls -l
 
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          SIGNING: ${{ needs.android.outputs.signing }}
         run: |
           notes=$(mktemp)
           {
             echo "**Static. Offline. No server. No account. No LLM.**"
-            echo "Download, extract, open \`index.html\`, and learn Rust by reading real Ono-Sendai code."
+            echo "Learn Rust by reading real Ono-Sendai code, as a static course or as an Android app. Everything is the same course, generated once."
             echo
             echo "- Course version: ${{ needs.verify.outputs.version }}"
             sed -n '/^ono_sendai:/,$ s/^  \(commit\|version\): \(.*\)$/- Ono-Sendai \1: \2/p' course-lock.yaml
+            echo
+            echo "| File | For |"
+            echo "|---|---|"
+            echo "| \`.zip\`, \`.tar.gz\` | the static course: extract and open \`index.html\` |"
+            echo "| \`.apk\` | **direct installation and testing** on Android (enable installation from this source) |"
+            echo "| \`.aab\` | **Google Play submission artifact** (not installable on a device) |"
+            echo "| \`SHA256SUMS\` | checksums of all of the above (\`sha256sum --check SHA256SUMS\`) |"
+            echo
+            if [ "$SIGNING" = release ]; then
+              echo "The Android APK and AAB are signed with the project's release key."
+            else
+              echo "> **Testing build:** no release key was configured for this release, so the APK and AAB are signed with a debug key. The APK installs and works, but it can only be updated by another build signed with the same key, and the AAB is not accepted by Google Play."
+            fi
+            echo
+            echo "iOS and iPadOS: the app is distributed through TestFlight and the App Store (see \`docs/store/apple/\`); there is no downloadable \`.ipa\`."
             echo
             echo "See CHANGELOG.md for what changed."
           } > "$notes"

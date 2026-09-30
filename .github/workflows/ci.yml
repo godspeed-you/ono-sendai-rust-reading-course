@@ -4,6 +4,8 @@ name: CI
 # validation against the pinned Ono-Sendai commit, full build, link + offline checks, browser tests
 # (responsive, interaction, accessibility, network blocked) and release packaging.
 # The release workflow reuses this workflow before publishing anything (spec §71).
+# Native packaging is validated by its own workflows: mobile-android.yml and mobile-apple.yml;
+# this workflow only runs the cheap, SDK-free mobile static tests so native configuration cannot drift.
 
 on:
   push:
@@ -74,6 +76,16 @@ jobs:
       - name: Offline and link check (explicit)
         run: scripts/course check-offline
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Mobile static integration tests (native configuration, versions, credentials, dev URLs)
+        # Node built-ins only; needs no Android SDK, no Xcode and no mobile dependencies.
+        # The synchronised-copy checks skip here and run in the Android and Apple workflows.
+        run: node --test "tests/mobile/*.test.mjs"
+
       - name: Source tree stays clean after the build
         run: |
           rm -rf .ono-sendai
@@ -82,11 +94,6 @@ jobs:
             echo "::error::build or validation modified tracked files or left untracked output"
             exit 1
           fi
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
 
       - name: Install browser test tooling
         run: |

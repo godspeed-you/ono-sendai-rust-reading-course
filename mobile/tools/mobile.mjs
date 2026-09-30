@@ -3,6 +3,7 @@
 //
 //   mobile.mjs sync      copy the canonical dist/ into the Android and iOS projects, then verify
 //   mobile.mjs verify    prove the packaged web content equals dist/ (hash manifests)
+//   mobile.mjs verify-package <file.apk|file.aab>   prove a BUILT package embeds exactly dist/
 //   mobile.mjs info      print the reproducibility record (course, Ono-Sendai pin, Capacitor, SDKs, build numbers)
 //   mobile.mjs version   write version.properties + Xcode version settings from course-lock.yaml
 //   mobile.mjs version --check   fail if they are out of date
@@ -10,11 +11,12 @@
 // Mobile packages are consumers of the normal generated course artifact. Nothing here renders,
 // rewrites or post-processes course content.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DIST, MOBILE, PLATFORM_WEB, buildNumbers, compareManifests, manifest, manifestDigest,
-  readLock, readVersionJson, requireDist,
+  readLock, readVersionJson, requireDist, summarize,
 } from './lib.mjs';
 
 const PBXPROJ = join(MOBILE, 'ios/App/App.xcodeproj/project.pbxproj');
@@ -64,11 +66,29 @@ function cmdVerify({ quiet = false } = {}) {
     for (const p of compareManifests(canonical, manifest(dir))) problems.push(`${platform}: ${p}`);
   }
   if (problems.length) {
-    throw new Error(`packaged web content does not match dist/:\n  ${problems.join('\n  ')}`);
+    throw new Error(`packaged web content does not match dist/:\n  ${summarize(problems)}`);
   }
   const digest = manifestDigest(canonical);
   if (!quiet) console.log(`content equivalence OK: ${Object.keys(canonical).length} files, manifest sha256:${digest} (${checked} platform copies)`);
   return digest;
+}
+
+// A built APK/AAB is a zip: the web content lives under assets/public (APK) or base/assets/public (AAB).
+function cmdVerifyPackage(file) {
+  if (!file || !existsSync(file)) throw new Error('usage: mobile.mjs verify-package <file.apk|file.aab>');
+  requireDist();
+  const tmp = mkdtempSync(join(tmpdir(), 'rrc-pkg-'));
+  try {
+    const r = spawnSync('unzip', ['-q', '-o', file, 'assets/public/*', 'base/assets/public/*', '-d', tmp], { encoding: 'utf8' });
+    if (r.status !== 0 && r.status !== 11) throw new Error(`unzip failed: ${r.stderr}`); // 11: one of the two patterns matched nothing
+    const root = [join(tmp, 'assets/public'), join(tmp, 'base/assets/public')].find(existsSync);
+    if (!root) throw new Error(`${file} contains no assets/public: not a Capacitor package`);
+    const problems = compareManifests(manifest(DIST), manifest(root));
+    if (problems.length) throw new Error(`${file} does not embed dist/:\n  ${summarize(problems)}`);
+    console.log(`${file}: embedded web content equals dist/ (manifest sha256:${manifestDigest(manifest(DIST))})`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 function cmdSync() {
@@ -109,9 +129,10 @@ const [cmd, ...args] = process.argv.slice(2);
 try {
   if (cmd === 'sync') cmdSync();
   else if (cmd === 'verify') cmdVerify();
+  else if (cmd === 'verify-package') cmdVerifyPackage(args[0]);
   else if (cmd === 'info') cmdInfo();
   else if (cmd === 'version') cmdVersion(args.includes('--check'));
-  else throw new Error('usage: mobile.mjs sync | verify | info | version [--check]');
+  else throw new Error('usage: mobile.mjs sync | verify | verify-package <file> | info | version [--check]');
 } catch (e) {
   console.error(`mobile: ${e.message}`);
   process.exit(1);

@@ -95,3 +95,9 @@ export function requireDist() {
   }
   return meta;
 }
+
+/** At most `max` problem lines, then a count: a stale copy differs in every file. */
+export function summarize(problems, max = 15) {
+  if (problems.length <= max) return problems.join('\n  ');
+  return `${problems.slice(0, max).join('\n  ')}\n  … and ${problems.length - max} more`;
+}
