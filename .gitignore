@@ -8,3 +8,21 @@
 /test-results/
 /playwright-report/
 /blob-report/
+
+# Native packaging (mobile/): dependencies, build output and disposable copies of dist/
+/mobile/node_modules/
+/mobile/build/
+/mobile/android/app/build/
+/mobile/android/build/
+/mobile/android/.gradle/
+/mobile/android/local.properties
+/mobile/android/app/release/
+/mobile/ios/App/build/
+/mobile/ios/DerivedData/
+*.keystore
+*.jks
+*.p12
+*.p8
+*.mobileprovision
+*.cer
+/mobile/android/keystore.properties

@@ -1,0 +1,15 @@
+{
+  "appId": "io.github.godspeedyou.rustreadingcourse",
+  "appName": "Ono Rust Course",
+  "webDir": "../dist",
+  "backgroundColor": "#ffffff",
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "cover"
+    }
+  },
+  "ios": {
+    "contentInset": "never"
+  }
+}

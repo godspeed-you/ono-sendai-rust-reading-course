@@ -1,0 +1,71 @@
+apply plugin: 'com.android.application'
+
+// Version: the course version is the app version (see mobile/README.md "Version mapping").
+// mobile/version.properties is generated from course-lock.yaml by `make mobile-version`.
+def versionProps = new Properties()
+file('../../version.properties').withInputStream { versionProps.load(it) }
+
+// Release signing material is supplied from outside the repository, never committed:
+//   ONO_ANDROID_KEYSTORE (path), ONO_ANDROID_KEYSTORE_PASSWORD, ONO_ANDROID_KEY_ALIAS,
+//   ONO_ANDROID_KEY_PASSWORD (defaults to the keystore password).
+// Without them the release build falls back to the debug key so that contributors can still build
+// an installable APK; set ONO_REQUIRE_RELEASE_SIGNING=1 to fail instead (used for store builds).
+def releaseKeystore = System.getenv('ONO_ANDROID_KEYSTORE')
+def hasReleaseKey = releaseKeystore != null && !releaseKeystore.isEmpty()
+if (!hasReleaseKey && System.getenv('ONO_REQUIRE_RELEASE_SIGNING') == '1') {
+    throw new GradleException('ONO_REQUIRE_RELEASE_SIGNING=1 but ONO_ANDROID_KEYSTORE is not set')
+}
+
+android {
+    namespace = "io.github.godspeedyou.rustreadingcourse"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "io.github.godspeedyou.rustreadingcourse"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode versionProps.getProperty('versionCode').toInteger()
+        versionName versionProps.getProperty('versionName')
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv('ONO_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ONO_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ONO_ANDROID_KEY_PASSWORD') ?: System.getenv('ONO_ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+    lint {
+        abortOnError true
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
