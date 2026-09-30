@@ -446,6 +446,8 @@ pub(crate) fn about(site: &Site, digest: &str) -> Result<String, String> {
             site.course.snippets.len()
         ),
     );
+    // Filled in by course.js only when the course runs inside a native app (platform, app build).
+    m.push_str("<div class=\"app-info\" hidden><dt>Installed app</dt><dd class=\"app-info-value\"></dd></div>\n");
     m.push_str("</dl>\n<p class=\"muted\">The content digest is a SHA-256 over every course source file (<code>course-lock.yaml</code> and <code>course/**/*.yaml</code>, sorted by path). Two builds with the same digest and generator version are identical.</p>\n</section>\n");
 
     m.push_str("<section aria-labelledby=\"runtime-h\">\n<h2 id=\"runtime-h\">How this course runs</h2>\n<p class=\"contract\"><strong>Static. Offline. No server. No account. No LLM.</strong></p>\n<p>Every page, stylesheet, script and code snippet ships inside this folder. The course never makes a network request, never loads code from elsewhere and sends nothing anywhere. Opening <code>index.html</code> in a browser is all it needs.</p>\n</section>\n");

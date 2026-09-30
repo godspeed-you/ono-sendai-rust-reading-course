@@ -631,6 +631,22 @@
     window.addEventListener("pagehide", function () { mirror(true); });
   }
 
+  // About page, native app only: which platform and app build this installation is.
+  function initAppInfo() {
+    var box = doc.querySelector(".app-info");
+    if (!host || !box) return;
+    try {
+      host.app.getInfo().then(function (info) {
+        var platform = window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "";
+        var label = platform === "ios" ? "iOS / iPadOS app" : platform === "android" ? "Android app" : "Native app";
+        var out = box.querySelector(".app-info-value");
+        if (!out || !info) return;
+        out.textContent = label + ", version " + info.version + " (build " + info.build + ")";
+        box.hidden = false;
+      }, function () { /* the About page simply omits the line */ });
+    } catch (e) { /* ignore */ }
+  }
+
   function init() {
     showStorageNote();
     initNav();
@@ -644,6 +660,7 @@
     initNotes();
     initReset();
     initNativeBack();
+    initAppInfo();
   }
 
   function start() { restoreFromHost(init); }

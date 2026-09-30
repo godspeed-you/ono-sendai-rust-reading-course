@@ -49,6 +49,7 @@ async function installHost(page: Page, opts: { mode?: Mode; initial?: Record<str
         void (w.__hostLog as (s: string) => Promise<void>)('minimizeApp');
         return Promise.resolve();
       },
+      getInfo: () => call(async () => ({ version: '1.2.3', build: '1020300', id: 'x', name: 'x' })),
       exitApp: () => {
         void (w.__hostLog as (s: string) => Promise<void>)('exitApp');
         return Promise.resolve();
@@ -56,6 +57,7 @@ async function installHost(page: Page, opts: { mode?: Mode; initial?: Record<str
     };
     w.Capacitor = {
       isNativePlatform: () => true,
+      getPlatform: () => 'android',
       registerPlugin: (name: string) => {
         if (mode === 'throws') throw new Error('no such plugin');
         return name === 'Preferences' ? prefs : app;
@@ -75,7 +77,7 @@ test.describe('native host: persistence backup', () => {
     const lesson = lessons[0];
     await open(page, lesson.path);
     await page.locator('.mark-complete').click();
-    await expect.poll(() => host.store[SNAPSHOT]).toContain(lesson.id);
+    await expect.poll(() => host.store[SNAPSHOT]).toContain('"done"');
     const snap = JSON.parse(host.store[SNAPSHOT]);
     expect(snap.v).toBe(1);
     expect(snap.entries.done).toContain(lesson.id);
@@ -186,11 +188,29 @@ test.describe('native host: Android back button', () => {
   });
 });
 
+test.describe('native host: About page', () => {
+  test('shows platform and build number of the installed app', async ({ page }) => {
+    await installHost(page);
+    await open(page, 'about.html');
+    await expect(page.locator('.app-info')).toBeVisible();
+    await expect(page.locator('.app-info-value')).toHaveText('Android app, version 1.2.3 (build 1020300)');
+  });
+
+  test('a failing bridge leaves the About page without the line, never broken', async ({ page }) => {
+    await installHost(page, { mode: 'rejects' });
+    await open(page, 'about.html');
+    await expect(page.locator('.reset-progress')).toBeVisible({ timeout: 4000 });
+    await expect(page.locator('.app-info')).toBeHidden();
+  });
+});
+
 test.describe('web release is unchanged without a native host', () => {
   test('no Capacitor object: no listener, no snapshot, everything works', async ({ page }) => {
     await open(page, lessons[0].path);
     await page.locator('.mark-complete').click();
     await expect(page.locator('.mark-complete')).toHaveAttribute('aria-pressed', 'true');
     expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.includes('snapshot')))).toEqual([]);
+    await open(page, 'about.html');
+    await expect(page.locator('.app-info')).toBeHidden();
   });
 });
