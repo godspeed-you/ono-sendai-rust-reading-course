@@ -55,12 +55,13 @@ async function installHost(page: Page, opts: { mode?: Mode; initial?: Record<str
         return Promise.resolve();
       },
     };
+    // Like the real injected bridge: plugins are properties of Capacitor.Plugins, no registerPlugin.
     w.Capacitor = {
       isNativePlatform: () => true,
       getPlatform: () => 'android',
-      registerPlugin: (name: string) => {
+      get Plugins() {
         if (mode === 'throws') throw new Error('no such plugin');
-        return name === 'Preferences' ? prefs : app;
+        return { Preferences: prefs, App: app };
       },
     };
   }, opts.mode ?? 'ok');

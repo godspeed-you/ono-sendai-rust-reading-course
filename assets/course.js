@@ -48,8 +48,14 @@
   var host = (function () {
     try {
       var c = window.Capacitor;
-      if (c && typeof c.isNativePlatform === "function" && c.isNativePlatform() && typeof c.registerPlugin === "function") {
-        return { prefs: c.registerPlugin("Preferences"), app: c.registerPlugin("App") };
+      if (c && typeof c.isNativePlatform === "function" && c.isNativePlatform()) {
+        // The injected native bridge exposes plugins as Capacitor.Plugins.<Name>; registerPlugin
+        // exists only when the @capacitor/core package is bundled (it is not, here).
+        var plugin = function (name) {
+          if (c.Plugins && c.Plugins[name]) return c.Plugins[name];
+          return c.registerPlugin(name);
+        };
+        return { prefs: plugin("Preferences"), app: plugin("App") };
       }
     } catch (e) { /* not a native app */ }
     return null;
