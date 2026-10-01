@@ -153,17 +153,6 @@ final class CourseWebViewTests: XCTestCase {
         let webView = try readyWebView()
         let key = "CapacitorStorage.ono-rrc.snapshot"
         try open(webView, "index.html")
-        // Remove this expectation once assets/course.js falls back to window.Capacitor.Plugins.
-        let hookable = try js(webView, "typeof window.Capacitor.registerPlugin === 'function'") as? Bool
-        if hookable != true {
-            XCTExpectFailure("""
-                Known shared-course defect (reported to the course owner): assets/course.js enables its \
-                native host only if window.Capacitor.registerPlugin exists. That function belongs to the \
-                @capacitor/core JS bundle, which the course does not ship; the injected native bridge \
-                provides window.Capacitor.Plugins.{App,Preferences} instead. So the progress backup, the \
-                Android back handling and the About platform line are inactive in the real apps.
-                """, strict: false)
-        }
 
         try open(webView, "lessons/reading-rust-02.html")
         _ = try js(webView, "(function(){var b=document.querySelector('.mark-complete'); if (b.getAttribute('aria-pressed')!=='true') b.click(); return true})()")

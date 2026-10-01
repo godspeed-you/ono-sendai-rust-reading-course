@@ -128,7 +128,7 @@ Two test bundles in the Xcode project, run by `scripts/ios test-simulator` on an
 | `testBackForwardNavigationThroughCourseHistory` | edge-swipe gestures enabled; back and forward through course pages in the shipped WebView |
 | `testRepresentativeWindowWidths` | the WebView resized to 320/375/507/678/768/1024 pt (Split View / Stage Manager-like widths): no overflow, Menu below 1024 px, sidebar from 1024 px |
 | `testPreferencesPluginStoresInAppUserDefaults` | the Preferences plugin, called through the page's bridge, round-trips a value through the app's own UserDefaults |
-| `testProgressIsMirroredNativelyRestoredAndReset` | the course mirrors progress to UserDefaults, restores it after the WebView storage is wiped, and reset clears both. **Currently an expected failure** because of a shared-course defect: `assets/course.js` activates its native host only when `window.Capacitor.registerPlugin` exists, which the injected native bridge does not provide (it provides `window.Capacitor.Plugins`). Until that is fixed in the shared course, the app relies on WebView storage alone, which the UI restart test shows is kept across ordinary restarts |
+| `testProgressIsMirroredNativelyRestoredAndReset` | the course mirrors progress to UserDefaults, restores it after the WebView storage is wiped, and reset clears both. (found the shared-course host-detection defect fixed in `b51b375`) |
 | `ExternalLinkTests.test1…` | an `https` link and a `target=_blank` link are cancelled in the WebView and handed to `UIApplication.open`; an internal link stays inside |
 | `ExternalLinkTests.test9…` | unmocked: the link really puts another app (Safari) in the foreground while the course page stays loaded |
 

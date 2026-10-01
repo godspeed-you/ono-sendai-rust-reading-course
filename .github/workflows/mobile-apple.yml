@@ -50,7 +50,8 @@ permissions:
 
 concurrency:
   group: mobile-apple-${{ github.ref }}
-  cancel-in-progress: true
+  # Branch pushes queue (a started macOS run finishes); superseded pull-request runs are cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Explicit Xcode (spec §51): App Store Connect requires Xcode 26+ since 2026-04-28.
