@@ -10,7 +10,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { _android, test, type AndroidDevice, type Page } from '@playwright/test';
+import { _android, type AndroidDevice, type Page } from '@playwright/test';
 
 export const PKG = 'io.github.godspeedyou.rustreadingcourse';
 export const ACTIVITY = `${PKG}/.MainActivity`;
@@ -437,25 +437,13 @@ export class RawPage {
   close() { try { this.ws.close(); } catch { /* ignore */ } adb(['forward', '--remove', `tcp:${this.port}`], { allowFail: true }); }
 }
 
-/* ---------- Known shared-course defect (reported to the course owner) ---------- */
 
 /**
- * assets/course.js looks for the native bridge only through `Capacitor.registerPlugin`, which is
- * part of the @capacitor/core JavaScript package. The course loads no bundler output, so inside the
- * app only the native bridge's global exists, and it exposes plugins as `Capacitor.Plugins.<Name>`.
- * Result: the Preferences snapshot, the Android back handling (menu/history/minimize) and the About
- * build line are inactive in the installed app. The tests that depend on them are marked as
- * expected failures while the APK under test still carries that course.js; once the fix (use
- * `Capacitor.Plugins` when `registerPlugin` is absent) is in the packaged course, the marks switch
- * themselves off and the tests must pass.
+ * The course menu exists only below the wide-layout breakpoint (1024 CSS px); tablets in landscape
+ * show the contents beside the page instead. Tests of the menu itself turn a wide device to portrait.
  */
-export function hostHookDefect(): boolean {
-  const apk = process.env.ONO_APK ?? join(ROOT, 'mobile/android/app/build/outputs/apk/debug/app-debug.apk');
-  const r = spawnSync('unzip', ['-p', apk, 'assets/public/assets/course.js'], { encoding: 'utf8', maxBuffer: 16 << 20 });
-  if (r.status !== 0 || !r.stdout) return false;
-  return /registerPlugin/.test(r.stdout) && !/\bPlugins\b/.test(r.stdout);
-}
-
-export function expectHostHookDefect() {
-  test.fail(hostHookDefect(), 'known shared-course defect: course.js uses Capacitor.registerPlugin only (see helpers.ts hostHookDefect)');
+export async function ensureMenuLayout(page: Page) {
+  if (await page.locator('.nav-toggle').isVisible()) return;
+  rotate(1);
+  await waitFor('narrow layout with a menu button', () => page.locator('.nav-toggle').isVisible(), 15_000);
 }

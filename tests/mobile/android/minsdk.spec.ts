@@ -14,7 +14,6 @@ test.beforeEach(() => test.skip(!h.legacyWebView(), 'minimum-SDK suite: API < 26
 const EX = `.exercise[data-exercise="${h.LESSON_EX}"]`;
 
 test('API 24: launch, home, lesson, hints, solution, notes, restart, snapshot, back @minsdk', async () => {
-  h.expectHostHookDefect();
   h.forceStop();
   const t = h.launch();
   h.note(`minsdk cold start TotalTime=${t.totalTime}ms`);

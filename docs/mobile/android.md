@@ -148,6 +148,9 @@ debuggable and expose nothing.
 
 Tests tagged `@smoke` are a quick subset (`-- --grep @smoke`) on current Android versions.
 
+On slow emulators the system occasionally shows "System UI isn't responding" (an emulator hiccup
+that steals key focus); the helpers answer it with *Wait* and log it in `measurements.txt`.
+
 ## Native behaviour
 
 **Launch screen.** `AppTheme.NoActionBarLaunch` is an androidx core-splashscreen theme: navy

@@ -9,6 +9,7 @@ import * as h from './helpers';
 
 test.beforeAll(() => { h.resetDevice(); h.clearAppData(); });
 test.beforeEach(() => test.skip(h.legacyWebView(), 'Playwright needs WebView 74+; API < 26 runs minsdk.spec.ts'));
+test.afterEach(() => h.rotate(0));
 test.afterAll(() => { h.resetDevice(); return h.closeDevice(); });
 
 type Mode = { name: string; setup: () => void; press: () => void };
@@ -39,7 +40,6 @@ const modes: Mode[] = [
 
 for (const mode of modes) {
   test(`${mode.name}: menu closes, history walks back, home leaves the app @smoke`, async () => {
-    h.expectHostHookDefect();
     test.skip(mode.name !== modes[0].name && h.sdkInt() < 29, 'navigation-mode overlays need Android 10+');
     mode.setup();
     await h.sleep(1500);
@@ -50,6 +50,7 @@ for (const mode of modes) {
     await h.open(page, h.CHAPTER);
 
     // 1. A transient panel closes first; the page stays.
+    await h.ensureMenuLayout(page);
     await page.locator('.nav-toggle').click();
     await h.waitFor('menu open', () => h.navOpen(page), 5_000);
     mode.press();
@@ -79,7 +80,6 @@ for (const mode of modes) {
 }
 
 test('back cancels an open reset confirmation before leaving the page', async () => {
-  h.expectHostHookDefect();
   h.setNavigationMode('gestural');
   const { page } = await h.coldStart('index.html');
   await h.open(page, 'about.html');

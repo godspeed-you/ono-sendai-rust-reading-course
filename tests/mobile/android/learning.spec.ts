@@ -7,6 +7,7 @@ import * as h from './helpers';
 
 test.beforeAll(() => { h.resetDevice(); h.clearAppData(); });
 test.beforeEach(() => test.skip(h.legacyWebView(), 'Playwright needs WebView 74+; API < 26 runs minsdk.spec.ts'));
+test.afterEach(() => h.rotate(0));
 test.afterAll(() => h.closeDevice());
 
 test('navigate by touch: home -> chapter -> lesson -> next lesson, and via the menu to glossary and About @smoke', async () => {
@@ -15,6 +16,7 @@ test('navigate by touch: home -> chapter -> lesson -> next lesson, and via the m
   await expect(page.locator('h1')).toContainText('How this course works');
   await h.tapTo(page, '.pager-next', 'lessons/reading-rust-02.html');
   // Chapter overview through the menu panel (the phone layout collapses navigation into it).
+  await h.ensureMenuLayout(page);
   await h.tap(page, '.nav-toggle');
   await h.waitFor('menu open', () => h.navOpen(page), 5_000);
   h.screenshot('learning-menu-open');

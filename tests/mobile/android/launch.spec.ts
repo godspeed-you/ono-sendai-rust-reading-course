@@ -90,7 +90,6 @@ test('after process death in the background: home page with "Continue where you 
 });
 
 test('the About page identifies the Android build (course version = versionName, build = versionCode)', async () => {
-  h.expectHostHookDefect();
   const { page } = await h.coldStart('index.html');
   await h.open(page, 'about.html');
   const props = Object.fromEntries(readFileSync(`${h.ROOT}/mobile/version.properties`, 'utf8')
