@@ -201,7 +201,8 @@ course is offline by construction: a `fetch()` from the page fails even on an on
 ## Minimum SDK
 
 minSdk stays at **24**, Capacitor 8's minimum. Verified on the `system-images;android-24;google_apis;x86_64`
-emulator (Android 7.0, WebView/Chrome 69.0.3497.100 from that image) with `minsdk.spec.ts`: the app
+emulator with `minsdk.spec.ts`, locally with WebView/Chrome 69.0.3497.100 and in CI with the image's stock
+WebView 53.0.2785.124: the app
 installs and launches (cold start `TotalTime` about 1 s), the course home renders without page-level
 horizontal scroll, course.js initialises, the Capacitor bridge is present, a lesson opens by touch,
 hints unlock in order, the solution opens, notes and completion are stored, the native snapshot is
@@ -277,3 +278,8 @@ no secrets):
    `android-test-<name>` with screenshots, logcat and reports.
 
 Signed store builds are made only by `release.yml` from the repository secrets.
+
+First green run: [36794867679](https://github.com/godspeed-you/ono-sendai-rust-reading-course/actions/runs/36794867679)
+(commit `edaf290`): build job (static tests, debug APK, lint, AAB, built-package checks) green;
+API 36 phone 42 passed / 4 skipped (tablet-only tests), API 36 tablet 3 passed, API 24 phone
+(stock WebView 53.0.2785.124) `minsdk.spec.ts` passed.

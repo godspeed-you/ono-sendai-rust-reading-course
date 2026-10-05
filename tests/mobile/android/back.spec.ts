@@ -41,6 +41,7 @@ const modes: Mode[] = [
 for (const mode of modes) {
   test(`${mode.name}: menu closes, history walks back, home leaves the app @smoke`, async () => {
     test.skip(mode.name !== modes[0].name && h.sdkInt() < 29, 'navigation-mode overlays need Android 10+');
+    test.skip(mode.press === threeButtonBack && h.isTablet(), 'tablets show the buttons in the taskbar; the phone run covers the 3-button bar');
     mode.setup();
     await h.sleep(1500);
     const { page } = await h.coldStart('index.html');

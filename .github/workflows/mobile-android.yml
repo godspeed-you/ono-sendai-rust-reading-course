@@ -28,7 +28,8 @@ permissions:
 
 concurrency:
   group: mobile-android-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests: newest wins. Branch pushes queue, so busy branches still get finished runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   BUNDLETOOL_VERSION: 1.18.3
