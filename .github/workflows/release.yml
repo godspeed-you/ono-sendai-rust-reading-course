@@ -90,7 +90,13 @@ jobs:
           KEY_ALIAS: ${{ secrets.ONO_ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ONO_ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+          set_count=0
+          for v in "$KEYSTORE_B64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS"; do [ -n "$v" ] && set_count=$((set_count + 1)); done
+          if [ "$set_count" -gt 0 ] && [ "$set_count" -lt 3 ]; then
+            echo "::error::partial Android signing configuration: set all of ONO_ANDROID_KEYSTORE_BASE64, ONO_ANDROID_KEYSTORE_PASSWORD, ONO_ANDROID_KEY_ALIAS or none"
+            exit 1
+          fi
+          if [ "$set_count" -eq 3 ]; then
             keystore="$RUNNER_TEMP/release.keystore"
             printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
             {
@@ -128,7 +134,7 @@ jobs:
           # No permissions at all, correct version.
           aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
           "$aapt2" dump badging "out/$base.apk" | tee out/badging.txt | head -5
-          ! grep -q "^uses-permission" out/badging.txt
+          if grep -q "^uses-permission" out/badging.txt; then echo "::error::the APK declares permissions"; exit 1; fi
           grep -q "versionName='$VERSION'" out/badging.txt
           grep -q "targetSdkVersion:'3[6-9]'\|targetSdkVersion:'[4-9][0-9]'" out/badging.txt
           rm out/apk-signing.txt out/badging.txt

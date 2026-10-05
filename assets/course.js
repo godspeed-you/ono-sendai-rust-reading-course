@@ -100,6 +100,7 @@
     var timer = window.setTimeout(finish, 1500);
     try {
       host.prefs.get({ key: SNAPSHOT }).then(function (r) {
+        if (finished) return; // too late: the page is already running; never overwrite newer values
         try {
           var snap = JSON.parse(r && r.value);
           if (snap && snap.v === SNAPSHOT_VERSION && snap.entries && typeof snap.entries === "object") {
