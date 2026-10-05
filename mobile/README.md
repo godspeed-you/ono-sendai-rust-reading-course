@@ -151,8 +151,8 @@ complete the course.
 
 **Safe areas, status bar, orientation, text size.** Every page declares `viewport-fit=cover` and pads header, footer, layout
 and the open menu with `env(safe-area-inset-*)` (all zero in ordinary browsers). Android runs edge to edge with
-Capacitor's `native` inset handling; iOS uses `contentInset: never`. System-bar icons follow the system light/dark theme, like
-the course itself (`prefers-color-scheme`). Orientation is never locked; iPad multitasking is not opted out (breakpoints
+Capacitor's `native` inset handling; iOS uses `contentInset: never`. On Android the system-bar icons follow the system light/dark theme, like
+the course itself (`prefers-color-scheme`); on iOS the status bar is always light text over the course's navy header band. Orientation is never locked; iPad multitasking is not opted out (breakpoints
 follow the available width, not device names). Text scaling and zoom are never disabled; selection and copy work.
 
 ## Offline and privacy guarantees
@@ -178,7 +178,8 @@ the maintainer's Xcode/CI secrets, never in the repository. Details: the Android
 ## Icons
 
 `node tools/icons/icons.mjs` (dependencies in `tools/icons/package.json`, install with `npm ci` there) renders `resources/*.svg` (the course's `>_` mark) and runs `@capacitor/assets` to regenerate the Android
-adaptive/round/legacy launcher icons, the Android launch images and the iOS icon and launch images. The outputs are committed.
+adaptive/round/legacy launcher icons and the iOS icon and launch images (the Android launch screen is a core-splashscreen theme, so the
+tool deletes the Android splash PNGs and restores the themed-icon adaptive XML). The outputs are committed.
 
 ## Tests, CI, release
 

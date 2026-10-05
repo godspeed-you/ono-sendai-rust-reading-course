@@ -5,7 +5,7 @@
 //   (cd mobile/tools/icons && npm ci) && node mobile/tools/icons/icons.mjs
 // Its dependencies (sharp, @capacitor/assets) live in tools/icons/package.json, separate from the
 // audited runtime/build dependencies in mobile/package.json.
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,4 +45,15 @@ console.log('rendered', Object.keys(files).length, 'sources');
 const r = spawnSync(join(HERE, 'node_modules/.bin/capacitor-assets'), ['generate', '--android', '--ios',
   '--iconBackgroundColor', BG, '--iconBackgroundColorDark', BG, '--splashBackgroundColor', BG, '--splashBackgroundColorDark', BG],
   { cwd: MOBILE, stdio: 'inherit' });
-process.exit(r.status ?? 1);
+if (r.status !== 0) process.exit(r.status ?? 1);
+
+// capacitor-assets also writes stretched Android splash PNGs and plain adaptive-icon XML. The app
+// uses a core-splashscreen theme (no images) and a themed-icon (monochrome) layer, so undo both.
+const RES_DIR = join(MOBILE, 'android/app/src/main/res');
+for (const d of readdirSync(RES_DIR)) {
+  if (d.startsWith('drawable') && existsSync(join(RES_DIR, d, 'splash.png'))) rmSync(join(RES_DIR, d, 'splash.png'));
+  if (existsSync(join(RES_DIR, d)) && readdirSync(join(RES_DIR, d)).length === 0) rmSync(join(RES_DIR, d), { recursive: true });
+}
+const adaptive = (readFileSync(join(HERE, 'adaptive-icon.xml'), 'utf8'));
+for (const n of ['ic_launcher', 'ic_launcher_round']) writeFileSync(join(RES_DIR, 'mipmap-anydpi-v26', `${n}.xml`), adaptive);
+console.log('post-processed Android resources (no splash images, monochrome layer restored)');
