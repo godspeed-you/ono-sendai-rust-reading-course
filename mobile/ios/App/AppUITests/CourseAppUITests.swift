@@ -41,7 +41,7 @@ final class CourseAppUITests: XCTestCase {
         try resetProgress()
 
         // Home -> lesson 1 through the course's own start link.
-        tap(element(beginningWith: startLabel))
+        openLessonOne()
         XCTAssertTrue(lessonOneMarker.waitForExistence(timeout: 20))
 
         // Opening Hint 1 unlocks that exercise's Hint 2 ("— open Hint 1 first" disappears).
@@ -59,7 +59,8 @@ final class CourseAppUITests: XCTestCase {
         screenshot("lesson-hint-open")
 
         // Mark complete.
-        tap(web.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Mark lesson complete")).firstMatch)
+        // aria-pressed makes WebKit expose the button as a switch.
+        tap(web.switches.matching(NSPredicate(format: "label BEGINSWITH %@", "Mark lesson complete")).firstMatch)
         XCTAssertTrue(completedButton.waitForExistence(timeout: 10))
 
         // Private notes.
@@ -102,7 +103,7 @@ final class CourseAppUITests: XCTestCase {
     @MainActor func testBackgroundAndResumeKeepsThePosition() throws {
         makeApp()
         app.launch()
-        tap(element(beginningWith: startLabel))
+        openLessonOne()
         let heading = lessonOneMarker
         XCTAssertTrue(heading.waitForExistence(timeout: 20))
         XCUIDevice.shared.press(.home)
@@ -134,7 +135,7 @@ final class CourseAppUITests: XCTestCase {
             checkChromeIsReachable(name)
             screenshot("home-\(name)")
         }
-        tap(element(beginningWith: startLabel))
+        openLessonOne()
         XCTAssertTrue(lessonOneMarker.waitForExistence(timeout: 20))
         for orientation in [UIDeviceOrientation.landscapeRight, .portrait] {
             XCUIDevice.shared.orientation = orientation
@@ -191,6 +192,17 @@ final class CourseAppUITests: XCTestCase {
         locked.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: -0.6)).tap()
     }
 
+    /// Home → lesson 1 through the start link. A tap that lands while iOS is still settling a
+    /// rotation or scroll is swallowed, so a second tap is allowed before failing.
+    @MainActor private func openLessonOne() {
+        let start = element(beginningWith: startLabel)
+        tap(start)
+        if !lessonOneMarker.waitForExistence(timeout: 10) && start.exists {
+            sleep(2)
+            tap(start)
+        }
+    }
+
     /// Number of hint summaries still showing "— open Hint 1 first".
     @MainActor private var lockedHintCount: Int {
         web.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "open Hint 1 first")).count
@@ -198,7 +210,7 @@ final class CourseAppUITests: XCTestCase {
 
     /// "Completed — mark as not complete": the lesson's completion button in its pressed state.
     @MainActor private var completedButton: XCUIElement {
-        web.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Completed")).firstMatch
+        web.switches.matching(NSPredicate(format: "label BEGINSWITH %@ OR value == '1'", "Completed")).firstMatch
     }
 
     /// Scrolls the page (like a finger) until the element is on screen and hittable. Web elements
