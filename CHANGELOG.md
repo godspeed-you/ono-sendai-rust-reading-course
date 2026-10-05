@@ -3,7 +3,22 @@
 All notable changes to the course. The course is versioned independently of Ono-Sendai; every
 entry names the Ono-Sendai revision it teaches from.
 
-## 1.0.0 — unreleased
+## 1.1.0 — unreleased
+
+Same course content and Ono-Sendai pin (v0.6.2, `cc613296ef12ad0dd71ff8d73de933573a44e4e0`); new distribution forms.
+
+- **Android app** (APK for direct installation, AAB for Google Play) and **iOS/iPadOS app** (TestFlight/App Store), built
+  with Capacitor 8.5.2 from the same generated `dist/` as the ZIP/TAR release; `make mobile-sync` proves the
+  packaged copy equals `dist/`. Fully offline; Android requests no permissions.
+- Native integration: icons, launch screens, safe-area/status-bar handling, Android back button through course
+  history, backup of progress and notes in the platform key/value store (restored if the OS clears WebView
+  storage; cleared by *Reset local progress*), platform and build number on the About page.
+- Shared course: `viewport-fit=cover` and safe-area padding, a strict Content-Security-Policy in every page,
+  "on this device" wording instead of "in this browser".
+- Release workflow also publishes the APK and AAB; `SHA256SUMS` covers all four files. Separate Android and Apple CI workflows.
+- Store-readiness documentation (Google Play, App Store, review notes, privacy answers) in `docs/store/`.
+
+## 1.0.0
 
 First release. Pinned to Ono-Sendai v0.6.2 (`cc613296ef12ad0dd71ff8d73de933573a44e4e0`).
 

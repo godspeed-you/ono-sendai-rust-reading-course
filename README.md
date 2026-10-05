@@ -75,7 +75,7 @@ Every course release teaches from exactly one Ono-Sendai commit, recorded in
 
 ```yaml
 course:
-  version: 1.0.0
+  version: 1.1.0
 ono_sendai:
   repository: https://github.com/godspeed-you/ono-sendai
   commit: cc613296ef12ad0dd71ff8d73de933573a44e4e0
