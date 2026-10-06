@@ -16,8 +16,8 @@ that the owner can do it.
 | Application ID (package name) | `io.github.godspeedyou.rustreadingcourse` | `mobile/capacitor.config.json`, `applicationId` in `mobile/android/app/build.gradle` |
 | App name on the device | Ono Rust Course | `app_name` in `mobile/android/app/src/main/res/values/strings.xml` |
 | Store title (≤ 30 characters) | Ono-Sendai Rust Reading Course (30) | Play Console → Main store listing |
-| `versionName` | the course version (`1.0.0`) | `course-lock.yaml` → `mobile/version.properties` |
-| `versionCode` | `MAJOR·1 000 000 + MINOR·10 000 + PATCH·100 + buildRevision` (`1.0.0` → `1000000`) | `buildNumbers()` in `mobile/tools/lib.mjs`, `buildRevision` in `mobile/version.json` |
+| `versionName` | the course version (`1.1.0`) | `course-lock.yaml` → `mobile/version.properties` |
+| `versionCode` | `MAJOR·1 000 000 + MINOR·10 000 + PATCH·100 + buildRevision` (`1.1.0` → `1010000`) | `buildNumbers()` in `mobile/tools/lib.mjs`, `buildRevision` in `mobile/version.json` |
 | target / compile SDK | 36 (Android 16) | `mobile/android/variables.gradle` |
 | minSdk | 24 (Android 7.0) | `mobile/android/variables.gradle` |
 | Permissions | none (not even `INTERNET`) | checked on the built APK and AAB by `tests/mobile/android.test.mjs` |

@@ -655,22 +655,34 @@
   }
 
   function init() {
-    showStorageNote();
-    initNav();
-    initLessonProgress();
-    renderDone();
-    initContinue();
-    initMultipleChoice();
-    initHints();
-    initCodeFigures();
-    initChecklists();
-    initNotes();
-    initReset();
-    initNativeBack();
-    initAppInfo();
+    // One failing enhancement must never disable the others (or the back button).
+    [
+      showStorageNote,
+      initNav,
+      initLessonProgress,
+      renderDone,
+      initContinue,
+      initMultipleChoice,
+      initHints,
+      initCodeFigures,
+      initChecklists,
+      initNotes,
+      initReset,
+      initAppInfo
+    ].forEach(function (step) {
+      try { step(); } catch (e) { /* keep going */ }
+    });
   }
 
-  function start() { restoreFromHost(init); }
+  // Back handling is registered first and synchronously: a press during start-up or a failing
+  // enhancement must not leave the Android back button dead.
+  function start() {
+    try { initNativeBack(); } catch (e) { /* ignore */ }
+    restoreFromHost(init);
+    window.addEventListener("pageshow", function (e) {
+      if (e.persisted) { try { renderDone(); initContinue(); } catch (err) { /* ignore */ } }
+    });
+  }
 
   if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", start);
   else start();

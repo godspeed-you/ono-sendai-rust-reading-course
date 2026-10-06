@@ -162,7 +162,7 @@ them by hand. `node mobile/tools/mobile.mjs version --check` fails if they drift
 | Apple field | Xcode setting | Source |
 |---|---|---|
 | `CFBundleShortVersionString` | `MARKETING_VERSION` | course version in `course-lock.yaml` (e.g. `1.0.0`) |
-| `CFBundleVersion` | `CURRENT_PROJECT_VERSION` | `MAJOR·1 000 000 + MINOR·10 000 + PATCH·100 + buildRevision` (`1.0.0` → `1000000`) |
+| `CFBundleVersion` | `CURRENT_PROJECT_VERSION` | `MAJOR·1 000 000 + MINOR·10 000 + PATCH·100 + buildRevision` (`1.1.0` → `1010000`) |
 
 `buildRevision` (0–99) lives in `mobile/version.json`. App Store Connect rejects a second upload with
 the same build number for a version, so bump `buildRevision` (then `make mobile-version`) to upload

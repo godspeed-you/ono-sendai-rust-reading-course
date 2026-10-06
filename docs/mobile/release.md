@@ -16,7 +16,7 @@ verify (ci.yml: core validation, generator tests, upstream snippets, build, offl
 |---|---|
 | `ono-sendai-rust-reading-course-vX.Y.Z.zip`, `.tar.gz` | the static course (unchanged form) |
 | `ono-sendai-rust-reading-course-vX.Y.Z.apk` | direct installation and testing on Android |
-| `ono-sendai-rust-reading-course-vX.Y.Z.aab` | Google Play submission (not installable on a device) |
+| `ono-sendai-rust-reading-course-vX.Y.Z.aab` | Google Play submission (not installable on a device); only with the release key |
 | `SHA256SUMS` | checksums of the four files (`sha256sum --check SHA256SUMS`) |
 
 iOS/iPadOS is **not** a release asset: it goes through TestFlight/App Store Connect (see
@@ -39,7 +39,7 @@ strategy.
 | Mode | When | Result |
 |---|---|---|
 | release key | repository secrets `ONO_ANDROID_KEYSTORE_BASE64`, `ONO_ANDROID_KEYSTORE_PASSWORD`, `ONO_ANDROID_KEY_ALIAS` (optional `ONO_ANDROID_KEY_PASSWORD`) are set | APK and AAB signed with the release/upload key; the workflow fails if the debug certificate ends up on the APK |
-| debug key | no secrets | a working test APK; the release notes state that it is a testing build and the AAB is not accepted by Google Play |
+| debug key | no secrets | only `…-debug-signed-testing-only.apk` is published (throwaway key, cannot be updated in place; the notes say so); no AAB. Setting only some of the three required secrets fails the release |
 
 Create the keystore once, outside the repository (see [android.md](android.md)), keep it and its password safe (losing an
 upload key requires a Play support process), store it base64-encoded in the repository secrets. Nothing secret is ever
