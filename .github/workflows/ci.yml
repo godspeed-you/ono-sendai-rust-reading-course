@@ -9,7 +9,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, mobile-v1]
   pull_request:
   workflow_call:
     outputs:
