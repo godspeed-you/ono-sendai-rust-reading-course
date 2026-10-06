@@ -82,8 +82,8 @@ The **course version is the app version**: there is no separate wrapper version.
 
 | Field | Value |
 |---|---|
-| Android `versionName`, iOS `CFBundleShortVersionString` (`MARKETING_VERSION`) | course version from `course-lock.yaml` (`1.0.0`) |
-| Android `versionCode`, iOS `CFBundleVersion` (`CURRENT_PROJECT_VERSION`) | `MAJOR·1 000 000 + MINOR·10 000 + PATCH·100 + buildRevision` (`1.0.0` → `1000000`) |
+| Android `versionName`, iOS `CFBundleShortVersionString` (`MARKETING_VERSION`) | course version from `course-lock.yaml` (`1.1.0`) |
+| Android `versionCode`, iOS `CFBundleVersion` (`CURRENT_PROJECT_VERSION`) | `MAJOR·1 000 000 + MINOR·10 000 + PATCH·100 + buildRevision` (`1.1.0` → `1010000`) |
 | `buildRevision` | `version.json`, 0–99. Bump it only to re-submit the same course version to a store |
 | Pinned Ono-Sendai version/commit | `course-lock.yaml`; shown on the About page of every distribution |
 
